@@ -2,7 +2,7 @@
 
 This directory defines the product and engineering contract for the JurisNexo MVP.
 
-The documents are intentionally ordered from product intent to implementation, operational integrity, and validation.
+The documents are intentionally ordered from product intent to implementation, operational integrity, validation, and deployment.
 
 ## Documents
 
@@ -19,6 +19,9 @@ The documents are intentionally ordered from product intent to implementation, o
 11. [`10-job-state-machines-and-reproducibility.md`](./10-job-state-machines-and-reproducibility.md) — ingestion/research state machines, retries, idempotency, failure taxonomy, corpus snapshots, and reproducible report provenance.
 12. [`11-benchmark-annotation-and-evaluation-protocol.md`](./11-benchmark-annotation-and-evaluation-protocol.md) — how real legal research tasks are annotated, critical/adverse authority labels, evidence judgments, locked test sets, regression gates, and failure analysis.
 13. [`12-mvp-user-workflow-and-api-contract.md`](./12-mvp-user-workflow-and-api-contract.md) — exact report-first user journey, core API resources, progress events, report/evidence contracts, feedback, uploads, and demo quotas.
+14. [`13-technology-stack-and-implementation-decisions.md`](./13-technology-stack-and-implementation-decisions.md) — frozen MVP stack, ADOPT/TRIAL/ASSESS/HOLD decisions, backend/frontend boundaries, PostgreSQL/pgvector/Supabase policy, retrieval stack, model-provider abstraction, and workflow-engine decision rules.
+15. [`14-repository-structure-ci-and-testing.md`](./14-repository-structure-ci-and-testing.md) — Request-Engine-inspired repository organization, modular-monolith boundaries, Python/frontend toolchains, test taxonomy, CI jobs, regression evidence, branch policy, and engineering Definition of Done.
+16. [`15-docker-coolify-deployment-and-operations.md`](./15-docker-coolify-deployment-and-operations.md) — Docker/Compose runtime contract, Coolify Git-backed deployment, networking, health checks, migrations, secrets, CI-gated deployment, storage, backups, observability, scaling, smoke tests, and rollback policy.
 
 ## Current MVP definition
 
@@ -27,6 +30,41 @@ JurisNexo is a multi-tenant experimental legal research product initially valida
 The first product is a **Precedent & Adverse Authority Report**. A user provides a legal question or fact pattern. JurisNexo investigates relevant Dominican jurisprudence, reviews supporting and adverse authorities, follows material citations, verifies important claims against primary sources, and returns an auditable report.
 
 The MVP should begin with SCJ/TC jurisprudence and a deliberately constrained corpus/domain if necessary.
+
+## Frozen implementation direction
+
+The first implementation is a **Dockerized modular monolith** with separate runtime processes rather than independently designed microservices.
+
+```text
+Next.js web
+    |
+    v
+FastAPI API
+    |
+    +--> PostgreSQL / pgvector
+    +--> object storage
+    +--> background workflow/queue
+    +--> model providers
+    |
+    v
+Python workers
+```
+
+Initial infrastructure choices:
+
+- Python/FastAPI/Pydantic/SQLAlchemy/Alembic/uv for backend and research runtime;
+- Next.js/TypeScript for the frontend;
+- PostgreSQL as system of record;
+- pgvector plus PostgreSQL full-text retrieval as the baseline search stack;
+- RRF as the first hybrid fusion algorithm;
+- Supabase initially for managed PostgreSQL, Auth, and Storage without making Supabase-specific APIs the domain architecture;
+- Celery/Redis only as the initial async-execution trial, with durable workflow engines evaluated before deep coupling;
+- GitHub Actions for CI;
+- pytest/Playwright plus legal retrieval and ingestion regression suites;
+- Docker and repository-owned Docker Compose for local/CI/production runtime;
+- Coolify as the initial deployment/orchestration surface.
+
+Technologies explicitly marked TRIAL or ASSESS remain benchmark-driven and are not product invariants.
 
 ## Non-negotiable invariants
 
@@ -43,6 +81,8 @@ The MVP should begin with SCJ/TC jurisprudence and a deliberately constrained co
 - Completed reports retain the source/evidence/configuration snapshot they were produced from.
 - Added architectural complexity must improve measured outcomes.
 - Product-market validation precedes broad platform expansion.
+- CI must prove tenant isolation, migration validity, critical retrieval behavior, and production image buildability rather than only line coverage.
+- Production behavior must be reproducible from repository source, lockfiles, migrations, Dockerfiles, and Compose definitions; it must not depend on undocumented manual Coolify/server edits.
 
 ## Immediate implementation target
 
@@ -67,4 +107,4 @@ Only after this slice works should corpus breadth and sophisticated retrieval/gr
 
 ## Documentation completeness rule
 
-An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, or commercialization boundaries, it should be reflected in these documents or captured explicitly as an open decision.
+An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, or production deployment, it should be reflected in these documents or captured explicitly as an open decision.
