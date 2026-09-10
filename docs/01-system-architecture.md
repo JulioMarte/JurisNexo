@@ -154,13 +154,15 @@ Initial retrieval channels:
 
 1. exact legal reference matching;
 2. metadata filters;
-3. full-text/BM25-style ranking;
+3. PostgreSQL full-text lexical ranking as the initial lexical baseline;
 4. semantic vector retrieval;
 5. citation lookup/traversal.
 
+PostgreSQL full-text ranking is not treated as native BM25. True BM25 or a dedicated lexical/hybrid engine remains an explicit benchmark-driven evolution option if the baseline shows a material retrieval deficiency.
+
 Results can initially be fused using Reciprocal Rank Fusion or another transparent rank-fusion method.
 
-A reranker can be added after the baseline is measurable.
+A reranker should be evaluated early after the measurable baseline exists; it should be adopted only if it improves legal retrieval quality enough to justify its cost and latency.
 
 Example conceptual API:
 
