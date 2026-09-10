@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from typing import Any
 
 import psycopg
 import pytest
@@ -9,13 +11,13 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture(scope="module")
-def connection() -> psycopg.Connection[tuple[object, ...]]:
+def connection() -> Iterator[psycopg.Connection[Any]]:
     database_url = os.environ["DATABASE_URL"]
-    with psycopg.connect(database_url) as conn:
+    with psycopg.connect(database_url, autocommit=True) as conn:
         yield conn
 
 
-def test_expected_corpus_tables_exist(connection: psycopg.Connection[tuple[object, ...]]) -> None:
+def test_expected_corpus_tables_exist(connection: psycopg.Connection[Any]) -> None:
     expected = {
         "source_registries",
         "source_artifacts",
@@ -44,7 +46,7 @@ def test_expected_corpus_tables_exist(connection: psycopg.Connection[tuple[objec
 
 
 def test_decision_date_is_a_real_date_with_provenance_status(
-    connection: psycopg.Connection[tuple[object, ...]],
+    connection: psycopg.Connection[Any],
 ) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
@@ -71,7 +73,7 @@ def test_decision_date_is_a_real_date_with_provenance_status(
 
 
 def test_verified_decision_date_cannot_be_null(
-    connection: psycopg.Connection[tuple[object, ...]],
+    connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True):
         with connection.cursor() as cursor:
@@ -82,7 +84,9 @@ def test_verified_decision_date_cannot_be_null(
                 returning id
                 """
             )
-            court_id = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            assert row is not None
+            court_id = row[0]
 
             with pytest.raises(psycopg.errors.CheckViolation):
                 cursor.execute(
@@ -94,9 +98,7 @@ def test_verified_decision_date_cannot_be_null(
                 )
 
 
-def test_spanish_fts_matches_legal_phrase(
-    connection: psycopg.Connection[tuple[object, ...]],
-) -> None:
+def test_spanish_fts_matches_legal_phrase(connection: psycopg.Connection[Any]) -> None:
     with connection.transaction(force_rollback=True):
         with connection.cursor() as cursor:
             cursor.execute(
@@ -106,7 +108,10 @@ def test_spanish_fts_matches_legal_phrase(
                 returning id
                 """
             )
-            court_id = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            assert row is not None
+            court_id = row[0]
+
             cursor.execute(
                 """
                 insert into corpus.cases (
@@ -120,7 +125,10 @@ def test_spanish_fts_matches_legal_phrase(
                 """,
                 (court_id,),
             )
-            case_id = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            assert row is not None
+            case_id = row[0]
+
             cursor.execute(
                 """
                 insert into corpus.passages (
@@ -144,7 +152,7 @@ def test_spanish_fts_matches_legal_phrase(
             assert cursor.fetchone() == (True,)
 
 
-def test_temporal_index_exists(connection: psycopg.Connection[tuple[object, ...]]) -> None:
+def test_temporal_indexes_exist(connection: psycopg.Connection[Any]) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
             """
