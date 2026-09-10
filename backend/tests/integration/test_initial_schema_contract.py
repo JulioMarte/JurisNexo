@@ -157,9 +157,9 @@ def test_required_corpus_indexes_exist(connection: psycopg.Connection[Any]) -> N
         "cases_organ_date_idx",
         "passages_fts_idx",
         "source_artifacts_source_registry_idx",
-        "cases_decision_date_evidence_page_idx",
+        "cases_decision_date_evidence_case_page_idx",
         "case_identifiers_case_idx",
-        "case_identifiers_evidence_page_idx",
+        "case_identifiers_evidence_case_page_idx",
     }
 
     with connection.cursor() as cursor:
@@ -173,6 +173,138 @@ def test_required_corpus_indexes_exist(connection: psycopg.Connection[Any]) -> N
         indexes = {row[0] for row in cursor.fetchall()}
 
     assert expected <= indexes
+
+
+def test_decision_date_evidence_cannot_point_to_another_case(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            insert into corpus.source_artifacts (sha256, mime_type, byte_size)
+            values (repeat('a', 64), 'application/pdf', 100)
+            returning id
+            """
+        )
+        artifact = cursor.fetchone()
+        assert artifact is not None
+
+        cursor.execute(
+            """
+            insert into corpus.artifact_pages (
+                artifact_id, page_number, extraction_status
+            ) values (%s, 1, 'native_text')
+            returning id
+            """,
+            (artifact[0],),
+        )
+        artifact_page = cursor.fetchone()
+        assert artifact_page is not None
+
+        cursor.execute(
+            """
+            insert into corpus.courts (code, name, jurisdiction)
+            values ('SCJ-PROV', 'SCJ provenance test', 'República Dominicana')
+            returning id
+            """
+        )
+        court = cursor.fetchone()
+        assert court is not None
+
+        cursor.execute(
+            "insert into corpus.cases (court_id) values (%s), (%s) returning id",
+            (court[0], court[0]),
+        )
+        case_a, case_b = [row[0] for row in cursor.fetchall()]
+
+        cursor.execute(
+            """
+            insert into corpus.case_pages (case_id, artifact_page_id, ordinal_in_case)
+            values (%s, %s, 1)
+            returning id
+            """,
+            (case_a, artifact_page[0]),
+        )
+        case_page = cursor.fetchone()
+        assert case_page is not None
+
+        cursor.execute("set constraints all immediate")
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            cursor.execute(
+                """
+                update corpus.cases
+                set decision_date = date '2025-01-15',
+                    decision_date_status = 'verified_primary_text',
+                    decision_date_evidence_case_page_id = %s
+                where id = %s
+                """,
+                (case_page[0], case_b),
+            )
+
+
+def test_case_identifier_evidence_cannot_point_to_another_case(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            insert into corpus.source_artifacts (sha256, mime_type, byte_size)
+            values (repeat('b', 64), 'application/pdf', 100)
+            returning id
+            """
+        )
+        artifact = cursor.fetchone()
+        assert artifact is not None
+
+        cursor.execute(
+            """
+            insert into corpus.artifact_pages (
+                artifact_id, page_number, extraction_status
+            ) values (%s, 1, 'native_text')
+            returning id
+            """,
+            (artifact[0],),
+        )
+        artifact_page = cursor.fetchone()
+        assert artifact_page is not None
+
+        cursor.execute(
+            """
+            insert into corpus.courts (code, name, jurisdiction)
+            values ('SCJ-ID-PROV', 'SCJ identifier provenance test', 'República Dominicana')
+            returning id
+            """
+        )
+        court = cursor.fetchone()
+        assert court is not None
+
+        cursor.execute(
+            "insert into corpus.cases (court_id) values (%s), (%s) returning id",
+            (court[0], court[0]),
+        )
+        case_a, case_b = [row[0] for row in cursor.fetchall()]
+
+        cursor.execute(
+            """
+            insert into corpus.case_pages (case_id, artifact_page_id, ordinal_in_case)
+            values (%s, %s, 1)
+            returning id
+            """,
+            (case_a, artifact_page[0]),
+        )
+        case_page = cursor.fetchone()
+        assert case_page is not None
+
+        cursor.execute("set constraints all immediate")
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            cursor.execute(
+                """
+                insert into corpus.case_identifiers (
+                    case_id, identifier_type, raw_value, evidence_case_page_id
+                ) values (%s, 'docket_number', 'TEST-123', %s)
+                """,
+                (case_b, case_page[0]),
+            )
 
 
 def test_alembic_version_table_has_rls_enabled(connection: psycopg.Connection[Any]) -> None:
