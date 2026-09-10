@@ -8,7 +8,7 @@ The documents are intentionally ordered from product intent to implementation, o
 
 1. [`00-product-vision-and-mvp.md`](./00-product-vision-and-mvp.md) — product thesis, initial customer, first paid unit of value, QuisqueyaTech validation strategy, multi-tenant requirement, and MVP boundaries.
 2. [`01-system-architecture.md`](./01-system-architecture.md) — MVP architecture, corpus/search services, research runtime, RLM influence, progressive normalization, and evolution path.
-3. [`02-legal-corpus-and-data-model.md`](./02-legal-corpus-and-data-model.md) — source preservation, searchable case model, citations, holdings, legal issues, precedent relationships, provenance, OCR, and normalization levels.
+3. [`02-legal-corpus-and-data-model.md`](./02-legal-corpus-and-data-model.md) — source preservation, searchable case model, citations, holdings, legal issues, temporal metadata, precedent relationships, provenance, OCR, and normalization levels.
 4. [`03-research-agent-and-report-contract.md`](./03-research-agent-and-report-contract.md) — research lifecycle, subagents, adverse-authority search, completion criteria, Python workspace, evidence verification, and final report contract.
 5. [`04-validation-metrics-and-market-test.md`](./04-validation-metrics-and-market-test.md) — legal retrieval metrics, Critical Miss Rate, human evaluation, time-saved measurement, pilot design, free demo, and go/no-go criteria.
 6. [`05-security-privacy-and-trust.md`](./05-security-privacy-and-trust.md) — tenant isolation, private legal data, model-provider boundaries, prompt injection, Python sandbox, provenance, retention, and trust disclosures.
@@ -23,6 +23,7 @@ The documents are intentionally ordered from product intent to implementation, o
 15. [`14-repository-structure-ci-and-testing.md`](./14-repository-structure-ci-and-testing.md) — Request-Engine-inspired repository organization, modular-monolith boundaries, Python/frontend toolchains, test taxonomy, CI jobs, regression evidence, branch policy, and engineering Definition of Done.
 16. [`15-docker-coolify-deployment-and-operations.md`](./15-docker-coolify-deployment-and-operations.md) — Docker/Compose runtime contract, Coolify Git-backed deployment, networking, health checks, migrations, secrets, CI-gated deployment, storage, backups, observability, scaling, smoke tests, and rollback policy.
 17. [`16-pilot-corpus-and-first-mvp-validation-slice.md`](./16-pilot-corpus-and-first-mvp-validation-slice.md) — the existing Supreme Court Storage inventory, first 2025 compilation fixture, compilation-to-case segmentation, duplicate evidence, staged corpus expansion, retrieval experiments, and first vertical-slice Definition of Done.
+18. [`17-database-schema-and-temporal-legal-metadata.md`](./17-database-schema-and-temporal-legal-metadata.md) — database-first implementation contract, PostgreSQL schema namespaces, source-artifact/case separation, concrete corpus tables, decision-date semantics, extraction provenance, index versioning, and migration order.
 
 ## Current MVP definition
 
@@ -67,11 +68,27 @@ Initial infrastructure choices:
 
 Technologies explicitly marked TRIAL or ASSESS remain benchmark-driven and are not product invariants.
 
+## Database-first implementation rule
+
+The corpus database and provenance model come before model-heavy indexing or agent orchestration.
+
+The initial schema must make these distinctions explicit:
+
+```text
+source artifact != canonical case != case page != retrieval passage
+```
+
+`decision_date` is a first-class legal fact. It must be independently stored, provenance-aware, indexed, and distinguishable from lower-court dates, procedural filing dates, artifact publication dates, and ingestion timestamps.
+
+The first ingestion milestone does not require an external LLM API. Deterministic extraction, case-boundary experiments, page preservation, metadata parsing, and PostgreSQL lexical search should work first. A small LLM may later be introduced for ambiguous extraction/enrichment, with model/version/provenance recorded.
+
 ## Non-negotiable invariants
 
 - Primary legal sources remain immutable and authoritative.
 - A physical PDF artifact is not assumed to be one canonical judicial case.
 - Compilation PDFs must be segmented into individual candidate decisions with exact page provenance.
+- Decision chronology is structured data, not an incidental string inside document text.
+- Unknown or conflicting decision dates must never be silently guessed into verified values.
 - Model-generated interpretation never silently becomes source truth.
 - Public jurisprudence and tenant-private content are separate data classes.
 - Every material report claim must be traceable to evidence.
@@ -93,18 +110,20 @@ Build the smallest end-to-end slice that can prove the thesis using the existing
 
 ```text
 SCJ Jan-Apr 2025 compilation
-    -> immutable artifact registration + content hash
+    -> immutable artifact registration + SHA-256
     -> page-preserving extraction
     -> individual decision segmentation
-    -> canonical identity + normalized page-level corpus
-    -> searchable lexical + semantic retrieval baseline
+    -> canonical case identity
+    -> decision number / expediente / organ / decision date with provenance
+    -> normalized case pages
+    -> lexical passages/index
+    -> manual validation
+    -> semantic retrieval only after source model is trustworthy
     -> benchmark legal research request
     -> iterative agent research
-    -> case subagent review
     -> adverse search + citation traversal when applicable
     -> evidence verification against original pages
     -> auditable report snapshot
-    -> legal-user feedback
 ```
 
 Only after this slice works should corpus breadth and sophisticated retrieval/graph techniques become the priority.
@@ -113,4 +132,4 @@ The existing Supreme Court Storage collection is a meaningful head start, but it
 
 ## Documentation completeness rule
 
-An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, production deployment, source segmentation, or canonical identity, it should be reflected in these documents or captured explicitly as an open decision.
+An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, production deployment, source segmentation, canonical identity, or temporal legal semantics, it should be reflected in these documents or captured explicitly as an open decision.
