@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-database:
+    name: Backend database contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend test image
+        run: docker compose --profile test build test
+      - name: Start database and apply migrations
+        run: docker compose up -d db && docker compose run --rm migrate
+      - name: Run backend schema contract tests
+        run: docker compose --profile test run --rm test
+      - name: Show service state on failure
+        if: failure()
+        run: docker compose ps && docker compose logs --no-color db migrate
+      - name: Tear down
+        if: always()
+        run: docker compose --profile test down -v --remove-orphans
+
+  backend-quality:
+    name: Backend quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend test image
+        run: docker compose --profile test build test
+      - name: Ruff
+        run: docker compose --profile test run --rm --no-deps test ruff check src tests migrations
+      - name: Pyright
+        run: docker compose --profile test run --rm --no-deps test pyright
+
+  docker-runtime:
+    name: Docker runtime smoke test
+    needs: backend-database
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start API stack
+        run: docker compose up -d --build db migrate api
+      - name: Wait for API health
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs --no-color api migrate db
+          exit 1
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  aggregate:
+    name: CI aggregate
+    if: always()
+    needs: [backend-database, backend-quality, docker-runtime]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all jobs to pass
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ['NEEDS'])
+          failed = {name: data['result'] for name, data in needs.items() if data['result'] != 'success'}
+          if failed:
+              print(f"Required CI jobs did not pass: {failed}")
+              sys.exit(1)
+          print('All required CI jobs passed.')
+          PY
