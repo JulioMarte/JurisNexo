@@ -12,9 +12,9 @@ The documents are intentionally ordered from product intent to implementation, o
 4. [`03-research-agent-and-report-contract.md`](./03-research-agent-and-report-contract.md) — research lifecycle, subagents, adverse-authority search, completion criteria, Python workspace, evidence verification, and final report contract.
 5. [`04-validation-metrics-and-market-test.md`](./04-validation-metrics-and-market-test.md) — legal retrieval metrics, Critical Miss Rate, human evaluation, time-saved measurement, pilot design, free demo, and go/no-go criteria.
 6. [`05-security-privacy-and-trust.md`](./05-security-privacy-and-trust.md) — tenant isolation, private legal data, model-provider boundaries, prompt injection, Python sandbox, provenance, retention, and trust disclosures.
-7. [`06-mvp-roadmap.md`](./06-mvp-roadmap.md) — evidence-driven implementation sequence from corpus ingestion through private pilot, controlled demo, and paid validation.
+7. [`06-mvp-roadmap.md`](./06-mvp-roadmap.md) — evidence-driven implementation sequence from the concrete SCJ pilot corpus through private pilot, controlled demo, and paid validation.
 8. [`07-technical-rationale-and-open-decisions.md`](./07-technical-rationale-and-open-decisions.md) — why JurisNexo combines legal IR, case reasoning, citation analysis, RLM-style agents, DocETL/LOTUS ideas, and why complexity must be benchmark-driven.
-9. [`08-source-acquisition-coverage-and-canonical-identity.md`](./08-source-acquisition-coverage-and-canonical-identity.md) — official-source registry, acquisition/versioning, duplicate resolution, canonical case identity, measurable corpus coverage, and freshness.
+9. [`08-source-acquisition-coverage-and-canonical-identity.md`](./08-source-acquisition-coverage-and-canonical-identity.md) — official-source registry, acquisition/versioning, compilation segmentation, duplicate resolution, canonical case identity, measurable corpus coverage, and freshness.
 10. [`09-tenancy-authentication-and-access-control.md`](./09-tenancy-authentication-and-access-control.md) — organization/user model, roles, authorization invariants, worker execution scope, private/public evidence boundaries, and negative isolation tests.
 11. [`10-job-state-machines-and-reproducibility.md`](./10-job-state-machines-and-reproducibility.md) — ingestion/research state machines, retries, idempotency, failure taxonomy, corpus snapshots, and reproducible report provenance.
 12. [`11-benchmark-annotation-and-evaluation-protocol.md`](./11-benchmark-annotation-and-evaluation-protocol.md) — how real legal research tasks are annotated, critical/adverse authority labels, evidence judgments, locked test sets, regression gates, and failure analysis.
@@ -22,6 +22,7 @@ The documents are intentionally ordered from product intent to implementation, o
 14. [`13-technology-stack-and-implementation-decisions.md`](./13-technology-stack-and-implementation-decisions.md) — frozen MVP stack, ADOPT/TRIAL/ASSESS/HOLD decisions, backend/frontend boundaries, PostgreSQL/pgvector/Supabase policy, retrieval stack, model-provider abstraction, and workflow-engine decision rules.
 15. [`14-repository-structure-ci-and-testing.md`](./14-repository-structure-ci-and-testing.md) — Request-Engine-inspired repository organization, modular-monolith boundaries, Python/frontend toolchains, test taxonomy, CI jobs, regression evidence, branch policy, and engineering Definition of Done.
 16. [`15-docker-coolify-deployment-and-operations.md`](./15-docker-coolify-deployment-and-operations.md) — Docker/Compose runtime contract, Coolify Git-backed deployment, networking, health checks, migrations, secrets, CI-gated deployment, storage, backups, observability, scaling, smoke tests, and rollback policy.
+17. [`16-pilot-corpus-and-first-mvp-validation-slice.md`](./16-pilot-corpus-and-first-mvp-validation-slice.md) — the existing Supreme Court Storage inventory, first 2025 compilation fixture, compilation-to-case segmentation, duplicate evidence, staged corpus expansion, retrieval experiments, and first vertical-slice Definition of Done.
 
 ## Current MVP definition
 
@@ -29,7 +30,7 @@ JurisNexo is a multi-tenant experimental legal research product initially valida
 
 The first product is a **Precedent & Adverse Authority Report**. A user provides a legal question or fact pattern. JurisNexo investigates relevant Dominican jurisprudence, reviews supporting and adverse authorities, follows material citations, verifies important claims against primary sources, and returns an auditable report.
 
-The MVP should begin with SCJ/TC jurisprudence and a deliberately constrained corpus/domain if necessary.
+The MVP begins with a deliberately constrained SCJ corpus using real Supreme Court compilation PDFs already present in the JurisNexo Supabase Storage project. TC and broader corpus expansion follow after the first ingestion/retrieval slice is trustworthy.
 
 ## Frozen implementation direction
 
@@ -69,6 +70,8 @@ Technologies explicitly marked TRIAL or ASSESS remain benchmark-driven and are n
 ## Non-negotiable invariants
 
 - Primary legal sources remain immutable and authoritative.
+- A physical PDF artifact is not assumed to be one canonical judicial case.
+- Compilation PDFs must be segmented into individual candidate decisions with exact page provenance.
 - Model-generated interpretation never silently becomes source truth.
 - Public jurisprudence and tenant-private content are separate data classes.
 - Every material report claim must be traceable to evidence.
@@ -86,25 +89,28 @@ Technologies explicitly marked TRIAL or ASSESS remain benchmark-driven and are n
 
 ## Immediate implementation target
 
-Build the smallest end-to-end slice that can prove the thesis:
+Build the smallest end-to-end slice that can prove the thesis using the existing SCJ source material:
 
 ```text
-representative SCJ/TC decisions
-    -> source registry + immutable acquisition
+SCJ Jan-Apr 2025 compilation
+    -> immutable artifact registration + content hash
+    -> page-preserving extraction
+    -> individual decision segmentation
     -> canonical identity + normalized page-level corpus
-    -> measurable coverage/freshness
-    -> searchable retrieval baseline
-    -> legal research request
+    -> searchable lexical + semantic retrieval baseline
+    -> benchmark legal research request
     -> iterative agent research
     -> case subagent review
-    -> adverse search + citation traversal
-    -> evidence verification
+    -> adverse search + citation traversal when applicable
+    -> evidence verification against original pages
     -> auditable report snapshot
     -> legal-user feedback
 ```
 
 Only after this slice works should corpus breadth and sophisticated retrieval/graph techniques become the priority.
 
+The existing Supreme Court Storage collection is a meaningful head start, but it is raw source material rather than evidence that the corpus or MVP is already complete.
+
 ## Documentation completeness rule
 
-An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, or production deployment, it should be reflected in these documents or captured explicitly as an open decision.
+An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, production deployment, source segmentation, or canonical identity, it should be reflected in these documents or captured explicitly as an open decision.
