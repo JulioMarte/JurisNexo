@@ -6,6 +6,8 @@ The corpus layer must make Dominican jurisprudence searchable, comparable, audit
 
 The data model should support the MVP today and deeper precedent intelligence later.
 
+The concrete PostgreSQL implementation direction, including physical artifacts, compilation segmentation, date semantics, indexes, and migration order, is defined in [`17-database-schema-and-temporal-legal-metadata.md`](./17-database-schema-and-temporal-legal-metadata.md).
+
 ## 2. Source hierarchy
 
 Every record must retain its origin.
@@ -32,6 +34,8 @@ For each source artifact retain:
 
 Never discard the original source after extraction.
 
+A source artifact is not necessarily a judicial decision. Official publications may be compilations containing many decisions. JurisNexo must model the physical artifact independently from the canonical cases contained in it.
+
 ## 3. Core entities
 
 ### `courts`
@@ -57,11 +61,11 @@ Suggested fields:
 - `decision_number`;
 - `case_number` / docket identifier when available;
 - `decision_date`;
-- `chamber`;
+- `decision_date_status`;
+- `chamber` / normalized court organ;
 - `matter`;
 - `procedure_type`;
 - `title`;
-- `source_artifact_id`;
 - `normalization_level`;
 - `language`;
 - `ingestion_status`;
@@ -69,18 +73,39 @@ Suggested fields:
 
 Case identity should be normalized carefully because public sources may use inconsistent formatting.
 
+`decision_date` is a first-class legal fact and must not be confused with filing dates, lower-court decision dates, publication dates, acquisition timestamps, or PDF metadata dates. Unknown or conflicting decision dates must remain explicitly unresolved rather than being guessed.
+
+### `case_artifact_occurrences`
+
+A canonical case may appear inside a compilation PDF, as a standalone PDF, or in multiple official representations.
+
+This relation should preserve:
+
+- `case_id`;
+- source artifact;
+- physical start/end page;
+- offsets when a boundary occurs mid-page;
+- segmentation method;
+- segmentation confidence/status;
+- preferred representation.
+
+This prevents the false invariant `one PDF = one case`.
+
 ### `case_pages`
 
 Suggested fields:
 
 - `case_id`;
-- `page_number`;
-- `text`;
-- `ocr_confidence` when applicable;
-- `page_image_ref` when applicable;
+- physical artifact-page reference;
+- legal/case page number when available;
+- page order;
+- text;
+- OCR confidence when applicable;
 - optional layout coordinates.
 
 Page boundaries are first-class data because citations must be auditable.
+
+Physical PDF page numbering and the page numbering printed inside a judicial decision must remain distinguishable.
 
 ### `passages`
 
@@ -95,7 +120,8 @@ Suggested fields:
 - `text`;
 - `section_type` if known;
 - `token_count`;
-- vector embedding when enabled;
+- chunking/index generation metadata;
+- vector embedding through a versioned relation when enabled;
 - full-text search representation.
 
 Chunking should preserve provenance and should never prevent reconstructing the original page context.
@@ -134,7 +160,25 @@ Suggested fields:
 
 Links cases to legal references with page-level provenance.
 
-## 4. Interpretive entities
+## 4. Temporal legal metadata
+
+Legal research is temporal. The database and search contracts must support chronology directly.
+
+At minimum distinguish:
+
+- decision date of the authority being researched;
+- date of the lower-court decision being challenged;
+- filing/procedural dates;
+- artifact publication date;
+- acquisition/indexing timestamps.
+
+Search must eventually support `decided_before`, `decided_after`, ranges, and an `as_of_date` research constraint.
+
+`as_of_date` has substantive meaning: authority issued later than that date must not be presented as if it were available law at the historical research point, although later treatment may be discussed separately.
+
+Chronology is also required for later-treatment analysis: a newer decision may reiterate, limit, distinguish, clarify, conflict with, or supersede treatment associated with earlier authority. Recency alone never determines legal authority, but dates are necessary to reconstruct that evolution.
+
+## 5. Interpretive entities
 
 Interpretive entities are model-derived and must remain distinguishable from primary-source facts.
 
@@ -198,14 +242,15 @@ Every non-explicit relation must record:
 
 Do not collapse all graph relationships into a generic `RELATED_TO` edge.
 
-## 5. Provenance model
+## 6. Provenance model
 
 Every important extracted proposition should be traceable to:
 
 ```text
 case
   -> source artifact
-  -> page
+  -> physical page
+  -> case/evidence page
   -> passage / exact supporting text
 ```
 
@@ -213,7 +258,7 @@ A report claim should ultimately point to this chain.
 
 The system should allow the user to move from a generated conclusion to the exact source page with minimal friction.
 
-## 6. OCR and born-digital documents
+## 7. OCR and born-digital documents
 
 Ingestion should first determine whether the source has usable native text.
 
@@ -234,7 +279,7 @@ OCR output is derived data and must not replace the original image.
 
 Low-confidence pages should be eligible for human review or stronger OCR processing.
 
-## 7. Normalization levels
+## 8. Normalization levels
 
 ### Level 0 — archived
 
@@ -246,7 +291,7 @@ Minimum viable normalized form:
 
 - identity;
 - court;
-- date;
+- decision date with provenance/status;
 - page text;
 - FTS representation;
 - provenance.
@@ -282,7 +327,7 @@ Adds human/model-audited:
 
 The MVP does not require Level 4 coverage across the whole corpus.
 
-## 8. Lazy deep normalization
+## 9. Lazy deep normalization
 
 All cases should become cheaply searchable first.
 
@@ -302,7 +347,7 @@ Example:
 
 This makes cost proportional to legal importance and observed use.
 
-## 9. Corpus quality rules
+## 10. Corpus quality rules
 
 A case should not be available for high-confidence citation if:
 
@@ -314,12 +359,13 @@ A case should not be available for high-confidence citation if:
 
 The research runtime may still surface such a case with explicit warnings.
 
-## 10. Search indexes
+## 11. Search indexes
 
 Initial indexes should support:
 
 - case identifier exact search;
 - court/chamber/date filters;
+- chronological retrieval by court/organ;
 - full-text ranking;
 - legal-reference lookup;
 - citation source/target traversal;
@@ -327,7 +373,7 @@ Initial indexes should support:
 
 Index implementation is replaceable. Stable query semantics matter more than selecting a fashionable search backend.
 
-## 11. Tenant-private documents
+## 12. Tenant-private documents
 
 Private organization uploads are a separate corpus class.
 
@@ -339,7 +385,7 @@ They must:
 - never enrich shared legal intelligence unless an explicit future opt-in and review process exists;
 - be deletable according to retention policy.
 
-## 12. Data model principle
+## 13. Data model principle
 
 JurisNexo should preserve three epistemic layers:
 
