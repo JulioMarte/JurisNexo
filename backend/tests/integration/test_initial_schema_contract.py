@@ -150,7 +150,18 @@ def test_spanish_fts_matches_legal_phrase(connection: psycopg.Connection[Any]) -
         assert cursor.fetchone() == (True,)
 
 
-def test_temporal_indexes_exist(connection: psycopg.Connection[Any]) -> None:
+def test_required_corpus_indexes_exist(connection: psycopg.Connection[Any]) -> None:
+    expected = {
+        "cases_decision_date_idx",
+        "cases_court_date_idx",
+        "cases_organ_date_idx",
+        "passages_fts_idx",
+        "source_artifacts_source_registry_idx",
+        "cases_decision_date_evidence_page_idx",
+        "case_identifiers_case_idx",
+        "case_identifiers_evidence_page_idx",
+    }
+
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -161,7 +172,18 @@ def test_temporal_indexes_exist(connection: psycopg.Connection[Any]) -> None:
         )
         indexes = {row[0] for row in cursor.fetchall()}
 
-    assert "cases_decision_date_idx" in indexes
-    assert "cases_court_date_idx" in indexes
-    assert "cases_organ_date_idx" in indexes
-    assert "passages_fts_idx" in indexes
+    assert expected <= indexes
+
+
+def test_alembic_version_table_has_rls_enabled(connection: psycopg.Connection[Any]) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select relrowsecurity
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname = 'alembic_version'
+            """
+        )
+        assert cursor.fetchone() == (True,)
