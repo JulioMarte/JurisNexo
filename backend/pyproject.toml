@@ -34,6 +34,11 @@ src = ["src", "tests", "migrations"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Long SQL literals are more readable and auditable when they preserve their SQL shape.
+"migrations/versions/*.py" = ["E501"]
+"tests/integration/test_initial_schema_contract.py" = ["E501"]
+
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.13"
