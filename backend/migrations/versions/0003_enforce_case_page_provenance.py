@@ -1,13 +1,13 @@
 """Enforce same-case page provenance for extracted legal metadata.
 
-Revision ID: 0003_enforce_case_page_provenance
+Revision ID: 0003_case_page_provenance
 Revises: 0002_harden_migration_metadata
 Create Date: 2026-09-10
 """
 
 from alembic import op
 
-revision = "0003_enforce_case_page_provenance"
+revision = "0003_case_page_provenance"
 down_revision = "0002_harden_migration_metadata"
 branch_labels = None
 depends_on = None
