@@ -16,6 +16,11 @@ def get_database_url() -> str:
     url = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("MIGRATION_DATABASE_URL or DATABASE_URL must be set")
+
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url.removeprefix("postgres://")
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
     return url
 
 
