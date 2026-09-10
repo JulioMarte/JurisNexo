@@ -1,0 +1,55 @@
+[project]
+name = "jurisnexo-backend"
+version = "0.1.0"
+description = "JurisNexo legal research backend"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.16,<2",
+    "fastapi>=0.116,<1",
+    "psycopg[binary]>=3.2,<4",
+    "pydantic-settings>=2.10,<3",
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.400,<2",
+    "pytest>=8.4,<10",
+    "ruff>=0.12,<1",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jurisnexo"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests", "migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
+markers = [
+    "unit: pure or isolated unit tests",
+    "postgres: requires PostgreSQL",
+    "integration: crosses component boundaries",
+    "invariant: proves a durable correctness or safety property",
+    "security: protects authority, tenant isolation, privacy, or least privilege",
+    "provenance: protects source and evidence integrity",
+    "temporal: protects legal-date and as-of semantics",
+    "retrieval: protects supported retrieval behavior",
+]
