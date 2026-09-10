@@ -16,61 +16,108 @@ Deliverables:
 - research-agent contract;
 - evaluation plan;
 - security/privacy baseline;
-- explicit open decisions.
+- explicit open decisions;
+- technology stack and deployment contract;
+- CI/testing contract;
+- pilot-corpus contract.
 
 Exit condition:
 
-The team can explain what the MVP is, what it is not, and how success will be measured without relying on unwritten assumptions.
+The team can explain what the MVP is, what it is not, how it will be built, what source material will be used first, and how success will be measured without relying on unwritten assumptions.
 
 ## 3. Phase 1 — corpus ingestion proof
 
-Goal: prove that official legal sources can be turned into reliable searchable records.
+Goal: prove that real Supreme Court source material can be turned into reliable searchable judicial records while preserving page-level provenance.
 
-Recommended scope:
+### Initial source
 
-- a small SCJ and/or TC sample;
-- mix born-digital PDFs and scanned PDFs;
-- retain page-level provenance.
+The first canonical ingestion fixture is the existing Supabase Storage artifact:
+
+```text
+Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
+```
+
+This is a compilation and must not be modeled as one judicial case merely because it is one PDF.
+
+The primary Phase 1 risk is therefore not bulk downloading. It is correctly transforming a compilation into individually identifiable, page-traceable decisions.
 
 Deliverables:
 
-- source downloader/importer;
-- artifact storage;
-- text extraction;
-- OCR fallback;
-- normalized case identity;
-- page records;
+- artifact registration from existing Storage;
+- cryptographic content hashing;
+- immutable artifact provenance;
+- text extraction with page boundaries;
+- extraction-quality assessment;
+- OCR fallback where required;
+- decision-boundary detection;
+- normalized/canonical case identity;
+- artifact-page-to-case linkage;
+- baseline citation extraction;
 - baseline quality checks;
-- ingestion idempotency.
+- ingestion idempotency;
+- exact-content duplicate detection.
+
+Manual validation must inspect a representative sample of segmented decisions rather than trusting parser output automatically.
 
 Exit condition:
 
-At least several hundred representative decisions can be ingested repeatedly without losing source/page provenance.
+The selected compilation can be re-ingested without duplicate logical records, individual decisions are separated with acceptable accuracy, every normalized passage can be traced to an original artifact page, uncertain boundaries/identities are represented explicitly, and duplicate source artifacts do not become duplicate canonical cases.
 
-## 4. Phase 2 — searchable corpus
+Volume is not the Phase 1 exit condition.
+
+## 4. Phase 2 — searchable pilot corpus
 
 Goal: establish a strong, measurable retrieval baseline before adding complex agents.
+
+Initial corpus should remain deliberately constrained. After the early-2025 compilation is validated, expand first to recent 2024 and 2023 SCJ compilations rather than immediately processing the entire historical archive.
+
+Recommended early expansion:
+
+```text
+2025 Jan-Apr
+2024 Jan-Apr
+2024 May-Aug
+2024 Sep-Dec
+2023 Jan-Apr
+2023 May-Aug
+2023 Sep-Dec
+```
 
 Deliverables:
 
 - exact decision/reference search;
 - metadata filters;
-- PostgreSQL full-text search;
-- semantic retrieval if useful;
-- result fusion;
+- PostgreSQL full-text lexical search;
+- semantic retrieval;
+- RRF fusion baseline;
+- reranker experiment;
 - stable Search API;
-- corpus browser for internal testing.
+- corpus browser for internal testing;
+- versioned retrieval profiles;
+- initial 10-20 question manually reviewed legal benchmark.
 
 Evaluation:
 
-- initial Recall@K;
+- Recall@K;
 - nDCG@K;
+- Critical Miss Rate;
+- adverse-authority recall where applicable;
+- evidence-page correctness;
 - search latency;
 - common failure analysis.
 
+Compare at minimum:
+
+```text
+lexical only
+semantic only
+lexical + semantic + RRF
+lexical + semantic + RRF + reranker
+```
+
 Exit condition:
 
-Known relevant decisions for a seed benchmark are discoverable with acceptable recall.
+Known relevant decisions for the seed benchmark are discoverable with acceptable recall, retrieval regressions can be measured, and the system can prove that retrieved evidence maps back to exact source pages.
 
 ## 5. Phase 3 — citation linking and case reader
 
@@ -103,8 +150,10 @@ Root agent tools:
 - `get_citations`;
 - `get_citing_cases`;
 - `spawn_case_analysis`;
-- `run_python`;
+- deterministic aggregation tools;
 - `verify_claim`.
+
+A general-purpose Python sandbox is not required for the first agent version if bounded deterministic tools cover the needed operations.
 
 Required behavior:
 
@@ -239,6 +288,7 @@ Consider:
 - ColBERT/multi-vector retrieval;
 - SPLADE;
 - learned reranking;
+- dedicated BM25/search engine;
 - domain fine-tuning.
 
 ### Legal-comparison bottleneck
@@ -275,10 +325,15 @@ Consider:
 - LOTUS-style semantic operators;
 - improved hierarchical document navigation.
 
+### Workflow-durability bottleneck
+
+If queue-based execution becomes difficult to reason about because of retries, branching, cancellation, fan-out, or long-lived research jobs, evaluate a durable workflow engine such as Temporal or Hatchet against the existing worker abstraction.
+
 ## 13. Explicit non-goals before validation
 
 Do not prioritize:
 
+- ingesting every currently available historical PDF merely because it exists;
 - national full-corpus perfection;
 - autonomous legal drafting;
 - outcome prediction;
@@ -291,31 +346,36 @@ Do not prioritize:
 
 ## 14. First build slice
 
-The smallest credible vertical slice is:
+The smallest credible vertical slice is now concrete:
 
 ```text
-50–500 representative decisions
-        -> ingest with page provenance
-        -> searchable index
-        -> submit one legal question
-        -> retrieve candidates
-        -> subagent reviews selected cases
-        -> adverse search
-        -> verify claims
+SCJ Jan-Apr 2025 compilation
+        -> immutable artifact + checksum
+        -> page-preserving extraction
+        -> individual decision segmentation
+        -> canonical case records
+        -> searchable passages
+        -> lexical + semantic retrieval baseline
+        -> one benchmark legal question
+        -> retrieve candidate cases
+        -> bounded analysis of selected cases
+        -> adverse search when applicable
+        -> verify evidence against source pages
         -> generate one auditable report
 ```
 
-This slice should be completed before expanding corpus or features aggressively.
+This slice should be completed before aggressively expanding corpus volume or product features.
 
 ## 15. Definition of MVP done
 
-The MVP is not done when the UI looks polished.
+The MVP is not done when the UI looks polished, when 34 PDFs have been embedded, or when a chatbot can quote a chunk.
 
 It is done when:
 
 - multiple organizations can use it;
 - a real question can complete end to end;
 - primary sources are preserved;
+- compilations become correctly segmented canonical decisions;
 - supporting and adverse research occur;
 - important report claims are verified;
 - sources are auditable by page;
@@ -323,3 +383,18 @@ It is done when:
 - private data is tenant isolated;
 - benchmark and product metrics are captured;
 - at least a small pilot can evaluate real time saved.
+
+## 16. Corpus expansion principle
+
+The existing Supreme Court collection is a head start, not a reason to optimize prematurely for volume.
+
+The correct order is:
+
+```text
+one artifact correct
+    -> one recent corpus measurable
+    -> one research workflow trustworthy
+    -> then expand coverage
+```
+
+If one compilation cannot be transformed reliably into canonical, page-traceable legal evidence, processing thirty-four compilations only creates a larger unreliable corpus.
