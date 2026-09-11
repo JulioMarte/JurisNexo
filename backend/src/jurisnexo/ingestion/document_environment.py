@@ -44,7 +44,13 @@ class DocumentEnvironment:
         clipped, truncated = self._clip(text)
         return PageView(page_number=page_number, text=clipped, truncated=truncated)
 
-    def get_pages(self, start_page: int, end_page: int, *, max_pages: int = 8) -> tuple[PageView, ...]:
+    def get_pages(
+        self,
+        start_page: int,
+        end_page: int,
+        *,
+        max_pages: int = 8,
+    ) -> tuple[PageView, ...]:
         if start_page > end_page:
             raise DocumentEnvironmentError("start_page must be <= end_page")
         self._validate_page_number(start_page)
