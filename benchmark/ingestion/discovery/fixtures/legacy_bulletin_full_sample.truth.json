@@ -1,0 +1,6 @@
+{
+  "artifact_class": "bulletin",
+  "has_index": true,
+  "index_pages": [1],
+  "segment_start_pages": [5, 12, 20]
+}
