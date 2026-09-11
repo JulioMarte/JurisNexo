@@ -20,10 +20,7 @@
       "decision_date",
       "court_organ"
     ],
-    "family_minimums": {
-      "principales_2023_2024_resolution": 4,
-      "principales_2025_pleno_resolution": 4
-    }
+    "family_minimums": {}
   },
   "promotion_thresholds": {
     "boundary_precision": 0.99,
