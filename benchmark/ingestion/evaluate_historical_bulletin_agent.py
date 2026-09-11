@@ -69,13 +69,14 @@ def _resolved_pages_from_output(tool_output: str) -> dict[int, int]:
 
 def _navigation_evidence(
     result: dict[str, Any],
-) -> tuple[set[int], set[int], dict[int, int]]:
+) -> tuple[set[int], set[int], set[int], dict[int, int]]:
     steps = result.get("steps")
     if not isinstance(steps, list):
         raise ValueError("discovery result steps must be a list")
 
     direct_attempts: set[int] = set()
     range_attempts: set[int] = set()
+    delegated_range_attempts: set[int] = set()
     resolved: dict[int, int] = {}
     for step in steps:
         if not isinstance(step, dict):
@@ -93,15 +94,21 @@ def _navigation_evidence(
             if not isinstance(printed_page, int):
                 continue
             direct_attempts.add(printed_page)
-        elif tool == "get_printed_pages":
+        elif tool in {"get_printed_pages", "delegate_printed_pages"}:
             start = decision.get("start_printed_page_number")
             end = decision.get("end_printed_page_number")
             if not isinstance(start, int) or not isinstance(end, int) or start > end:
                 continue
-            range_attempts.update(range(start, end + 1))
+            requested = set(range(start, end + 1))
+            range_attempts.update(requested)
+            if tool == "delegate_printed_pages":
+                delegated_range_attempts.update(requested)
         else:
             continue
 
+        # For delegated reads this intentionally scores only page headers that the
+        # harness exposed back to the parent as trace-backed evidence. The whole
+        # delegated range is not silently treated as parent-visible evidence.
         for printed_page, view_page in _resolved_pages_from_output(tool_output).items():
             previous = resolved.get(printed_page)
             if previous is not None and previous != view_page:
@@ -110,7 +117,7 @@ def _navigation_evidence(
                 )
             resolved[printed_page] = view_page
 
-    return direct_attempts, range_attempts, resolved
+    return direct_attempts, range_attempts, delegated_range_attempts, resolved
 
 
 def _int_list(value: object) -> list[int] | None:
@@ -146,10 +153,14 @@ def _semantic_confirmations(
 
         support_errors: list[str] = []
         if evidence_printed is None or not evidence_printed:
-            support_errors.append("evidence_printed_pages must contain inspected printed pages")
+            support_errors.append(
+                "evidence_printed_pages must contain inspected printed pages"
+            )
             evidence_printed = []
         if evidence_views is None or not evidence_views:
-            support_errors.append("evidence_view_pages must contain inspected view pages")
+            support_errors.append(
+                "evidence_view_pages must contain inspected view pages"
+            )
             evidence_views = []
 
         missing_from_trace = sorted(set(evidence_printed) - set(resolved_pages))
@@ -165,14 +176,19 @@ def _semantic_confirmations(
             if printed_page in resolved_pages
         }
         if set(evidence_views) != expected_views:
-            support_errors.append("evidence_view_pages do not match resolved printed-page trace")
+            support_errors.append(
+                "evidence_view_pages do not match resolved printed-page trace"
+            )
 
         if status in _CONFIRMED_STATUSES:
             if reference not in evidence_printed:
                 support_errors.append(
                     "confirmed reference itself was not cited as inspected evidence"
                 )
-            if not isinstance(observed_start, int) or observed_start not in evidence_printed:
+            if (
+                not isinstance(observed_start, int)
+                or observed_start not in evidence_printed
+            ):
                 support_errors.append(
                     "confirmed observed start was not cited as inspected evidence"
                 )
@@ -213,7 +229,12 @@ def main() -> None:
         )
 
     gold_pages = _gold_pages(gold)
-    direct_attempts, range_attempts, resolved_pages = _navigation_evidence(result)
+    (
+        direct_attempts,
+        range_attempts,
+        delegated_range_attempts,
+        resolved_pages,
+    ) = _navigation_evidence(result)
     attempted_pages = direct_attempts | range_attempts
     investigative_neighbors = range_attempts - direct_attempts
     verified_pages = set(resolved_pages)
@@ -252,13 +273,18 @@ def main() -> None:
         "status": "PASS" if navigation_passed else "FAIL",
         "navigation_status": "PASS" if navigation_passed else "FAIL",
         "semantic_status": (
-            "PASS" if semantic_passed else "FAIL" if semantic_available else "NOT_AVAILABLE"
+            "PASS"
+            if semantic_passed
+            else "FAIL"
+            if semantic_available
+            else "NOT_AVAILABLE"
         ),
         "metrics": {
             "gold_reference_count": len(gold_pages),
             "attempted_printed_pages": sorted(attempted_pages),
             "direct_printed_page_attempts": sorted(direct_attempts),
             "range_printed_page_attempts": sorted(range_attempts),
+            "delegated_printed_page_attempts": sorted(delegated_range_attempts),
             "investigative_neighbor_attempts": sorted(investigative_neighbors),
             "verified_printed_pages": sorted(verified_pages),
             "verified_gold_references": sorted(verified_gold_pages),
@@ -277,8 +303,9 @@ def main() -> None:
             "minimum_distinct_verified_index_references": minimum_verified,
             "require_index_detected": require_index_detected,
             "note": (
-                "status preserves the frozen v1 navigation acceptance rule; semantic_status "
-                "requires confirmation evidence to be present in the inspected tool trace"
+                "status preserves the frozen v1 navigation acceptance rule; "
+                "semantic_status requires evidence exposed in the parent tool trace, "
+                "including trace-backed evidence returned by delegated locators"
             ),
         },
     }
