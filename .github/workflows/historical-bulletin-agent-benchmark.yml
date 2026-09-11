@@ -155,8 +155,10 @@ jobs:
               'tools': [step['decision']['tool'] for step in payload['steps']],
               'status': payload['hypothesis']['status'],
               'artifact_class': payload['hypothesis']['artifact_class'],
-              'benchmark_status': score['status'],
+              'navigation_status': score['navigation_status'],
+              'semantic_status': score['semantic_status'],
               'benchmark_metrics': score['metrics'],
+              'semantic_metrics': score['semantic_metrics'],
           }
           print(json.dumps(summary, ensure_ascii=False, indent=2))
           PY
