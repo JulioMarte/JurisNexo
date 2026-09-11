@@ -1,0 +1,161 @@
+name: Historical bulletin agent benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: Official Poder Judicial historical bulletin PDF URL
+        required: true
+        default: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
+        type: string
+      model:
+        description: Gemini model ID
+        required: true
+        default: gemini-3.8-flash
+        type: string
+      service_tier:
+        description: Gemini inference tier
+        required: true
+        default: flex
+        type: choice
+        options:
+          - flex
+          - standard
+          - priority
+      thinking_level:
+        description: Gemini thinking level
+        required: true
+        default: medium
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+      max_model_calls:
+        description: Hard ceiling including final synthesis
+        required: true
+        default: "8"
+        type: string
+      max_total_tokens:
+        description: Provider-reported cumulative token ceiling
+        required: true
+        default: "40000"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: historical-bulletin-agent-benchmark
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover real historical bulletin structure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: llm-benchmark
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      LLM_MODEL: ${{ inputs.model }}
+      LLM_SERVICE_TIER: ${{ inputs.service_tier }}
+      LLM_THINKING_LEVEL: ${{ inputs.thinking_level }}
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install PDF inspection tools
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: 0.12.4
+
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
+      - name: Install locked backend environment
+        working-directory: backend
+        run: uv sync --frozen --group dev
+
+      - name: Require Gemini secret
+        run: |
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "GEMINI_API_KEY is not configured in the llm-benchmark Environment." >&2
+            exit 1
+          fi
+
+      - name: Acquire official PDF with verified TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_URL="${{ inputs.source_url }}"
+          case "$SOURCE_URL" in
+            https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/*.pdf|https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/*.PDF)
+              ;;
+            *)
+              echo "Refusing non-allowlisted source URL: $SOURCE_URL" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p benchmark-output
+          curl --fail --location --show-error --silent \
+            --retry 3 --retry-all-errors --connect-timeout 30 --max-time 600 \
+            "$SOURCE_URL" -o benchmark-output/source.pdf
+          test "$(head -c 4 benchmark-output/source.pdf)" = "%PDF" || {
+            echo "Downloaded object is not a PDF" >&2
+            exit 1
+          }
+          printf '%s\n' "$SOURCE_URL" > benchmark-output/source-origin.txt
+          sha256sum benchmark-output/source.pdf | tee benchmark-output/sha256.txt
+          pdftotext -bbox-layout \
+            benchmark-output/source.pdf \
+            benchmark-output/bbox-layout.html
+
+      - name: Run bounded Gemini discovery over logical pages
+        working-directory: backend
+        run: |
+          uv run python ../benchmark/ingestion/run_agentic_scanned_document_discovery.py \
+            --bbox ../benchmark-output/bbox-layout.html \
+            --output ../benchmark-output/discovery-result.json \
+            --artifact-label "Official SCJ Boletín Judicial Núm. 831, Febrero 1980. Investigate whether the SUMARIO functions as an index of judicial decisions and verify multiple index references against resolved printed pages before proposing a reusable segmentation strategy." \
+            --model "${{ inputs.model }}" \
+            --service-tier "${{ inputs.service_tier }}" \
+            --thinking-level "${{ inputs.thinking_level }}" \
+            --max-model-calls "${{ inputs.max_model_calls }}" \
+            --max-total-tokens "${{ inputs.max_total_tokens }}"
+
+      - name: Show bounded benchmark summary
+        working-directory: backend
+        run: |
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path('../benchmark-output/discovery-result.json').read_text())
+          summary = {
+              'model': payload['model'],
+              'service_tier': payload['service_tier'],
+              'document_view': payload['document_view'],
+              'environment': payload['environment'],
+              'usage': payload['usage'],
+              'tools': [step['decision']['tool'] for step in payload['steps']],
+              'status': payload['hypothesis']['status'],
+              'artifact_class': payload['hypothesis']['artifact_class'],
+          }
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-bulletin-agent-${{ inputs.service_tier }}-${{ github.run_id }}
+          path: |
+            benchmark-output/source-origin.txt
+            benchmark-output/sha256.txt
+            benchmark-output/discovery-result.json
+          if-no-files-found: error
+          retention-days: 14

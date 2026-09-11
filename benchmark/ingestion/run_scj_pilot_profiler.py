@@ -15,7 +15,6 @@ from jurisnexo.ingestion.scj_metadata import MetadataObservation
 from jurisnexo.ingestion.scj_segment_metadata import parse_scj_segment_metadata
 from jurisnexo.ingestion.scj_segmentation import CaseSegment, segment_scj_pages
 
-
 _DECLARED_DECISIONS_RE = re.compile(
     r"(?is)cuenta\s+con\s+(?P<count>\d{1,3})\s+(?:decisiones|sentencias)"
 )

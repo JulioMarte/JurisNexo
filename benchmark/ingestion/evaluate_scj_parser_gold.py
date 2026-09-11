@@ -19,7 +19,6 @@ from jurisnexo.ingestion.scj_gold_evaluation import (
     evaluate_stratified,
 )
 
-
 _SUPPORTED_REVIEW_STATUSES = {"reviewed", "adjudicated"}
 _SCHEMA_VERSION = 1
 

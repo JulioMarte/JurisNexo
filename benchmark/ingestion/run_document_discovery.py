@@ -16,7 +16,9 @@ _MAX_INPUT_CHARS = 120_000
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run one bounded document-structure discovery call")
+    parser = argparse.ArgumentParser(
+        description="Run one bounded document-structure discovery call"
+    )
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--artifact-label", required=True)
@@ -77,7 +79,10 @@ def main() -> None:
         "hypothesis": result.hypothesis.model_dump(mode="json"),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
