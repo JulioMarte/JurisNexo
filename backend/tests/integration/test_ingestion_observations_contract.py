@@ -228,14 +228,17 @@ def test_value_type_cannot_use_wrong_normalized_column(
 
 
 def test_parser_version_requires_code_revision(connection: psycopg.Connection[Any]) -> None:
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        with pytest.raises(psycopg.errors.NotNullViolation):
-            cursor.execute(
-                """
-                insert into corpus.parser_versions (parser_name, parser_version)
-                values ('scj_metadata', 'missing-revision-test')
-                """
-            )
+    with (
+        connection.transaction(force_rollback=True),
+        connection.cursor() as cursor,
+        pytest.raises(psycopg.errors.NotNullViolation),
+    ):
+        cursor.execute(
+            """
+            insert into corpus.parser_versions (parser_name, parser_version)
+            values ('scj_metadata', 'missing-revision-test')
+            """
+        )
 
 
 def test_required_ingestion_indexes_exist(connection: psycopg.Connection[Any]) -> None:
