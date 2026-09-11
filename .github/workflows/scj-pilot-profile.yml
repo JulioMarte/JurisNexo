@@ -3,9 +3,13 @@ name: SCJ pilot corpus profile
 on:
   workflow_dispatch:
   push:
-    branches: [benchmark/scj-pilot-profiler]
+    branches:
+      - benchmark/scj-pilot-profiler
+      - feature/scj-layout-parser
     paths:
       - "benchmark/ingestion/**"
+      - "backend/src/jurisnexo/ingestion/**"
+      - "backend/tests/unit/test_scj_*.py"
       - ".github/workflows/scj-pilot-profile.yml"
 
 permissions:
@@ -63,7 +67,7 @@ jobs:
           pdftotext -layout -enc UTF-8 \
             "benchmark-output/${CORPUS_ID}.pdf" \
             "benchmark-output/${CORPUS_ID}.txt"
-      - name: Profile parser coverage and create review sample
+      - name: Profile production parser coverage and create review sample
         env:
           PYTHONPATH: backend/src
         run: |
