@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -119,7 +120,10 @@ def evaluate_discovery_structure(
     )
 
 
-def _match_metrics(predicted: set[object], expected: set[object]) -> MatchMetrics:
+def _match_metrics(
+    predicted: AbstractSet[object],
+    expected: AbstractSet[object],
+) -> MatchMetrics:
     true_positive = len(predicted & expected)
     false_positive = len(predicted - expected)
     false_negative = len(expected - predicted)
