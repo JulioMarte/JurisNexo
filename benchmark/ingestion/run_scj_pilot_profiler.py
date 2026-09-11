@@ -22,6 +22,7 @@ _SS_DATE_RE = re.compile(r"(?im)^\s*Fecha\s*:\s*(?P<value>[^\n\r]+?)\s*$")
 _TS_EXP_RE = re.compile(
     r"(?im)^\s*Exps?\.\s*n[úu]ms?\.?\s*:\s*(?P<value>[^\n\r]+?)\s*$"
 )
+_TS_PARTY_RE = re.compile(r"(?im)^\s*(Recurrente|Recurrido|Solicitud)\b")
 _MATTER_RE = re.compile(r"(?im)^\s*Materia\s*:\s*(?P<value>[^\n\r]+?)\s*$")
 _DECISION_RE = re.compile(r"(?im)^\s*Decisi[oó]n\s*:\s*(?P<value>[^\n\r]+?)\s*$")
 _RESOLUTION_RE = re.compile(
@@ -69,13 +70,19 @@ def _extract_pages(pdf_path: Path) -> list[str]:
 
 
 def _page_signature(page: str) -> PageSignature | None:
-    # SCJ compilations repeat a stable case header on almost every page. We use
-    # only the top of the page so citations in the body cannot become boundaries.
+    # SCJ compilations repeat a stable case header on almost every page. Prefer
+    # structured chamber layouts over SCJ-number matches: a Tercera Sala page
+    # can cite a Primera Sala decision near the top without changing cases.
     header = page[:1800]
 
-    ps_match = _SCJ_PS_RE.search(header[:500])
-    if ps_match is not None:
-        return PageSignature("primera_sala", ps_match.group(0).upper())
+    ts_exp = _TS_EXP_RE.search(header)
+    if (
+        ts_exp is not None
+        and _MATTER_RE.search(header)
+        and _DECISION_RE.search(header)
+        and _TS_PARTY_RE.search(header)
+    ):
+        return PageSignature("tercera_sala", _normalized(ts_exp.group("value")))
 
     ss_exp = _SS_EXP_RE.search(header[:700])
     ss_rec = _SS_REC_RE.search(header[:900])
@@ -93,10 +100,6 @@ def _page_signature(page: str) -> PageSignature | None:
             _normalized(ss_date.group("value")),
         )
 
-    ts_exp = _TS_EXP_RE.search(header)
-    if ts_exp is not None and _MATTER_RE.search(header) and _DECISION_RE.search(header):
-        return PageSignature("tercera_sala", _normalized(ts_exp.group("value")))
-
     resolution = _RESOLUTION_RE.search(header)
     full_court_exp = _FULL_COURT_EXP_RE.search(header)
     if resolution is not None and full_court_exp is not None:
@@ -104,6 +107,10 @@ def _page_signature(page: str) -> PageSignature | None:
             "pleno_or_resolution",
             f"{_normalized(resolution.group('value'))} | {_normalized(full_court_exp.group('value'))}",
         )
+
+    ps_match = _SCJ_PS_RE.search(header[:500])
+    if ps_match is not None:
+        return PageSignature("primera_sala", ps_match.group(0).upper())
 
     return None
 
