@@ -55,8 +55,8 @@ def main() -> None:
         raise SystemExit("GEMINI_API_KEY is required; configure it as a GitHub secret")
 
     raw_xml = args.bbox.read_text(encoding="utf-8", errors="replace")
-    _, xml_replacement_count = sanitize_bbox_layout_xml(raw_xml)
-    physical_pages = parse_bbox_layout(raw_xml)
+    sanitized_xml, xml_replacement_count = sanitize_bbox_layout_xml(raw_xml)
+    physical_pages = parse_bbox_layout(sanitized_xml)
     duplicate_scans = detect_adjacent_duplicate_scans(physical_pages)
     logical_view = materialize_logical_document_view(
         physical_pages=physical_pages,
