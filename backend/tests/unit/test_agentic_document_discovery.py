@@ -77,7 +77,7 @@ def _tool_enum(schema: JsonObject) -> list[str]:
     values = tool["enum"]
     assert isinstance(values, list)
     assert all(isinstance(value, str) for value in values)
-    return values
+    return [value for value in values if isinstance(value, str)]
 
 
 def _candidate_hypothesis() -> JsonObject:
