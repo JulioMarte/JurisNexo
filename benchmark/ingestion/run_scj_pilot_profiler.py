@@ -7,48 +7,18 @@ import re
 import subprocess
 import tempfile
 from collections import Counter, defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jurisnexo.ingestion.scj_metadata import parse_scj_page_metadata
+from jurisnexo.ingestion.scj_layouts import LayoutDetectionStatus
+from jurisnexo.ingestion.scj_metadata import MetadataObservation
+from jurisnexo.ingestion.scj_segment_metadata import parse_scj_segment_metadata
+from jurisnexo.ingestion.scj_segmentation import CaseSegment, segment_scj_pages
 
 
-_SCJ_PS_RE = re.compile(r"\bSCJ-PS-\d{2}-\d{3,6}\b", re.IGNORECASE)
-_SCJ_ANY_RE = re.compile(r"\bSCJ-[A-Z]{2,4}-\d{2}-\d{3,6}\b", re.IGNORECASE)
-_SS_EXP_RE = re.compile(r"(?im)^\s*Exp\.?\s*:?\s*(?P<value>[^\n\r]+?)\s*$")
-_SS_REC_RE = re.compile(r"(?im)^\s*R(?:c|ec)s?\.?\s*:?\s*(?P<value>[^\n\r]+?)\s*$")
-_SS_DATE_RE = re.compile(r"(?im)^\s*Fecha\s*:\s*(?P<value>[^\n\r]+?)\s*$")
-_TS_EXP_RE = re.compile(
-    r"(?im)^\s*Exps?\.\s*n[úu]ms?\.?\s*:\s*(?P<value>[^\n\r]+?)\s*$"
+_DECLARED_DECISIONS_RE = re.compile(
+    r"(?is)cuenta\s+con\s+(?P<count>\d{1,3})\s+(?:decisiones|sentencias)"
 )
-_TS_PARTY_RE = re.compile(r"(?im)^\s*(Recurrente|Recurrido|Solicitud)\b")
-_MATTER_RE = re.compile(r"(?im)^\s*Materia\s*:\s*(?P<value>[^\n\r]+?)\s*$")
-_DECISION_RE = re.compile(r"(?im)^\s*Decisi[oó]n\s*:\s*(?P<value>[^\n\r]+?)\s*$")
-_RESOLUTION_RE = re.compile(
-    r"(?im)^\s*Resoluci[oó]n\s+n[úu]m\.?\s*(?P<value>[^\n\r]+?)\s*$"
-)
-_FULL_COURT_EXP_RE = re.compile(
-    r"(?im)^\s*Expediente\s+n[úu]m\.?:\s*(?P<value>[^\n\r]+?)\s*$"
-)
-
-
-@dataclass(frozen=True, slots=True)
-class PageSignature:
-    layout: str
-    key: str
-    header_date_text: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class CaseRun:
-    signature: PageSignature
-    start_page: int
-    end_page: int
-
-
-def _normalized(value: str) -> str:
-    return " ".join(value.split())
 
 
 def _extract_pages(pdf_path: Path) -> list[str]:
@@ -69,82 +39,18 @@ def _extract_pages(pdf_path: Path) -> list[str]:
     return pages
 
 
-def _page_signature(page: str) -> PageSignature | None:
-    # SCJ compilations repeat a stable case header on almost every page. Prefer
-    # structured chamber layouts over SCJ-number matches: a Tercera Sala page
-    # can cite a Primera Sala decision near the top without changing cases.
-    header = page[:1800]
-
-    ts_exp = _TS_EXP_RE.search(header)
-    if (
-        ts_exp is not None
-        and _MATTER_RE.search(header)
-        and _DECISION_RE.search(header)
-        and _TS_PARTY_RE.search(header)
-    ):
-        return PageSignature("tercera_sala", _normalized(ts_exp.group("value")))
-
-    ss_exp = _SS_EXP_RE.search(header[:700])
-    ss_rec = _SS_REC_RE.search(header[:900])
-    ss_date = _SS_DATE_RE.search(header[:900])
-    if ss_exp is not None and ss_rec is not None and ss_date is not None:
-        return PageSignature(
-            "segunda_sala",
-            " | ".join(
-                (
-                    _normalized(ss_exp.group("value")),
-                    _normalized(ss_rec.group("value")),
-                    _normalized(ss_date.group("value")),
-                )
-            ),
-            _normalized(ss_date.group("value")),
-        )
-
-    resolution = _RESOLUTION_RE.search(header)
-    full_court_exp = _FULL_COURT_EXP_RE.search(header)
-    if resolution is not None and full_court_exp is not None:
-        return PageSignature(
-            "pleno_or_resolution",
-            f"{_normalized(resolution.group('value'))} | {_normalized(full_court_exp.group('value'))}",
-        )
-
-    ps_match = _SCJ_PS_RE.search(header[:500])
-    if ps_match is not None:
-        return PageSignature("primera_sala", ps_match.group(0).upper())
-
-    return None
+def _declared_decision_count(pages: list[str]) -> int | None:
+    front_matter = "\n".join(pages[:12])
+    match = _DECLARED_DECISIONS_RE.search(front_matter)
+    return int(match.group("count")) if match is not None else None
 
 
-def _case_runs(pages: list[str]) -> tuple[list[CaseRun], list[PageSignature | None]]:
-    signatures = [_page_signature(page) for page in pages]
-    runs: list[CaseRun] = []
-    active: PageSignature | None = None
-    active_start = 0
+def _profile_segment(segment: CaseSegment, pages: list[str], ordinal: int) -> dict[str, Any]:
+    by_field: dict[str, list[MetadataObservation]] = defaultdict(list)
+    diagnostics = list(segment.diagnostics)
 
-    for page_number, signature in enumerate(signatures, start=1):
-        if signature is None:
-            continue
-        if active is None:
-            active = signature
-            active_start = page_number
-            continue
-        if signature != active:
-            runs.append(CaseRun(active, active_start, page_number - 1))
-            active = signature
-            active_start = page_number
-
-    if active is not None:
-        runs.append(CaseRun(active, active_start, len(pages)))
-    return runs, signatures
-
-
-def _profile_case(run: CaseRun, pages: list[str], ordinal: int) -> dict[str, Any]:
-    by_field: dict[str, list[Any]] = defaultdict(list)
-    for page_number in range(run.start_page, run.end_page + 1):
-        for observation in parse_scj_page_metadata(
-            pages[page_number - 1], page_number=page_number
-        ):
-            by_field[observation.field_name].append(observation)
+    for observation in parse_scj_segment_metadata(pages, segment):
+        by_field[observation.field_name].append(observation)
 
     decision_numbers = sorted(
         {
@@ -160,24 +66,42 @@ def _profile_case(run: CaseRun, pages: list[str], ordinal: int) -> dict[str, Any
             if observation.normalized_date is not None
         }
     )
-
-    first_page_scj_numbers = sorted(
-        {match.group(0).upper() for match in _SCJ_ANY_RE.finditer(pages[run.start_page - 1])}
+    dockets = sorted(
+        {
+            observation.normalized_text
+            for observation in by_field.get("docket_number", [])
+            if observation.normalized_text is not None
+        }
     )
+    organs = sorted(
+        {
+            observation.normalized_text
+            for observation in by_field.get("court_organ", [])
+            if observation.normalized_text is not None
+        }
+    )
+
+    if len(decision_numbers) > 1:
+        diagnostics.append("multiple_decision_numbers_observed")
+    if len(decision_dates) > 1:
+        diagnostics.append("multiple_decision_dates_observed")
+    if len(organs) > 1:
+        diagnostics.append("multiple_court_organs_observed")
 
     return {
         "ordinal": ordinal,
-        "layout": run.signature.layout,
-        "signature_key": run.signature.key,
-        "start_page": run.start_page,
-        "end_page": run.end_page,
-        "page_count": run.end_page - run.start_page + 1,
-        "header_date_text": run.signature.header_date_text,
-        "first_page_scj_numbers": first_page_scj_numbers,
+        "layout": segment.family.value,
+        "signature_key": segment.signature_key,
+        "start_page": segment.start_page,
+        "end_page": segment.end_page,
+        "page_count": segment.end_page - segment.start_page + 1,
+        "status": segment.status.value,
         "fields_present": sorted(by_field),
         "decision_numbers_observed": decision_numbers,
+        "dockets_observed": dockets,
         "decision_dates_observed": decision_dates,
-        "decision_date_conflict": len(decision_dates) > 1,
+        "court_organs_observed": organs,
+        "diagnostics": sorted(set(diagnostics)),
         "observation_count": sum(len(values) for values in by_field.values()),
     }
 
@@ -204,11 +128,13 @@ def _review_sample(profiles: list[dict[str, Any]], limit: int) -> list[dict[str,
             "start_page": profile["start_page"],
             "end_page": profile["end_page"],
             "parser_decision_numbers": profile["decision_numbers_observed"],
+            "parser_dockets": profile["dockets_observed"],
             "parser_decision_dates": profile["decision_dates_observed"],
-            "header_date_text": profile["header_date_text"],
+            "parser_court_organs": profile["court_organs_observed"],
+            "parser_diagnostics": profile["diagnostics"],
             "gold_boundary_valid": None,
             "gold_decision_number": None,
-            "gold_docket_number": None,
+            "gold_docket_numbers": None,
             "gold_decision_date": None,
             "gold_court_organ": None,
             "review_notes": None,
@@ -223,19 +149,41 @@ def main() -> None:
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--review-sample", type=Path, required=True)
     parser.add_argument("--review-limit", type=int, default=100)
+    parser.add_argument(
+        "--require-declared-count-match",
+        action="store_true",
+        help="fail when front matter declares N decisions and segmentation finds a different N",
+    )
     args = parser.parse_args()
 
     pdf_bytes = args.pdf.read_bytes()
     pages = _extract_pages(args.pdf)
-    runs, page_signatures = _case_runs(pages)
-    profiles = [_profile_case(run, pages, index + 1) for index, run in enumerate(runs)]
+    segments, detections = segment_scj_pages(pages)
+    profiles = [
+        _profile_segment(segment, pages, index + 1)
+        for index, segment in enumerate(segments)
+    ]
 
-    coverage = Counter()
-    layouts = Counter()
+    coverage = Counter[str]()
+    layouts = Counter[str]()
+    diagnostics = Counter[str]()
     for profile in profiles:
         layouts[profile["layout"]] += 1
         for field in profile["fields_present"]:
             coverage[field] += 1
+        for diagnostic in profile["diagnostics"]:
+            diagnostics[diagnostic] += 1
+
+    declared = _declared_decision_count(pages)
+    recognized_pages = sum(
+        detection.status is LayoutDetectionStatus.RECOGNIZED for detection in detections
+    )
+    ambiguous_pages = sum(
+        detection.status is LayoutDetectionStatus.AMBIGUOUS for detection in detections
+    )
+    unknown_pages = sum(
+        detection.status is LayoutDetectionStatus.UNKNOWN for detection in detections
+    )
 
     report = {
         "source": {
@@ -246,22 +194,35 @@ def main() -> None:
         },
         "methodology": {
             "classification": "coverage_profile_not_gold_accuracy",
-            "boundary_method": "contiguous runs of repeated structured page-header signatures",
+            "parser": "production layout + segmentation + segment-aware metadata extraction",
+            "boundary_method": "publication-aware production segmenter",
             "review_sample_limit": args.review_limit,
         },
         "counts": {
-            "case_runs": len(runs),
-            "unique_signatures": len({(run.signature.layout, run.signature.key) for run in runs}),
-            "pages_with_recognized_header": sum(signature is not None for signature in page_signatures),
-            "pages_without_recognized_header": sum(signature is None for signature in page_signatures),
-            "cases_with_multiple_decision_dates": sum(
-                1 for profile in profiles if profile["decision_date_conflict"]
+            "case_segments": len(segments),
+            "declared_decisions_front_matter": declared,
+            "detected_minus_declared": (
+                len(segments) - declared if declared is not None else None
+            ),
+            "recognized_pages": recognized_pages,
+            "ambiguous_pages": ambiguous_pages,
+            "unknown_pages": unknown_pages,
+            "segments_with_multiple_decision_numbers": sum(
+                1
+                for profile in profiles
+                if "multiple_decision_numbers_observed" in profile["diagnostics"]
+            ),
+            "segments_with_multiple_decision_dates": sum(
+                1
+                for profile in profiles
+                if "multiple_decision_dates_observed" in profile["diagnostics"]
             ),
         },
         "layouts": dict(sorted(layouts.items())),
+        "diagnostics": dict(sorted(diagnostics.items())),
         "coverage": {
             field: {
-                "cases": count,
+                "segments": count,
                 "rate": count / len(profiles) if profiles else 0.0,
             }
             for field, count in sorted(coverage.items())
@@ -270,7 +231,9 @@ def main() -> None:
     }
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    args.report.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     sample = _review_sample(profiles, args.review_limit)
     args.review_sample.parent.mkdir(parents=True, exist_ok=True)
@@ -285,11 +248,21 @@ def main() -> None:
                 "counts": report["counts"],
                 "layouts": report["layouts"],
                 "coverage": report["coverage"],
+                "diagnostics": report["diagnostics"],
             },
             ensure_ascii=False,
             indent=2,
         )
     )
+
+    if (
+        args.require_declared_count_match
+        and declared is not None
+        and len(segments) != declared
+    ):
+        raise SystemExit(
+            f"segmentation count mismatch: detected={len(segments)} declared={declared}"
+        )
 
 
 if __name__ == "__main__":

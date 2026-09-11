@@ -31,7 +31,7 @@ def test_extracts_observed_scj_metadata_patterns() -> None:
     assert by_field["decision_summary"].normalized_text == "Rechaza el recurso de casación"
     assert by_field["rapporteur"].normalized_text == "Magistrada Ejemplo"
     assert by_field["decision_date_candidate"].normalized_date == date(2025, 4, 30)
-    assert by_field["decision_date_candidate"].method_name == "scj_decision_formula_date_v1"
+    assert by_field["decision_date_candidate"].method_name == "scj_decision_formula_date_v2"
 
     for observation in observations:
         assert observation.page_number == 7

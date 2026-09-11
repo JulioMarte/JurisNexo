@@ -24,6 +24,8 @@ The documents are intentionally ordered from product intent to implementation, o
 16. [`15-docker-coolify-deployment-and-operations.md`](./15-docker-coolify-deployment-and-operations.md) — Docker/Compose runtime contract, Coolify Git-backed deployment, networking, health checks, migrations, secrets, CI-gated deployment, storage, backups, observability, scaling, smoke tests, and rollback policy.
 17. [`16-pilot-corpus-and-first-mvp-validation-slice.md`](./16-pilot-corpus-and-first-mvp-validation-slice.md) — the existing Supreme Court Storage inventory, first 2025 compilation fixture, compilation-to-case segmentation, duplicate evidence, staged corpus expansion, retrieval experiments, and first vertical-slice Definition of Done.
 18. [`17-database-schema-and-temporal-legal-metadata.md`](./17-database-schema-and-temporal-legal-metadata.md) — database-first implementation contract, PostgreSQL schema namespaces, source-artifact/case separation, concrete corpus tables, decision-date semantics, extraction provenance, index versioning, and migration order.
+19. [`18-current-ingestion-parser-and-resolution-status.md`](./18-current-ingestion-parser-and-resolution-status.md) — factual implementation snapshot for migrations 0004–0008, observation/resolution provenance, dependency reproducibility, legacy-schema quarantine, and the measured 2023–2025 parser findings.
+20. [`19-scj-parser-architecture-and-evaluation-contract.md`](./19-scj-parser-architecture-and-evaluation-contract.md) — versioned SCJ publication/layout families, page detection, segmentation, metadata observations, diagnostics, real-source fixtures, gold evaluation, release gates, and bounded LLM-fallback policy.
 
 ## Current MVP definition
 
@@ -87,8 +89,10 @@ The first ingestion milestone does not require an external LLM API. Deterministi
 - Primary legal sources remain immutable and authoritative.
 - A physical PDF artifact is not assumed to be one canonical judicial case.
 - Compilation PDFs must be segmented into individual candidate decisions with exact page provenance.
+- A parser must identify the publication/layout grammar it recognized; unknown layouts remain unknown rather than being coerced into the nearest known regex.
 - Decision chronology is structured data, not an incidental string inside document text.
 - Unknown or conflicting decision dates must never be silently guessed into verified values.
+- Parser coverage is not precision/recall; automatic canonical promotion requires a human-reviewed gold evaluation.
 - Model-generated interpretation never silently becomes source truth.
 - Public jurisprudence and tenant-private content are separate data classes.
 - Every material report claim must be traceable to evidence.
@@ -101,23 +105,26 @@ The first ingestion milestone does not require an external LLM API. Deterministi
 - Completed reports retain the source/evidence/configuration snapshot they were produced from.
 - Added architectural complexity must improve measured outcomes.
 - Product-market validation precedes broad platform expansion.
-- CI must prove tenant isolation, migration validity, critical retrieval behavior, and production image buildability rather than only line coverage.
+- CI must prove tenant isolation, migration validity, critical retrieval behavior, parser/corpus regressions, and production image buildability rather than only line coverage.
 - Production behavior must be reproducible from repository source, lockfiles, migrations, Dockerfiles, and Compose definitions; it must not depend on undocumented manual Coolify/server edits.
 
 ## Immediate implementation target
 
-Build the smallest end-to-end slice that can prove the thesis using the existing SCJ source material:
+Build the smallest end-to-end slice that can prove the thesis using the existing SCJ source material. The parser work is no longer limited conceptually to one 2025 PDF: the 2023–2025 benchmark proved distinct publication generations that must be handled explicitly.
 
 ```text
-SCJ Jan-Apr 2025 compilation
+representative SCJ compilations 2023-2025
     -> immutable artifact registration + SHA-256
     -> page-preserving extraction
+    -> publication/layout-family detection
     -> individual decision segmentation
-    -> canonical case identity
-    -> decision number / expediente / organ / decision date with provenance
+    -> parser diagnostics + unknown/review-required routing
+    -> decision number / expediente / organ / decision date observations with provenance
+    -> gold boundary/metadata evaluation
+    -> immutable reconciliation/resolution ledger
+    -> controlled canonical promotion
     -> normalized case pages
     -> lexical passages/index
-    -> manual validation
     -> semantic retrieval only after source model is trustworthy
     -> benchmark legal research request
     -> iterative agent research
