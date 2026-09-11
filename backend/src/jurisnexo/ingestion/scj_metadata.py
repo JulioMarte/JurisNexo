@@ -58,7 +58,7 @@ _MONTHS = {
     "diciembre": 12,
 }
 _MONTH = "|".join(_MONTHS)
-_DECISION_NUMBER_RE = re.compile(r"\bSCJ-[A-Z]{2,4}-\d{2}-\d{3,6}\b", re.IGNORECASE)
+_DECISION_NUMBER_RE = re.compile(r"\bSCJ-[A-Z]{2,4}-\d{2}-\d{2,6}\b", re.IGNORECASE)
 _DOCKET_LINE_RE = re.compile(
     r"(?im)^\s*(?:Expediente\s+n[úu]m\.?|Exp(?:s)?\.?\s*(?:n[úu]m(?:s)?\.?)?)"
     r"\s*:?\s*(?P<value>[^\n\r]+?)\s*$"
@@ -116,6 +116,10 @@ _ORGAN_BY_PREFIX = {
     "TS": "Tercera Sala",
     "SR": "Salas Reunidas",
     "PL": "Pleno",
+}
+_RESOLUTION_FAMILIES = {
+    SCJLayoutFamily.PRINCIPALES_2023_2024_RESOLUTION,
+    SCJLayoutFamily.PRINCIPALES_2025_PLENO_RESOLUTION,
 }
 
 
@@ -257,7 +261,18 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
                 end=match.end(),
             )
 
-    if detection.primary_decision_number is not None:
+    if detection.family in _RESOLUTION_FAMILIES:
+        anchor = max(text.lower().find("resoluci"), 0)
+        _append_text(
+            observations,
+            field_name="court_organ",
+            raw="Pleno",
+            method_name="scj_resolution_layout_organ_v1",
+            page_number=page_number,
+            start=anchor,
+            end=anchor + 1,
+        )
+    elif detection.primary_decision_number is not None:
         parts = detection.primary_decision_number.split("-")
         if len(parts) >= 2 and parts[1] in _ORGAN_BY_PREFIX:
             position = _primary_number_position(text, detection.primary_decision_number)
@@ -271,20 +286,6 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
                 start=start,
                 end=end,
             )
-    elif detection.family in {
-        SCJLayoutFamily.PRINCIPALES_2023_2024_RESOLUTION,
-        SCJLayoutFamily.PRINCIPALES_2025_PLENO_RESOLUTION,
-    }:
-        anchor = max(text.lower().find("resoluci"), 0)
-        _append_text(
-            observations,
-            field_name="court_organ",
-            raw="Pleno",
-            method_name="scj_resolution_layout_organ_v1",
-            page_number=page_number,
-            start=anchor,
-            end=anchor + 1,
-        )
 
     # Emit every docket token separately. Multiple expediente identifiers are
     # evidence-bearing facts and must not be collapsed into one opaque string.
@@ -361,6 +362,13 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
             end = anchor.end() if anchor is not None else min(len(text), start + 1)
             raw = text[start:end].strip()
             method = "scj_formal_sentence_heading_date_v1"
+        elif detection.family is SCJLayoutFamily.PRINCIPALES_2023_2024_RESOLUTION:
+            heading = detection.evidence[0] if detection.evidence else detection.header_date.isoformat()
+            position = text.lower().find(heading.lower())
+            start = max(position, 0)
+            end = start + len(heading) if position >= 0 else 1
+            raw = heading
+            method = "scj_formal_resolution_heading_date_v1"
         else:
             match = _DATE_LABEL_RE.search(text[:2400])
             start = match.start() if match is not None else 0
