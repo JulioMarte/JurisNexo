@@ -81,9 +81,9 @@ class GoogleGeminiProvider:
     service_tier: str = "flex"
     timeout_seconds: float = 900.0
     transport: JsonTransport | None = None
-    max_attempts: int = 2
+    max_attempts: int = 5
     retry_base_delay_seconds: float = 2.0
-    retry_max_delay_seconds: float = 8.0
+    retry_max_delay_seconds: float = 30.0
     sleep: Callable[[float], None] = time.sleep
 
     def __post_init__(self) -> None:
@@ -115,14 +115,10 @@ class GoogleGeminiProvider:
         payload: JsonObject = {
             "contents": [{"role": "user", "parts": [{"text": text}]}]
         }
-        response = (self.transport or UrllibJsonTransport()).post_json(
+        response = self._post_with_retry(
+            transport=self.transport or UrllibJsonTransport(),
             url=endpoint,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
             payload=payload,
-            timeout_seconds=self.timeout_seconds,
         )
         total_tokens = response.get("totalTokens")
         if not isinstance(total_tokens, int) or isinstance(total_tokens, bool):
@@ -160,17 +156,19 @@ class GoogleGeminiProvider:
             },
         }
         response = self._post_with_retry(
-            transport=self.transport or UrllibJsonTransport(), payload=payload
+            transport=self.transport or UrllibJsonTransport(),
+            url=_INTERACTIONS_ENDPOINT,
+            payload=payload,
         )
         return self._parse_interaction(response)
 
     def _post_with_retry(
-        self, *, transport: JsonTransport, payload: JsonObject
+        self, *, transport: JsonTransport, url: str, payload: JsonObject
     ) -> JsonObject:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 return transport.post_json(
-                    url=_INTERACTIONS_ENDPOINT,
+                    url=url,
                     headers={
                         "Content-Type": "application/json",
                         "x-goog-api-key": self.api_key,
