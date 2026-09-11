@@ -99,7 +99,9 @@ class IndexReferenceInvestigation(BaseModel):
             self.resolution_status in {"confirmed_at_reference", "confirmed_nearby"}
             and self.observed_decision_start_printed_page is None
         ):
-            raise ValueError("confirmed reference investigations require an observed decision start")
+            raise ValueError(
+                "confirmed reference investigations require an observed decision start"
+            )
         if (
             self.resolution_status == "confirmed_at_reference"
             and self.observed_decision_start_printed_page != self.reference_as_printed
