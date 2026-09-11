@@ -44,7 +44,7 @@ jobs:
       - name: Show Ruff canonical import fix
         run: |
           docker compose --profile test run --rm --no-deps test sh -lc '
-            ruff check --fix src/jurisnexo/ingestion/scj_segment_metadata.py >/dev/null || true
+            .venv/bin/ruff check --fix src/jurisnexo/ingestion/scj_segment_metadata.py >/dev/null || true
             cat src/jurisnexo/ingestion/scj_segment_metadata.py
             exit 1
           '
