@@ -34,10 +34,10 @@
       },
       {
         "reference_as_printed": 193,
-        "resolution_status": "confirmed_at_reference",
-        "observed_decision_start_printed_page": 193,
-        "evidence_printed_pages": [193],
-        "evidence_view_pages": [16],
+        "resolution_status": "confirmed_nearby",
+        "observed_decision_start_printed_page": 198,
+        "evidence_printed_pages": [193, 198],
+        "evidence_view_pages": [16, 21],
         "confidence": 0.96
       }
     ]

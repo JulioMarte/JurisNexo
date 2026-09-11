@@ -58,7 +58,13 @@ jobs:
                 --gold /benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
                 --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
                 --output /tmp/historical-agent-score.json
-              python -c "import json; p=json.load(open(\"/tmp/historical-agent-score.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"metrics\"][\"verified_gold_reference_count\"] == 3"
+              python -c "import json; p=json.load(open(\"/tmp/historical-agent-score.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"PASS\"; assert p[\"metrics\"][\"verified_gold_reference_count\"] == 3; assert p[\"semantic_metrics\"][\"confirmed_gold_reference_count\"] == 3"
+              python /benchmark/ingestion/evaluate_historical_bulletin_agent.py \
+                --result /benchmark/ingestion/fixtures/historical_agent_score.unsupported_semantic.json \
+                --gold /benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
+                --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
+                --output /tmp/historical-agent-score-unsupported.json
+              python -c "import json; p=json.load(open(\"/tmp/historical-agent-score-unsupported.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"FAIL\"; assert p[\"semantic_metrics\"][\"confirmed_gold_reference_count\"] == 2; assert p[\"semantic_metrics\"][\"investigations\"][2][\"trace_supported\"] is False"
             '
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
