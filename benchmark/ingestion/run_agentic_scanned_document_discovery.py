@@ -10,6 +10,7 @@ from jurisnexo.ingestion.agentic_document_discovery import (
     DiscoveryBudget,
     run_agentic_document_discovery,
 )
+from jurisnexo.ingestion.context_governor import ContextPolicy
 from jurisnexo.ingestion.logical_document_view import (
     build_document_environment_from_logical_view,
     materialize_logical_document_view,
@@ -24,7 +25,7 @@ from jurisnexo.model_providers.google_gemini import GoogleGeminiProvider
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run bounded agentic discovery over a scanned PDF bbox representation"
+        description="Run token-governed agentic discovery over a scanned PDF bbox representation"
     )
     parser.add_argument("--bbox", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -42,6 +43,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-model-calls", type=int, default=8)
     parser.add_argument("--max-total-tokens", type=int, default=40_000)
+    parser.add_argument("--parent-context-soft-limit", type=int, default=120_000)
+    parser.add_argument("--delegated-context-soft-limit", type=int, default=120_000)
     parser.add_argument("--decision-max-output-tokens", type=int, default=1024)
     parser.add_argument("--synthesis-max-output-tokens", type=int, default=4096)
     parser.add_argument("--minimum-region-characters", type=int, default=80)
@@ -70,6 +73,10 @@ def main() -> None:
         model=args.model,
         service_tier=args.service_tier,
     )
+    context_policy = ContextPolicy(
+        parent_soft_limit_tokens=args.parent_context_soft_limit,
+        delegated_soft_limit_tokens=args.delegated_context_soft_limit,
+    )
     result = run_agentic_document_discovery(
         provider=provider,
         environment=environment,
@@ -80,6 +87,7 @@ def main() -> None:
         budget=DiscoveryBudget(
             max_model_calls=args.max_model_calls,
             max_total_tokens=args.max_total_tokens,
+            context_policy=context_policy,
         ),
     )
 
@@ -105,6 +113,8 @@ def main() -> None:
         "budget": {
             "max_model_calls": args.max_model_calls,
             "max_total_tokens": args.max_total_tokens,
+            "parent_context_soft_limit_tokens": args.parent_context_soft_limit,
+            "delegated_context_soft_limit_tokens": args.delegated_context_soft_limit,
         },
         "usage": asdict(result.usage),
         "steps": [
