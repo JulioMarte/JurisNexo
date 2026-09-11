@@ -19,7 +19,7 @@ permissions:
 jobs:
   profile:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -38,9 +38,14 @@ jobs:
             file_path: Suprema Corte PDF/Principales-Decisiones-septiembre-diciembre-2024.pdf
           - id: 2025-enero-abril
             file_path: Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
+          - id: 2025-mayo-agosto
+            source_url: https://poderjudicial.gob.do/wp-content/uploads/2025/10/Principales_Decisiones_2025_Mayo-Agosto.pdf
+          - id: 2025-septiembre-diciembre
+            source_url: https://poderjudicial.gob.do/wp-content/uploads/2026/01/Principales-Decisiones-septiembre-diciembre.pdf
     env:
       CORPUS_ID: ${{ matrix.id }}
       FILE_PATH: ${{ matrix.file_path }}
+      SOURCE_URL: ${{ matrix.source_url }}
     steps:
       - uses: actions/checkout@v6
       - name: Install PDF text tools
@@ -52,17 +57,27 @@ jobs:
       - name: Install locked backend environment
         working-directory: backend
         run: uv sync --frozen --group dev
-      - name: Download corpus artifact from JurisNexo Storage
+      - name: Download immutable benchmark input
         run: |
           mkdir -p benchmark-output
-          ENCODED_PATH=$(python - <<'PY'
+          if [ -n "${SOURCE_URL:-}" ]; then
+            ORIGIN="$SOURCE_URL"
+            curl --fail --location --retry 3 \
+              --user-agent "JurisNexo-benchmark/1.0" \
+              "$SOURCE_URL" \
+              --output "benchmark-output/${CORPUS_ID}.pdf"
+          else
+            ENCODED_PATH=$(python - <<'PY'
           import os, urllib.parse
           print(urllib.parse.quote(os.environ['FILE_PATH'], safe='/'))
           PY
-          )
-          curl --fail --location --retry 3 \
-            "https://xkmfwfupskqcmeetdwbv.supabase.co/storage/v1/object/public/docs-sentencia/${ENCODED_PATH}" \
-            --output "benchmark-output/${CORPUS_ID}.pdf"
+            )
+            ORIGIN="https://xkmfwfupskqcmeetdwbv.supabase.co/storage/v1/object/public/docs-sentencia/${ENCODED_PATH}"
+            curl --fail --location --retry 3 \
+              "$ORIGIN" \
+              --output "benchmark-output/${CORPUS_ID}.pdf"
+          fi
+          echo "SOURCE_ORIGIN=$ORIGIN" >> "$GITHUB_ENV"
       - name: Preserve page-separated extracted text for review
         run: |
           pdftotext -layout -enc UTF-8 \
@@ -74,6 +89,7 @@ jobs:
         run: |
           backend/.venv/bin/python benchmark/ingestion/run_scj_pilot_profiler.py \
             "benchmark-output/${CORPUS_ID}.pdf" \
+            --source-origin "$SOURCE_ORIGIN" \
             --report "benchmark-output/${CORPUS_ID}-profile.json" \
             --review-sample "benchmark-output/${CORPUS_ID}-review.jsonl" \
             --review-limit 100 \
