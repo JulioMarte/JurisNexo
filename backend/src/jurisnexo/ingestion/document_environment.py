@@ -16,6 +16,14 @@ class PageView:
 
 
 @dataclass(frozen=True, slots=True)
+class PrintedPageRangeView:
+    start_printed_page: int
+    end_printed_page: int
+    pages: tuple[PageView, ...]
+    unresolved_printed_pages: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TextSearchHit:
     page_number: int
     snippet: str
@@ -83,6 +91,49 @@ class DocumentEnvironment:
                 return self.get_page(page_number)
         raise DocumentEnvironmentError(
             f"printed page {printed_page_number} is not resolved in this document view"
+        )
+
+    def get_printed_pages(
+        self,
+        start_printed_page: int,
+        end_printed_page: int,
+        *,
+        max_pages: int = 7,
+    ) -> PrintedPageRangeView:
+        if not self.supports_printed_page_lookup:
+            raise DocumentEnvironmentError("printed-page lookup is unavailable in this environment")
+        if start_printed_page < 1 or end_printed_page < 1:
+            raise DocumentEnvironmentError("printed page range values must be positive")
+        if start_printed_page > end_printed_page:
+            raise DocumentEnvironmentError("start_printed_page must be <= end_printed_page")
+        if max_pages < 1:
+            raise DocumentEnvironmentError("max_pages must be positive")
+
+        requested = end_printed_page - start_printed_page + 1
+        if requested > max_pages:
+            raise DocumentEnvironmentError(
+                f"requested {requested} printed pages; tool limit is {max_pages} pages per call"
+            )
+
+        by_printed_page = {
+            printed_page: page_number
+            for page_number, printed_page in enumerate(self.printed_page_numbers, start=1)
+            if printed_page is not None
+        }
+        pages: list[PageView] = []
+        unresolved: list[int] = []
+        for printed_page in range(start_printed_page, end_printed_page + 1):
+            page_number = by_printed_page.get(printed_page)
+            if page_number is None:
+                unresolved.append(printed_page)
+            else:
+                pages.append(self.get_page(page_number))
+
+        return PrintedPageRangeView(
+            start_printed_page=start_printed_page,
+            end_printed_page=end_printed_page,
+            pages=tuple(pages),
+            unresolved_printed_pages=tuple(unresolved),
         )
 
     def get_pages(
