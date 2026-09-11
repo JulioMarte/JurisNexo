@@ -1,0 +1,83 @@
+name: SCJ pilot corpus profile
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [benchmark/scj-pilot-profiler]
+    paths:
+      - "benchmark/ingestion/**"
+      - ".github/workflows/scj-pilot-profile.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: 2023-enero-abril
+            file_path: Suprema Corte PDF/Principales_decisiones_enero-abril_2023.pdf
+          - id: 2023-mayo-agosto
+            file_path: Suprema Corte PDF/Principales_Decisiones_mayo_agosto_2023.pdf
+          - id: 2023-septiembre-diciembre
+            file_path: Suprema Corte PDF/Principales-Decisiones_Septiembre-Diciembre_2023.pdf
+          - id: 2024-enero-abril
+            file_path: Suprema Corte PDF/Principales_Decisiones_enero_abril_2024.pdf
+          - id: 2024-mayo-agosto
+            file_path: Suprema Corte PDF/Principales_Decisiones_mayo_agosto_2024.pdf
+          - id: 2024-septiembre-diciembre
+            file_path: Suprema Corte PDF/Principales-Decisiones-septiembre-diciembre-2024.pdf
+          - id: 2025-enero-abril
+            file_path: Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
+    env:
+      CORPUS_ID: ${{ matrix.id }}
+      FILE_PATH: ${{ matrix.file_path }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PDF text tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.4"
+      - name: Install locked backend environment
+        working-directory: backend
+        run: uv sync --frozen --group dev
+      - name: Download corpus artifact from JurisNexo Storage
+        run: |
+          mkdir -p benchmark-output
+          ENCODED_PATH=$(python - <<'PY'
+          import os, urllib.parse
+          print(urllib.parse.quote(os.environ['FILE_PATH'], safe='/'))
+          PY
+          )
+          curl --fail --location --retry 3 \
+            "https://xkmfwfupskqcmeetdwbv.supabase.co/storage/v1/object/public/docs-sentencia/${ENCODED_PATH}" \
+            --output "benchmark-output/${CORPUS_ID}.pdf"
+      - name: Preserve page-separated extracted text for review
+        run: |
+          pdftotext -layout -enc UTF-8 \
+            "benchmark-output/${CORPUS_ID}.pdf" \
+            "benchmark-output/${CORPUS_ID}.txt"
+      - name: Profile parser coverage and create review sample
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          backend/.venv/bin/python benchmark/ingestion/run_scj_pilot_profiler.py \
+            "benchmark-output/${CORPUS_ID}.pdf" \
+            --report "benchmark-output/${CORPUS_ID}-profile.json" \
+            --review-sample "benchmark-output/${CORPUS_ID}-review.jsonl" \
+            --review-limit 100
+      - name: Upload reproducible pilot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-pilot-${{ matrix.id }}
+          path: |
+            benchmark-output/${{ matrix.id }}-profile.json
+            benchmark-output/${{ matrix.id }}-review.jsonl
+            benchmark-output/${{ matrix.id }}.txt
+          if-no-files-found: error
