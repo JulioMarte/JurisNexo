@@ -170,7 +170,76 @@ def test_agent_can_follow_resolved_printed_page_reference_with_provenance() -> N
     assert "PRINTED PAGE 183" in output
     assert "physical_pages=5,6; side=right" in output
     assert "get_printed_page" in provider.prompts[0]
+    assert "get_printed_pages" in provider.prompts[0]
     assert "resolved_printed_pages=1" in provider.prompts[0]
+
+
+def test_agent_can_expand_around_a_disputed_printed_reference() -> None:
+    hypothesis = _candidate_hypothesis()
+    hypothesis["index_reference_investigations"] = [
+        {
+            "reference_as_printed": 353,
+            "expected_description": "Pelayo Fernández decision",
+            "resolution_status": "confirmed_nearby",
+            "observed_decision_start_printed_page": 354,
+            "evidence_printed_pages": [352, 353, 354, 355],
+            "evidence_view_pages": [1, 2, 3, 4],
+            "observed_description": "Heading begins on printed page 354",
+            "explanation": "Page 353 continues the prior matter; page 354 starts the expected decision.",
+            "confidence": 0.93,
+        }
+    ]
+    provider = ScriptedProvider(
+        responses=(
+            {
+                "tool": "get_printed_page",
+                "rationale": "The SUMARIO points to printed page 353.",
+                "printed_page_number": 353,
+            },
+            {
+                "tool": "get_printed_pages",
+                "rationale": "Page 353 continues another case, so inspect the local neighborhood.",
+                "start_printed_page_number": 352,
+                "end_printed_page_number": 355,
+            },
+            {"tool": "finish", "rationale": "Nearby evidence explains the discrepancy."},
+            hypothesis,
+        )
+    )
+    environment = DocumentEnvironment(
+        (
+            "end of prior decision",
+            "continuation of prior decision",
+            "SENTENCIA DE FECHA 20 DE FEBRERO DEL 1980\nPelayo Fernández",
+            "continuation of Pelayo Fernández decision",
+        ),
+        printed_page_numbers=(352, 353, 354, 355),
+        source_references=(
+            "physical_pages=173,174; side=left",
+            "physical_pages=173,174; side=right",
+            "physical_pages=175,176; side=left",
+            "physical_pages=175,176; side=right",
+        ),
+    )
+
+    result = run_agentic_document_discovery(
+        provider=provider,
+        environment=environment,
+        artifact_label="Boletin Judicial 831",
+        budget=DiscoveryBudget(max_model_calls=5, max_total_tokens=500),
+    )
+
+    assert [step.decision.tool for step in result.steps] == [
+        "get_printed_page",
+        "get_printed_pages",
+    ]
+    assert "PRINTED PAGE RANGE 352..355" in result.steps[1].tool_output
+    assert "PRINTED PAGE 354" in result.steps[1].tool_output
+    investigation = result.hypothesis.index_reference_investigations[0]
+    assert investigation.reference_as_printed == 353
+    assert investigation.observed_decision_start_printed_page == 354
+    assert investigation.resolution_status == "confirmed_nearby"
+    assert "do not stop" in provider.prompts[0]
 
 
 def test_exact_duplicate_tool_call_is_not_reexecuted() -> None:
