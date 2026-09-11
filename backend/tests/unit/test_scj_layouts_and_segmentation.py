@@ -7,7 +7,7 @@ from jurisnexo.ingestion.scj_layouts import (
     SCJLayoutFamily,
     detect_scj_page_layout,
 )
-from jurisnexo.ingestion.scj_metadata import parse_scj_page_metadata
+from jurisnexo.ingestion.scj_metadata import MetadataObservation, parse_scj_page_metadata
 from jurisnexo.ingestion.scj_segmentation import segment_scj_pages
 
 pytestmark = pytest.mark.unit
@@ -143,14 +143,14 @@ def test_incidental_scj_reference_does_not_replace_primary_case_identity() -> No
 
 def test_metadata_extractor_emits_header_date_dockets_and_organ() -> None:
     observations = parse_scj_page_metadata(MODERN_SEGUNDA, page_number=168)
-    by_field: dict[str, list[object]] = {}
+    by_field: dict[str, list[MetadataObservation]] = {}
     for observation in observations:
         by_field.setdefault(observation.field_name, []).append(observation)
 
-    assert by_field["decision_number"][0].normalized_text == "SCJ-SS-25-0101"  # type: ignore[attr-defined]
-    assert by_field["docket_number"][0].normalized_text == "057-2022-EPEN-00173"  # type: ignore[attr-defined]
-    assert by_field["decision_date_candidate"][0].normalized_date == date(2025, 2, 28)  # type: ignore[attr-defined]
-    assert by_field["court_organ"][0].normalized_text == "Segunda Sala"  # type: ignore[attr-defined]
+    assert by_field["decision_number"][0].normalized_text == "SCJ-SS-25-0101"
+    assert by_field["docket_number"][0].normalized_text == "057-2022-EPEN-00173"
+    assert by_field["decision_date_candidate"][0].normalized_date == date(2025, 2, 28)
+    assert by_field["court_organ"][0].normalized_text == "Segunda Sala"
 
 
 def test_multiple_dockets_are_emitted_as_distinct_observations() -> None:
