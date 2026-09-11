@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "dataset_id": "scj-parser-v1",
+  "status": "annotation_in_progress",
+  "source_scope": "SCJ principales decisiones 2023-2025 pilot corpus",
+  "sample_policy": {
+    "minimum_total_cases": 60,
+    "minimum_cases_per_family": 8,
+    "minimum_annotated_cases_per_field": 8,
+    "required_families": [
+      "principales_2023_2024_sentence",
+      "principales_2023_2024_resolution",
+      "principales_2025_primera_sala",
+      "principales_2025_segunda_sala",
+      "principales_2025_tercera_sala",
+      "principales_2025_pleno_resolution"
+    ],
+    "required_fields": [
+      "decision_number",
+      "decision_date",
+      "court_organ"
+    ],
+    "family_minimums": {
+      "principales_2023_2024_resolution": 4,
+      "principales_2025_pleno_resolution": 4
+    }
+  },
+  "promotion_thresholds": {
+    "boundary_precision": 0.99,
+    "boundary_recall": 0.98,
+    "decision_number_precision": 0.995,
+    "decision_number_recall": 0.99,
+    "decision_date_precision": 0.99,
+    "decision_date_recall": 0.97,
+    "court_organ_precision": 0.99
+  },
+  "review_policy": {
+    "gold_statuses": ["reviewed", "adjudicated"],
+    "pending_status": "pending",
+    "parser_suggestions_are_not_gold": true,
+    "reviewer_must_verify_primary_source_pages": true,
+    "boundary_review_required": true,
+    "adjudication_required_for_disagreement": true
+  }
+}
