@@ -6,6 +6,8 @@ on:
       - benchmark/historical-bulletin-acquisition
     paths:
       - .github/workflows/historical-bulletin-acquisition.yml
+      - backend/src/jurisnexo/ingestion/scanned_page_materialization.py
+      - benchmark/ingestion/analyze_scanned_page_layout.py
   workflow_dispatch:
     inputs:
       source_url:
@@ -31,7 +33,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes poppler-utils
 
       - name: Acquire official PDF with verified TLS
-        id: acquire
         shell: bash
         run: |
           set -euo pipefail
@@ -67,8 +68,10 @@ jobs:
         run: |
           set -euo pipefail
           pdftotext -layout benchmark-output/source.pdf benchmark-output/extracted.txt || true
+          pdftotext -bbox-layout benchmark-output/source.pdf benchmark-output/bbox-layout.html
           pdftotext -f 1 -l 10 -layout benchmark-output/source.pdf benchmark-output/first-10-pages.txt || true
-          pdftoppm -f 1 -l 3 -png -r 120 benchmark-output/source.pdf benchmark-output/renders/page >/dev/null 2>&1
+          pdftoppm -f 1 -l 3 -png -r 120 benchmark-output/source.pdf benchmark-output/renders/front >/dev/null 2>&1
+          pdftoppm -f 5 -l 8 -png -r 100 benchmark-output/source.pdf benchmark-output/renders/spread >/dev/null 2>&1
 
           python - <<'PY'
           from pathlib import Path
@@ -105,6 +108,14 @@ jobs:
           print(json.dumps(report, ensure_ascii=False, indent=2))
           PY
 
+      - name: Materialize logical page diagnostics
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          python benchmark/ingestion/analyze_scanned_page_layout.py \
+            --bbox benchmark-output/bbox-layout.html \
+            --output benchmark-output/logical-page-diagnostics.json
+
       - name: Upload acquisition evidence
         uses: actions/upload-artifact@v4
         with:
@@ -115,6 +126,7 @@ jobs:
             benchmark-output/sha256.txt
             benchmark-output/pdfinfo.txt
             benchmark-output/acquisition-diagnostics.json
+            benchmark-output/logical-page-diagnostics.json
             benchmark-output/first-10-pages.txt
             benchmark-output/renders/*.png
           if-no-files-found: error
