@@ -26,6 +26,8 @@ The documents are intentionally ordered from product intent to implementation, o
 18. [`17-database-schema-and-temporal-legal-metadata.md`](./17-database-schema-and-temporal-legal-metadata.md) — database-first implementation contract, PostgreSQL schema namespaces, source-artifact/case separation, concrete corpus tables, decision-date semantics, extraction provenance, index versioning, and migration order.
 19. [`18-current-ingestion-parser-and-resolution-status.md`](./18-current-ingestion-parser-and-resolution-status.md) — factual implementation snapshot for migrations 0004–0008, observation/resolution provenance, dependency reproducibility, legacy-schema quarantine, and the measured 2023–2025 parser findings.
 20. [`19-scj-parser-architecture-and-evaluation-contract.md`](./19-scj-parser-architecture-and-evaluation-contract.md) — versioned SCJ publication/layout families, page detection, segmentation, metadata observations, diagnostics, real-source fixtures, gold evaluation, release gates, and bounded LLM-fallback policy.
+21. [`20-document-intelligence-and-structure-discovery.md`](./20-document-intelligence-and-structure-discovery.md) — two-path ingestion, OCR/page diagnostics, RLM-style discovery workspaces, DocETL/LOTUS roles, family specifications, validation, heterogeneous-source matching, and canonical-write boundaries.
+22. [`21-google-gemini-model-selection-and-ci.md`](./21-google-gemini-model-selection-and-ci.md) — current Gemini model/cost evaluation, provider choice, bounded paid-model CI policy, GitHub Environment secret contract, and model-selection rules.
 
 ## Current MVP definition
 
@@ -82,7 +84,7 @@ source artifact != canonical case != case page != retrieval passage
 
 `decision_date` is a first-class legal fact. It must be independently stored, provenance-aware, indexed, and distinguishable from lower-court dates, procedural filing dates, artifact publication dates, and ingestion timestamps.
 
-The first ingestion milestone does not require an external LLM API. Deterministic extraction, case-boundary experiments, page preservation, metadata parsing, and PostgreSQL lexical search should work first. A small LLM may later be introduced for ambiguous extraction/enrichment, with model/version/provenance recorded.
+For known publication families, deterministic extraction, page preservation, segmentation, metadata parsing, and lexical search remain the preferred path. For unknown, historical, scanned, mixed, or structurally unstable artifacts, JurisNexo may use a bounded model-assisted discovery workspace to infer candidate structure. Model output still enters the observation/validation/resolution path and cannot write canonical legal facts directly.
 
 ## Non-negotiable invariants
 
@@ -90,6 +92,8 @@ The first ingestion milestone does not require an external LLM API. Deterministi
 - A physical PDF artifact is not assumed to be one canonical judicial case.
 - Compilation PDFs must be segmented into individual candidate decisions with exact page provenance.
 - A parser must identify the publication/layout grammar it recognized; unknown layouts remain unknown rather than being coerced into the nearest known regex.
+- Unknown document families may be explored by a bounded discovery agent, but discovery hypotheses are not canonical facts.
+- Scanned and mixed artifacts preserve original page images; OCR output is versioned extraction evidence, not source truth.
 - Decision chronology is structured data, not an incidental string inside document text.
 - Unknown or conflicting decision dates must never be silently guessed into verified values.
 - Parser coverage is not precision/recall; automatic canonical promotion requires a human-reviewed gold evaluation.
@@ -100,25 +104,28 @@ The first ingestion milestone does not require an external LLM API. Deterministi
 - Multi-tenancy exists before paid plans.
 - Authorization is enforced below the model/UI layer.
 - The research agent uses retrieval; it is not merely a wrapper around one retrieval call.
-- Deterministic operations should remain deterministic.
+- Deterministic operations should remain deterministic once a document family has been validated.
 - Corpus coverage and freshness are measured and disclosed rather than assumed.
 - Completed reports retain the source/evidence/configuration snapshot they were produced from.
 - Added architectural complexity must improve measured outcomes.
 - Product-market validation precedes broad platform expansion.
 - CI must prove tenant isolation, migration validity, critical retrieval behavior, parser/corpus regressions, and production image buildability rather than only line coverage.
+- Paid external-model workflows are explicit/manual and budget-bounded; routine PR CI remains deterministic and secret-free.
 - Production behavior must be reproducible from repository source, lockfiles, migrations, Dockerfiles, and Compose definitions; it must not depend on undocumented manual Coolify/server edits.
 
 ## Immediate implementation target
 
-Build the smallest end-to-end slice that can prove the thesis using the existing SCJ source material. The parser work is no longer limited conceptually to one 2025 PDF: the 2023–2025 benchmark proved distinct publication generations that must be handled explicitly.
+Build the smallest end-to-end slice that can prove the thesis using the existing SCJ source material while establishing a general path for unknown legal artifacts.
 
 ```text
 representative SCJ compilations 2023-2025
     -> immutable artifact registration + SHA-256
     -> page-preserving extraction
-    -> publication/layout-family detection
+    -> digital/scanned/mixed page diagnostics
+    -> known family? deterministic parser : bounded structure-discovery workspace
+    -> publication/layout-family detection or candidate family specification
     -> individual decision segmentation
-    -> parser diagnostics + unknown/review-required routing
+    -> parser/discovery diagnostics + unknown/review-required routing
     -> decision number / expediente / organ / decision date observations with provenance
     -> gold boundary/metadata evaluation
     -> immutable reconciliation/resolution ledger
@@ -139,4 +146,4 @@ The existing Supreme Court Storage collection is a meaningful head start, but it
 
 ## Documentation completeness rule
 
-An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, production deployment, source segmentation, canonical identity, or temporal legal semantics, it should be reflected in these documents or captured explicitly as an open decision.
+An implementation decision is not considered settled merely because it appears in code. If it affects product scope, legal-source integrity, multi-tenant isolation, research completion, evidence semantics, evaluation, report reproducibility, commercialization boundaries, CI/release gates, production deployment, source segmentation, canonical identity, temporal legal semantics, document-family discovery, OCR, or external-model use, it should be reflected in these documents or captured explicitly as an open decision.
