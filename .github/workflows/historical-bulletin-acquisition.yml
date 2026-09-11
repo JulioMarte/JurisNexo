@@ -1,0 +1,133 @@
+name: Historical bulletin acquisition
+
+on:
+  push:
+    branches:
+      - benchmark/historical-bulletin-acquisition
+    paths:
+      - .github/workflows/historical-bulletin-acquisition.yml
+      - backend/src/jurisnexo/ingestion/scanned_page_materialization.py
+      - benchmark/ingestion/analyze_scanned_page_layout.py
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: Official Poder Judicial bulletin PDF URL
+        required: true
+        default: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DEFAULT_SOURCE_URL: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install PDF inspection tools
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+
+      - name: Acquire official PDF with verified TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_URL="${{ inputs.source_url }}"
+          if [ -z "$SOURCE_URL" ]; then
+            SOURCE_URL="$DEFAULT_SOURCE_URL"
+          fi
+          case "$SOURCE_URL" in
+            https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/*.pdf|https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/*.PDF)
+              ;;
+            *)
+              echo "Refusing non-allowlisted source URL: $SOURCE_URL" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p benchmark-output/renders
+          curl --fail --location --show-error --silent \
+            --retry 3 --retry-all-errors --connect-timeout 30 --max-time 600 \
+            "$SOURCE_URL" -o benchmark-output/source.pdf
+
+          test "$(head -c 4 benchmark-output/source.pdf)" = "%PDF" || {
+            echo "Downloaded object is not a PDF" >&2
+            exit 1
+          }
+
+          printf '%s\n' "$SOURCE_URL" > benchmark-output/source-origin.txt
+          sha256sum benchmark-output/source.pdf | tee benchmark-output/sha256.txt
+          pdfinfo benchmark-output/source.pdf | tee benchmark-output/pdfinfo.txt
+
+      - name: Measure extractable text and render evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          pdftotext -layout benchmark-output/source.pdf benchmark-output/extracted.txt || true
+          pdftotext -bbox-layout benchmark-output/source.pdf benchmark-output/bbox-layout.html
+          pdftotext -f 1 -l 10 -layout benchmark-output/source.pdf benchmark-output/first-10-pages.txt || true
+          pdftoppm -f 1 -l 3 -png -r 120 benchmark-output/source.pdf benchmark-output/renders/front >/dev/null 2>&1
+          pdftoppm -f 5 -l 8 -png -r 100 benchmark-output/source.pdf benchmark-output/renders/spread >/dev/null 2>&1
+
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+          import subprocess
+
+          pdf = Path('benchmark-output/source.pdf')
+          text_path = Path('benchmark-output/extracted.txt')
+          text = text_path.read_text(encoding='utf-8', errors='replace') if text_path.exists() else ''
+          visible = re.sub(r'\s+', '', text)
+          info = subprocess.check_output(['pdfinfo', str(pdf)], text=True, errors='replace')
+          pages = None
+          for line in info.splitlines():
+              if line.startswith('Pages:'):
+                  pages = int(line.split(':', 1)[1].strip())
+                  break
+          report = {
+              'byte_size': pdf.stat().st_size,
+              'page_count': pages,
+              'extracted_character_count': len(text),
+              'non_whitespace_character_count': len(visible),
+              'characters_per_page': (len(visible) / pages) if pages else None,
+              'text_layer_classification': (
+                  'substantial_text_layer' if pages and len(visible) / pages >= 500 else
+                  'sparse_or_scanned' if pages else
+                  'unknown'
+              ),
+          }
+          Path('benchmark-output/acquisition-diagnostics.json').write_text(
+              json.dumps(report, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Materialize logical page diagnostics
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          python benchmark/ingestion/analyze_scanned_page_layout.py \
+            --bbox benchmark-output/bbox-layout.html \
+            --output benchmark-output/logical-page-diagnostics.json
+
+      - name: Upload acquisition evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-bulletin-acquisition-${{ github.run_id }}
+          path: |
+            benchmark-output/source.pdf
+            benchmark-output/source-origin.txt
+            benchmark-output/sha256.txt
+            benchmark-output/pdfinfo.txt
+            benchmark-output/acquisition-diagnostics.json
+            benchmark-output/logical-page-diagnostics.json
+            benchmark-output/first-10-pages.txt
+            benchmark-output/renders/*.png
+          if-no-files-found: error
+          retention-days: 14
