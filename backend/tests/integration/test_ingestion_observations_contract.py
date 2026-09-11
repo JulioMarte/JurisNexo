@@ -24,17 +24,12 @@ def _scalar(cursor: psycopg.Cursor[Any]) -> Any:
     return row[0]
 
 
-def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str) -> dict[str, Any]:
-    cursor.execute(
-        """
-        insert into corpus.source_registries (code, name, institution, authority_class)
-        values (%s, %s, 'Poder Judicial', 'official_primary')
-        returning id
-        """,
-        (f"SCJ-{suffix}", f"SCJ test registry {suffix}"),
-    )
-    registry_id = _scalar(cursor)
-
+def _create_artifact(
+    cursor: psycopg.Cursor[Any],
+    *,
+    registry_id: Any,
+    suffix: str,
+) -> tuple[Any, Any]:
     cursor.execute(
         """
         insert into corpus.source_artifacts (
@@ -57,7 +52,24 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (artifact_id,),
     )
-    artifact_page_id = _scalar(cursor)
+    return artifact_id, _scalar(cursor)
+
+
+def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str) -> dict[str, Any]:
+    cursor.execute(
+        """
+        insert into corpus.source_registries (code, name, institution, authority_class)
+        values (%s, %s, 'Poder Judicial', 'official_primary')
+        returning id
+        """,
+        (f"SCJ-{suffix}", f"SCJ test registry {suffix}"),
+    )
+    registry_id = _scalar(cursor)
+    artifact_id, artifact_page_id = _create_artifact(
+        cursor,
+        registry_id=registry_id,
+        suffix=suffix,
+    )
 
     cursor.execute(
         """
@@ -81,11 +93,13 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
 
     cursor.execute(
         """
-        insert into corpus.case_pages (case_id, artifact_page_id, ordinal_in_case)
-        values (%s, %s, 1)
+        insert into corpus.case_pages (
+            case_id, artifact_id, artifact_page_id, ordinal_in_case
+        )
+        values (%s, %s, %s, 1)
         returning id
         """,
-        (case_id, artifact_page_id),
+        (case_id, artifact_id, artifact_page_id),
     )
     case_page_id = _scalar(cursor)
 
@@ -114,11 +128,36 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
     ingestion_job_id = _scalar(cursor)
 
     return {
+        "registry_id": registry_id,
         "artifact_id": artifact_id,
         "case_id": case_id,
         "case_page_id": case_page_id,
         "ingestion_job_id": ingestion_job_id,
     }
+
+
+def _add_second_artifact_page_for_same_case(
+    cursor: psycopg.Cursor[Any],
+    graph: dict[str, Any],
+    *,
+    suffix: str,
+) -> tuple[Any, Any]:
+    artifact_id, artifact_page_id = _create_artifact(
+        cursor,
+        registry_id=graph["registry_id"],
+        suffix=suffix,
+    )
+    cursor.execute(
+        """
+        insert into corpus.case_pages (
+            case_id, artifact_id, artifact_page_id, ordinal_in_case
+        )
+        values (%s, %s, %s, 2)
+        returning id
+        """,
+        (graph["case_id"], artifact_id, artifact_page_id),
+    )
+    return artifact_id, _scalar(cursor)
 
 
 def test_observation_can_store_auditable_date_candidate(
@@ -130,6 +169,7 @@ def test_observation_can_store_auditable_date_candidate(
             """
             insert into corpus.case_metadata_observations (
                 ingestion_job_id,
+                artifact_id,
                 case_id,
                 observation_key,
                 field_name,
@@ -144,7 +184,7 @@ def test_observation_can_store_auditable_date_candidate(
                 evidence_char_end
             )
             values (
-                %s, %s, repeat('a', 64), 'decision_date_candidate', 'date',
+                %s, %s, %s, repeat('a', 64), 'decision_date_candidate', 'date',
                 'en fecha 30 de abril de 2025', date '2025-04-30',
                 'deterministic_parser', 'scj_decision_formula_date_v1',
                 %s, 'en fecha 30 de abril de 2025', 10, 39
@@ -153,6 +193,7 @@ def test_observation_can_store_auditable_date_candidate(
             """,
             (
                 graph["ingestion_job_id"],
+                graph["artifact_id"],
                 graph["case_id"],
                 graph["case_page_id"],
             ),
@@ -172,6 +213,7 @@ def test_observation_cannot_reference_another_cases_page(
                 """
                 insert into corpus.case_metadata_observations (
                     ingestion_job_id,
+                    artifact_id,
                     case_id,
                     observation_key,
                     field_name,
@@ -183,18 +225,102 @@ def test_observation_cannot_reference_another_cases_page(
                     evidence_case_page_id
                 )
                 values (
-                    %s, %s, repeat('b', 64), 'decision_number', 'identifier',
+                    %s, %s, %s, repeat('b', 64), 'decision_number', 'identifier',
                     'SCJ-PS-25-0853', 'SCJ-PS-25-0853',
                     'deterministic_parser', 'scj_decision_number_v1', %s
                 )
                 """,
                 (
                     first["ingestion_job_id"],
+                    first["artifact_id"],
                     first["case_id"],
                     second["case_page_id"],
                 ),
             )
             cursor.execute("set constraints all immediate")
+
+
+def test_observation_cannot_use_same_cases_page_from_another_artifact(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        graph = _create_minimal_ingestion_graph(cursor, suffix="d1")
+        _, other_artifact_case_page_id = _add_second_artifact_page_for_same_case(
+            cursor,
+            graph,
+            suffix="d2",
+        )
+
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            cursor.execute(
+                """
+                insert into corpus.case_metadata_observations (
+                    ingestion_job_id,
+                    artifact_id,
+                    case_id,
+                    observation_key,
+                    field_name,
+                    value_type,
+                    raw_value,
+                    normalized_text,
+                    observation_method,
+                    method_name,
+                    evidence_case_page_id
+                )
+                values (
+                    %s, %s, %s, repeat('d', 64), 'decision_number', 'identifier',
+                    'SCJ-PS-25-0853', 'SCJ-PS-25-0853',
+                    'deterministic_parser', 'scj_decision_number_v1', %s
+                )
+                """,
+                (
+                    graph["ingestion_job_id"],
+                    graph["artifact_id"],
+                    graph["case_id"],
+                    other_artifact_case_page_id,
+                ),
+            )
+            cursor.execute("set constraints all immediate")
+
+
+def test_observation_cannot_claim_an_artifact_different_from_its_job(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        graph = _create_minimal_ingestion_graph(cursor, suffix="e1")
+        other_artifact_id, _ = _add_second_artifact_page_for_same_case(
+            cursor,
+            graph,
+            suffix="e2",
+        )
+
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            cursor.execute(
+                """
+                insert into corpus.case_metadata_observations (
+                    ingestion_job_id,
+                    artifact_id,
+                    case_id,
+                    observation_key,
+                    field_name,
+                    value_type,
+                    raw_value,
+                    normalized_text,
+                    observation_method,
+                    method_name
+                )
+                values (
+                    %s, %s, %s, repeat('e', 64), 'decision_number', 'identifier',
+                    'SCJ-PS-25-0853', 'SCJ-PS-25-0853',
+                    'deterministic_parser', 'scj_decision_number_v1'
+                )
+                """,
+                (
+                    graph["ingestion_job_id"],
+                    other_artifact_id,
+                    graph["case_id"],
+                ),
+            )
 
 
 def test_value_type_cannot_use_wrong_normalized_column(
@@ -208,6 +334,7 @@ def test_value_type_cannot_use_wrong_normalized_column(
                 """
                 insert into corpus.case_metadata_observations (
                     ingestion_job_id,
+                    artifact_id,
                     case_id,
                     observation_key,
                     field_name,
@@ -218,12 +345,16 @@ def test_value_type_cannot_use_wrong_normalized_column(
                     method_name
                 )
                 values (
-                    %s, %s, repeat('c', 64), 'decision_date_candidate', 'date',
+                    %s, %s, %s, repeat('c', 64), 'decision_date_candidate', 'date',
                     '30 de abril de 2025', '2025-04-30',
                     'deterministic_parser', 'invalid-test'
                 )
                 """,
-                (graph["ingestion_job_id"], graph["case_id"]),
+                (
+                    graph["ingestion_job_id"],
+                    graph["artifact_id"],
+                    graph["case_id"],
+                ),
             )
 
 
@@ -251,6 +382,9 @@ def test_required_ingestion_indexes_exist(connection: psycopg.Connection[Any]) -
         "case_identifiers_same_case_evidence_idx",
         "case_metadata_observations_same_case_evidence_idx",
         "cases_same_case_date_evidence_idx",
+        "case_pages_artifact_page_provenance_idx",
+        "case_metadata_observations_job_artifact_idx",
+        "case_metadata_observations_evidence_case_artifact_idx",
     }
 
     with connection.cursor() as cursor:
