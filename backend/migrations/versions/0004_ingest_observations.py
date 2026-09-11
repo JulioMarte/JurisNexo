@@ -91,6 +91,8 @@ def upgrade() -> None:
             status text NOT NULL DEFAULT 'observed',
             created_at timestamptz NOT NULL DEFAULT now(),
             UNIQUE (ingestion_job_id, observation_key),
+            CONSTRAINT case_metadata_observations_key_check
+                CHECK (observation_key ~ '^[0-9a-f]{64}$'),
             CONSTRAINT case_metadata_observations_value_type_check
                 CHECK (value_type IN ('text', 'date', 'identifier', 'json')),
             CONSTRAINT case_metadata_observations_method_check
@@ -105,7 +107,19 @@ def upgrade() -> None:
             CONSTRAINT case_metadata_observations_confidence_check
                 CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
             CONSTRAINT case_metadata_observations_normalized_shape_check
-                CHECK (num_nonnulls(normalized_text, normalized_date, normalized_json) <= 1),
+                CHECK (
+                    (value_type = 'date' AND normalized_text IS NULL AND normalized_json IS NULL)
+                    OR (
+                        value_type IN ('text', 'identifier')
+                        AND normalized_date IS NULL
+                        AND normalized_json IS NULL
+                    )
+                    OR (
+                        value_type = 'json'
+                        AND normalized_text IS NULL
+                        AND normalized_date IS NULL
+                    )
+                ),
             CONSTRAINT case_metadata_observations_offsets_check
                 CHECK (
                     (evidence_char_start IS NULL AND evidence_char_end IS NULL)
@@ -162,7 +176,7 @@ def upgrade() -> None:
     op.execute(
         """
         COMMENT ON COLUMN corpus.case_metadata_observations.observation_key IS
-        'Stable parser-generated key used to make observation writes idempotent inside one ingestion job.'
+        'Stable parser-generated SHA-256 key used to make observation writes idempotent inside one ingestion job.'
         """
     )
 
