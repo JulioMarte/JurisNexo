@@ -1,13 +1,13 @@
 name: Historical bulletin acquisition
 
 on:
-  push:
-    branches:
-      - benchmark/historical-bulletin-acquisition
+  pull_request:
     paths:
       - .github/workflows/historical-bulletin-acquisition.yml
       - backend/src/jurisnexo/ingestion/scanned_page_materialization.py
+      - backend/src/jurisnexo/ingestion/logical_document_view.py
       - benchmark/ingestion/analyze_scanned_page_layout.py
+      - benchmark/ingestion/materialize_logical_document_view.py
   workflow_dispatch:
     inputs:
       source_url:
@@ -116,6 +116,14 @@ jobs:
             --bbox benchmark-output/bbox-layout.html \
             --output benchmark-output/logical-page-diagnostics.json
 
+      - name: Materialize deduplicated document view
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          python benchmark/ingestion/materialize_logical_document_view.py \
+            --bbox benchmark-output/bbox-layout.html \
+            --output benchmark-output/logical-document-view.json
+
       - name: Upload acquisition evidence
         uses: actions/upload-artifact@v4
         with:
@@ -127,6 +135,7 @@ jobs:
             benchmark-output/pdfinfo.txt
             benchmark-output/acquisition-diagnostics.json
             benchmark-output/logical-page-diagnostics.json
+            benchmark-output/logical-document-view.json
             benchmark-output/first-10-pages.txt
             benchmark-output/renders/*.png
           if-no-files-found: error
