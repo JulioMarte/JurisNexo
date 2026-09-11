@@ -363,7 +363,11 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
             raw = text[start:end].strip()
             method = "scj_formal_sentence_heading_date_v1"
         elif detection.family is SCJLayoutFamily.PRINCIPALES_2023_2024_RESOLUTION:
-            heading = detection.evidence[0] if detection.evidence else detection.header_date.isoformat()
+            heading = (
+                detection.evidence[0]
+                if detection.evidence
+                else detection.header_date.isoformat()
+            )
             position = text.lower().find(heading.lower())
             start = max(position, 0)
             end = start + len(heading) if position >= 0 else 1
