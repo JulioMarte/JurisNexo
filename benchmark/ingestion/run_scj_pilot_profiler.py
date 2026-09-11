@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from jurisnexo.ingestion.scj_layouts import LayoutDetectionStatus
-from jurisnexo.ingestion.scj_metadata import MetadataObservation, parse_scj_page_metadata
+from jurisnexo.ingestion.scj_metadata import MetadataObservation
+from jurisnexo.ingestion.scj_segment_metadata import parse_scj_segment_metadata
 from jurisnexo.ingestion.scj_segmentation import CaseSegment, segment_scj_pages
 
 
@@ -39,8 +40,6 @@ def _extract_pages(pdf_path: Path) -> list[str]:
 
 
 def _declared_decision_count(pages: list[str]) -> int | None:
-    # This is an independent compilation-level invariant supplied by the source,
-    # not gold truth for any one boundary.
     front_matter = "\n".join(pages[:12])
     match = _DECLARED_DECISIONS_RE.search(front_matter)
     return int(match.group("count")) if match is not None else None
@@ -50,11 +49,8 @@ def _profile_segment(segment: CaseSegment, pages: list[str], ordinal: int) -> di
     by_field: dict[str, list[MetadataObservation]] = defaultdict(list)
     diagnostics = list(segment.diagnostics)
 
-    for page_number in range(segment.start_page, segment.end_page + 1):
-        for observation in parse_scj_page_metadata(
-            pages[page_number - 1], page_number=page_number
-        ):
-            by_field[observation.field_name].append(observation)
+    for observation in parse_scj_segment_metadata(pages, segment):
+        by_field[observation.field_name].append(observation)
 
     decision_numbers = sorted(
         {
@@ -198,7 +194,7 @@ def main() -> None:
         },
         "methodology": {
             "classification": "coverage_profile_not_gold_accuracy",
-            "parser": "jurisnexo.ingestion.scj_layouts + scj_segmentation + scj_metadata",
+            "parser": "production layout + segmentation + segment-aware metadata extraction",
             "boundary_method": "publication-aware production segmenter",
             "review_sample_limit": args.review_limit,
         },
@@ -211,6 +207,11 @@ def main() -> None:
             "recognized_pages": recognized_pages,
             "ambiguous_pages": ambiguous_pages,
             "unknown_pages": unknown_pages,
+            "segments_with_multiple_decision_numbers": sum(
+                1
+                for profile in profiles
+                if "multiple_decision_numbers_observed" in profile["diagnostics"]
+            ),
             "segments_with_multiple_decision_dates": sum(
                 1
                 for profile in profiles
