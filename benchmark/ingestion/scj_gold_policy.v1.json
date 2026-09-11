@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "dataset_id": "scj-principales-2023-2025-gold-v1",
+  "sample_policy": {
+    "minimum_total_cases": 60,
+    "minimum_cases_per_family": 8,
+    "minimum_annotated_cases_per_field": 8,
+    "required_families": [
+      "principales_2023_2024_sentence",
+      "principales_2025_primera_sala",
+      "principales_2025_segunda_sala",
+      "principales_2025_tercera_sala"
+    ],
+    "required_fields": [
+      "decision_number",
+      "decision_date",
+      "court_organ"
+    ],
+    "family_minimums": {
+      "principales_2023_2024_sentence": 20,
+      "principales_2025_primera_sala": 8,
+      "principales_2025_segunda_sala": 8,
+      "principales_2025_tercera_sala": 8
+    }
+  },
+  "promotion_thresholds": {
+    "boundary_precision": 0.99,
+    "boundary_recall": 0.98,
+    "decision_number_precision": 0.995,
+    "decision_number_recall": 0.99,
+    "decision_date_precision": 0.99,
+    "decision_date_recall": 0.97,
+    "court_organ_precision": 0.99
+  },
+  "notes": {
+    "resolution_families": "Resolution and Pleno families remain review-required in v1 because the observed 2023-2025 corpus contains too few examples to justify automatic-promotion certification.",
+    "docket_numbers": "Dockets are measured by the evaluator but are not an automatic-promotion gate in v1 until normalization semantics are further reviewed.",
+    "parser_predictions": "Parser values in the review queue are reviewer hints only and must not be copied into gold without checking primary-source pages."
+  }
+}
