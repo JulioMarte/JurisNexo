@@ -151,11 +151,20 @@ def detect_adjacent_duplicate_scans(
     pages: tuple[PhysicalPageLayout, ...],
     *,
     minimum_token_jaccard: float = 0.70,
+    corroborated_minimum_token_jaccard: float = 0.60,
 ) -> tuple[AdjacentDuplicateScan, ...]:
-    """Flag likely duplicate adjacent scans without collapsing provenance."""
+    """Flag likely duplicate adjacent scans without collapsing provenance.
 
-    if not 0.0 <= minimum_token_jaccard <= 1.0:
-        raise ValueError("minimum_token_jaccard must be between 0 and 1")
+    Text similarity remains the primary signal. A lower corroborated band is
+    accepted only when both pages expose the exact same non-empty printed-page
+    candidate set. This recovers OCR-divergent rescans without globally lowering
+    the duplicate threshold.
+    """
+
+    if not 0.0 <= corroborated_minimum_token_jaccard <= minimum_token_jaccard <= 1.0:
+        raise ValueError(
+            "duplicate thresholds must satisfy 0 <= corroborated <= minimum <= 1"
+        )
 
     duplicates: list[AdjacentDuplicateScan] = []
     for first, second in zip(pages, pages[1:], strict=False):
@@ -164,13 +173,20 @@ def detect_adjacent_duplicate_scans(
         if not first_tokens or not second_tokens:
             continue
         similarity = len(first_tokens & second_tokens) / len(first_tokens | second_tokens)
-        if similarity < minimum_token_jaccard:
-            continue
 
         first_candidates = set(first.printed_page_candidates)
         second_candidates = set(second.printed_page_candidates)
         shared = tuple(sorted(first_candidates & second_candidates))
         if first_candidates and second_candidates and not shared:
+            continue
+
+        primary_match = similarity >= minimum_token_jaccard
+        corroborated_match = (
+            similarity >= corroborated_minimum_token_jaccard
+            and bool(first_candidates)
+            and first_candidates == second_candidates
+        )
+        if not primary_match and not corroborated_match:
             continue
 
         duplicates.append(
