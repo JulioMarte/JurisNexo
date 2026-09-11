@@ -60,7 +60,7 @@ _MONTHS = {
 _MONTH = "|".join(_MONTHS)
 _DECISION_NUMBER_RE = re.compile(r"\bSCJ-[A-Z]{2,4}-\d{2}-\d{2,6}\b", re.IGNORECASE)
 _DOCKET_LINE_RE = re.compile(
-    r"(?im)^\s*(?:Expediente\s+n[úu]m\.?|Exp(?:s)?\.?\s*(?:n[úu]m(?:s)?\.?)?)"
+    r"(?im)^\s*(?:Expediente\s+n[úu]m\.?|Exp(?:s)?\.\s*(?:n[úu]m(?:s)?\.?)?)"
     r"\s*:?\s*(?P<value>[^\n\r]+?)\s*$"
 )
 _DOCKET_TOKEN_RE = re.compile(
@@ -287,11 +287,10 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
                 end=end,
             )
 
-    # Emit every docket token separately. Multiple expediente identifiers are
-    # evidence-bearing facts and must not be collapsed into one opaque string.
+    # Emit only validated docket tokens from explicit labels. Unparsed text stays
+    # unknown instead of becoming an identifier merely because a label matched.
     for line_match in _DOCKET_LINE_RE.finditer(text[:3000]):
         value = line_match.group("value")
-        emitted = False
         for token in _DOCKET_TOKEN_RE.finditer(value):
             raw = token.group(0)
             start = line_match.start("value") + token.start()
@@ -301,25 +300,11 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
                 field_name="docket_number",
                 raw=raw,
                 normalized=raw.upper(),
-                method_name="scj_labeled_docket_v2",
+                method_name="scj_labeled_docket_v3",
                 page_number=page_number,
                 start=start,
                 end=end,
             )
-            emitted = True
-        if not emitted:
-            raw = value.strip()
-            if raw:
-                _append_identifier(
-                    observations,
-                    field_name="docket_number",
-                    raw=raw,
-                    normalized=_collapse_whitespace(raw),
-                    method_name="scj_labeled_docket_unparsed_v1",
-                    page_number=page_number,
-                    start=line_match.start("value"),
-                    end=line_match.end("value"),
-                )
 
     for field_name, pattern, method_name in _LABELED_TEXT_PATTERNS:
         for match in pattern.finditer(text[:3500]):
