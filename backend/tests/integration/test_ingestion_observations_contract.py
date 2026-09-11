@@ -146,7 +146,7 @@ def test_observation_can_store_auditable_date_candidate(
             values (
                 %s, %s, repeat('a', 64), 'decision_date_candidate', 'date',
                 'en fecha 30 de abril de 2025', date '2025-04-30',
-                'deterministic_parser', 'scj_body_date_phrase_v1',
+                'deterministic_parser', 'scj_decision_formula_date_v1',
                 %s, 'en fecha 30 de abril de 2025', 10, 39
             )
             returning normalized_date, status
@@ -227,6 +227,17 @@ def test_value_type_cannot_use_wrong_normalized_column(
             )
 
 
+def test_parser_version_requires_code_revision(connection: psycopg.Connection[Any]) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        with pytest.raises(psycopg.errors.NotNullViolation):
+            cursor.execute(
+                """
+                insert into corpus.parser_versions (parser_name, parser_version)
+                values ('scj_metadata', 'missing-revision-test')
+                """
+            )
+
+
 def test_required_ingestion_indexes_exist(connection: psycopg.Connection[Any]) -> None:
     expected = {
         "ingestion_jobs_artifact_idx",
@@ -234,6 +245,9 @@ def test_required_ingestion_indexes_exist(connection: psycopg.Connection[Any]) -
         "case_metadata_observations_case_field_idx",
         "case_metadata_observations_date_idx",
         "case_metadata_observations_evidence_page_idx",
+        "case_identifiers_same_case_evidence_idx",
+        "case_metadata_observations_same_case_evidence_idx",
+        "cases_same_case_date_evidence_idx",
     }
 
     with connection.cursor() as cursor:
