@@ -270,18 +270,18 @@ def evaluate_stratified(
 ) -> EvaluationReport:
     gold_list = list(gold)
     predicted_list = list(predicted)
-    families = sorted({item.layout_family for item in gold_list})
+    families = sorted(
+        {item.layout_family for item in gold_list}
+        | {item.layout_family for item in predicted_list}
+    )
 
-    by_family: dict[str, EvaluationMetrics] = {}
-    for family in families:
-        family_gold = [item for item in gold_list if item.layout_family == family]
-        family_artifacts = {item.artifact_id for item in family_gold}
-        family_predicted = [
-            item
-            for item in predicted_list
-            if item.layout_family == family or item.artifact_id in family_artifacts
-        ]
-        by_family[family] = evaluate_cases(family_gold, family_predicted)
+    by_family = {
+        family: evaluate_cases(
+            [item for item in gold_list if item.layout_family == family],
+            [item for item in predicted_list if item.layout_family == family],
+        )
+        for family in families
+    }
 
     return EvaluationReport(
         overall=evaluate_cases(gold_list, predicted_list),
