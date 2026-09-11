@@ -6,6 +6,7 @@ from jurisnexo.ingestion.logical_document_view import materialize_logical_docume
 from jurisnexo.ingestion.scanned_page_materialization import (
     AdjacentDuplicateScan,
     LogicalPageRegion,
+    PageSide,
     PhysicalPageLayout,
     detect_adjacent_duplicate_scans,
 )
@@ -15,14 +16,13 @@ pytestmark = pytest.mark.unit
 
 def _region(
     page: int,
-    side: str,
+    side: PageSide,
     text: str,
     candidates: tuple[int, ...] = (),
 ) -> LogicalPageRegion:
-    assert side in {"left", "right"}
     return LogicalPageRegion(
         physical_page_number=page,
-        side=side,  # type: ignore[arg-type]
+        side=side,
         x_min=0.0 if side == "left" else 400.0,
         x_max=400.0 if side == "left" else 800.0,
         text=text,
