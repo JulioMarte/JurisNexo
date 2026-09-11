@@ -44,7 +44,9 @@ class DocumentEnvironment:
                 "printed_page_numbers must be empty or match the page count"
             )
         if self.source_references and len(self.source_references) != len(self.pages):
-            raise DocumentEnvironmentError("source_references must be empty or match the page count")
+            raise DocumentEnvironmentError(
+                "source_references must be empty or match the page count"
+            )
 
         resolved = [value for value in self.printed_page_numbers if value is not None]
         if len(resolved) != len(set(resolved)):
