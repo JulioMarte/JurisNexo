@@ -6,6 +6,7 @@ on:
     branches:
       - benchmark/scj-pilot-profiler
       - feature/scj-layout-parser
+      - benchmark/scj-gold-dataset-v1
     paths:
       - "benchmark/ingestion/**"
       - "backend/src/jurisnexo/ingestion/**"
@@ -85,4 +86,33 @@ jobs:
             benchmark-output/${{ matrix.id }}-profile.json
             benchmark-output/${{ matrix.id }}-review.jsonl
             benchmark-output/${{ matrix.id }}.txt
+          if-no-files-found: error
+
+  build-review-queue:
+    name: Build stratified gold review queue
+    needs: profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download all profiler evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scj-pilot-*
+          path: benchmark-input
+          merge-multiple: true
+      - name: Build deterministic pending-review queue
+        run: |
+          python benchmark/ingestion/build_scj_gold_review_queue.py \
+            --input-dir benchmark-input \
+            --output benchmark-output/scj-gold-review-queue-v1.jsonl \
+            --manifest benchmark-output/scj-gold-review-queue-v1-manifest.json \
+            --target 80
+      - name: Upload pending review queue
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-gold-review-queue-v1
+          path: |
+            benchmark-output/scj-gold-review-queue-v1.jsonl
+            benchmark-output/scj-gold-review-queue-v1-manifest.json
           if-no-files-found: error
