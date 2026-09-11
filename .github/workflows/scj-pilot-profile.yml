@@ -1,0 +1,54 @@
+name: SCJ pilot corpus profile
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [benchmark/scj-pilot-profiler]
+    paths:
+      - "benchmark/ingestion/**"
+      - ".github/workflows/scj-pilot-profile.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PDF text tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.4"
+      - name: Install locked backend environment
+        working-directory: backend
+        run: uv sync --frozen --group dev
+      - name: Download official-source pilot copy from JurisNexo Storage
+        run: |
+          mkdir -p benchmark-output
+          curl --fail --location --retry 3 \
+            "https://xkmfwfupskqcmeetdwbv.supabase.co/storage/v1/object/public/docs-sentencia/Suprema%20Corte%20PDF/Principales_Decisiones_enero_abril_2025.pdf" \
+            --output benchmark-output/scj-2025-enero-abril.pdf
+      - name: Preserve page-separated extracted text for review
+        run: pdftotext -layout -enc UTF-8 benchmark-output/scj-2025-enero-abril.pdf benchmark-output/scj-2025-enero-abril.txt
+      - name: Profile parser coverage and create review sample
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          backend/.venv/bin/python benchmark/ingestion/run_scj_pilot_profiler.py \
+            benchmark-output/scj-2025-enero-abril.pdf \
+            --report benchmark-output/profile.json \
+            --review-sample benchmark-output/review-sample.jsonl \
+            --review-limit 100
+      - name: Upload reproducible pilot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-pilot-profile
+          path: |
+            benchmark-output/profile.json
+            benchmark-output/review-sample.jsonl
+            benchmark-output/scj-2025-enero-abril.txt
+          if-no-files-found: error
