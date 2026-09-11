@@ -19,17 +19,19 @@ _MODERN_FAMILIES = {
 def parse_scj_segment_metadata(
     pages: list[str], segment: CaseSegment
 ) -> list[MetadataObservation]:
-    """Extract case metadata only from pages that prove the segment identity.
+    """Extract metadata from the page that establishes segment identity.
 
-    2023/2024 compilations expose a formal case-start heading and then ordinary
-    body pages. Parsing body pages as identity metadata creates false candidates
-    from cited SCJ decisions and historical procedural dates, so only the start
-    page is metadata-bearing for these publication families.
+    For 2023/2024 publications, a formal case-start heading establishes the
+    segment and later body pages may contain cited decisions and procedural
+    dates. Only the start page is metadata-bearing.
 
-    The observed 2025 generation repeats a structured case header on its pages.
-    Metadata is accepted only from pages whose independently detected family and
-    signature match the segment. Bridged/unknown pages remain case text but do
-    not become metadata evidence.
+    The observed 2025 generation repeats structured headers on continuation
+    pages. Those repeated headers are valuable for segmentation, but parsing
+    every continuation page as metadata reintroduces cited SCJ numbers and
+    historical dates from body text. Therefore the start page is the default
+    metadata authority for modern segments as well. A future layout that needs
+    continuation-page recovery must add a field-specific, tested fallback rather
+    than scanning every body page by default.
     """
     if segment.start_page <= 0 or segment.end_page < segment.start_page:
         raise ValueError("invalid segment page range")
@@ -42,17 +44,13 @@ def parse_scj_segment_metadata(
         )
 
     if segment.family in _MODERN_FAMILIES:
-        observations: list[MetadataObservation] = []
-        for page_number in range(segment.start_page, segment.end_page + 1):
-            text = pages[page_number - 1]
-            detection = detect_scj_page_layout(text, page_number=page_number)
-            if (
-                detection.family is segment.family
-                and detection.signature_key == segment.signature_key
-            ):
-                observations.extend(
-                    parse_scj_page_metadata(text, page_number=page_number)
-                )
-        return observations
+        text = pages[segment.start_page - 1]
+        detection = detect_scj_page_layout(text, page_number=segment.start_page)
+        if (
+            detection.family is segment.family
+            and detection.signature_key == segment.signature_key
+        ):
+            return parse_scj_page_metadata(text, page_number=segment.start_page)
+        return []
 
     return []
