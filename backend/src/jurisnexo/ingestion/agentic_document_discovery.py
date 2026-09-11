@@ -16,6 +16,7 @@ from jurisnexo.ingestion.document_environment import (
 )
 from jurisnexo.model_providers.contracts import (
     JsonObject,
+    JsonValue,
     ModelProvider,
     ModelUsage,
     StructuredGenerationResult,
@@ -31,8 +32,8 @@ ToolName = Literal[
     "finish",
 ]
 
-_BASIC_TOOLS = ["get_page", "get_pages", "search_text", "sample_pages", "finish"]
-_PRINTED_PAGE_TOOLS = ["get_printed_page", "get_printed_pages"]
+_BASIC_TOOLS = ("get_page", "get_pages", "search_text", "sample_pages", "finish")
+_PRINTED_PAGE_TOOLS = ("get_printed_page", "get_printed_pages")
 
 
 class DiscoveryToolDecision(BaseModel):
@@ -237,9 +238,15 @@ def _tool_decision_schema(environment: DocumentEnvironment) -> JsonObject:
     if not isinstance(tool_schema, dict):
         raise RuntimeError("tool decision schema is missing tool property")
 
-    allowed_tools = list(_BASIC_TOOLS)
+    allowed_tools: list[JsonValue] = [
+        "get_page",
+        "get_pages",
+        "search_text",
+        "sample_pages",
+        "finish",
+    ]
     if environment.supports_printed_page_lookup:
-        allowed_tools.extend(_PRINTED_PAGE_TOOLS)
+        allowed_tools.extend(["get_printed_page", "get_printed_pages"])
     tool_schema["enum"] = allowed_tools
     return schema
 
