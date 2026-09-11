@@ -1,0 +1,435 @@
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+from collections.abc import Iterable
+from dataclasses import dataclass
+from enum import StrEnum
+
+_FIELD_NAMES = frozenset(
+    {"decision_number", "docket_numbers", "decision_date", "court_organ"}
+)
+
+
+class EvaluationStatus(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    INSUFFICIENT_SAMPLE = "insufficient_sample"
+
+
+@dataclass(frozen=True, slots=True)
+class CaseAnnotation:
+    artifact_id: str
+    start_page: int
+    end_page: int
+    layout_family: str
+    annotated_fields: frozenset[str] = frozenset()
+    decision_number: str | None = None
+    docket_numbers: tuple[str, ...] = ()
+    decision_date: str | None = None
+    court_organ: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.artifact_id:
+            raise ValueError("artifact_id is required")
+        if self.start_page <= 0 or self.end_page < self.start_page:
+            raise ValueError("invalid page range")
+        if not self.layout_family:
+            raise ValueError("layout_family is required")
+
+    @property
+    def boundary_key(self) -> tuple[str, int, int]:
+        return self.artifact_id, self.start_page, self.end_page
+
+
+@dataclass(frozen=True, slots=True)
+class CountMetric:
+    true_positive: int = 0
+    false_positive: int = 0
+    false_negative: int = 0
+
+    @property
+    def precision(self) -> float | None:
+        denominator = self.true_positive + self.false_positive
+        return self.true_positive / denominator if denominator else None
+
+    @property
+    def recall(self) -> float | None:
+        denominator = self.true_positive + self.false_negative
+        return self.true_positive / denominator if denominator else None
+
+    @property
+    def f1(self) -> float | None:
+        precision = self.precision
+        recall = self.recall
+        if precision is None or recall is None or precision + recall == 0:
+            return None
+        return 2 * precision * recall / (precision + recall)
+
+
+@dataclass(frozen=True, slots=True)
+class FieldMetric:
+    counts: CountMetric
+    annotated_cases: int
+    exact_matches: int
+
+    @property
+    def exact_accuracy(self) -> float | None:
+        if self.annotated_cases == 0:
+            return None
+        return self.exact_matches / self.annotated_cases
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationMetrics:
+    boundaries: CountMetric
+    fields: dict[str, FieldMetric]
+    reviewed_gold_cases: int
+    exact_boundary_matches: int
+    gold_cases_by_family: dict[str, int]
+    matched_cases_by_family: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationReport:
+    overall: EvaluationMetrics
+    by_family: dict[str, EvaluationMetrics]
+
+
+@dataclass(frozen=True, slots=True)
+class SamplePolicy:
+    minimum_total_cases: int = 60
+    minimum_cases_per_family: int = 8
+    minimum_annotated_cases_per_field: int = 8
+    required_families: frozenset[str] = frozenset()
+    required_fields: frozenset[str] = frozenset(
+        {"decision_number", "decision_date", "court_organ"}
+    )
+    family_minimums: tuple[tuple[str, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            self.minimum_total_cases < 0
+            or self.minimum_cases_per_family < 0
+            or self.minimum_annotated_cases_per_field < 0
+        ):
+            raise ValueError("sample minimums must be non-negative")
+        names = [name for name, _ in self.family_minimums]
+        if len(names) != len(set(names)):
+            raise ValueError("duplicate family minimum")
+        if any(not name or count < 0 for name, count in self.family_minimums):
+            raise ValueError("invalid family minimum")
+        unknown_required_fields = self.required_fields - _FIELD_NAMES
+        if unknown_required_fields:
+            raise ValueError(
+                f"unsupported required fields: {sorted(unknown_required_fields)}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionThresholds:
+    boundary_precision: float = 0.99
+    boundary_recall: float = 0.98
+    decision_number_precision: float = 0.995
+    decision_number_recall: float = 0.99
+    decision_date_precision: float = 0.99
+    decision_date_recall: float = 0.97
+    court_organ_precision: float = 0.99
+
+
+@dataclass(frozen=True, slots=True)
+class GateResult:
+    status: EvaluationStatus
+    reasons: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class _MutableCounts:
+    true_positive: int = 0
+    false_positive: int = 0
+    false_negative: int = 0
+    annotated_cases: int = 0
+    exact_matches: int = 0
+
+    def freeze(self) -> FieldMetric:
+        return FieldMetric(
+            counts=CountMetric(
+                true_positive=self.true_positive,
+                false_positive=self.false_positive,
+                false_negative=self.false_negative,
+            ),
+            annotated_cases=self.annotated_cases,
+            exact_matches=self.exact_matches,
+        )
+
+
+def _normalize_scalar(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.split()).casefold()
+    return normalized or None
+
+
+def _normalize_set(values: Iterable[str]) -> frozenset[str]:
+    return frozenset(
+        normalized
+        for value in values
+        if (normalized := _normalize_scalar(value)) is not None
+    )
+
+
+def _score_scalar(
+    expected: str | None, predicted: str | None, counts: _MutableCounts
+) -> None:
+    counts.annotated_cases += 1
+    expected_normalized = _normalize_scalar(expected)
+    predicted_normalized = _normalize_scalar(predicted)
+
+    if expected_normalized == predicted_normalized:
+        counts.exact_matches += 1
+        if expected_normalized is not None:
+            counts.true_positive += 1
+        return
+
+    if predicted_normalized is not None:
+        counts.false_positive += 1
+    if expected_normalized is not None:
+        counts.false_negative += 1
+
+
+def _score_set(
+    expected: Iterable[str], predicted: Iterable[str], counts: _MutableCounts
+) -> None:
+    counts.annotated_cases += 1
+    expected_normalized = _normalize_set(expected)
+    predicted_normalized = _normalize_set(predicted)
+
+    if expected_normalized == predicted_normalized:
+        counts.exact_matches += 1
+
+    counts.true_positive += len(expected_normalized & predicted_normalized)
+    counts.false_positive += len(predicted_normalized - expected_normalized)
+    counts.false_negative += len(expected_normalized - predicted_normalized)
+
+
+def _score_fields(
+    expected: CaseAnnotation,
+    actual: CaseAnnotation,
+    field_counts: dict[str, _MutableCounts],
+) -> None:
+    if "decision_number" in expected.annotated_fields:
+        _score_scalar(
+            expected.decision_number,
+            actual.decision_number,
+            field_counts["decision_number"],
+        )
+    if "docket_numbers" in expected.annotated_fields:
+        _score_set(
+            expected.docket_numbers,
+            actual.docket_numbers,
+            field_counts["docket_numbers"],
+        )
+    if "decision_date" in expected.annotated_fields:
+        _score_scalar(
+            expected.decision_date,
+            actual.decision_date,
+            field_counts["decision_date"],
+        )
+    if "court_organ" in expected.annotated_fields:
+        _score_scalar(
+            expected.court_organ,
+            actual.court_organ,
+            field_counts["court_organ"],
+        )
+
+
+def evaluate_cases(
+    gold: Iterable[CaseAnnotation], predicted: Iterable[CaseAnnotation]
+) -> EvaluationMetrics:
+    gold_list = list(gold)
+    predicted_list = list(predicted)
+
+    for item in gold_list:
+        unknown_fields = item.annotated_fields - _FIELD_NAMES
+        if unknown_fields:
+            raise ValueError(f"unsupported annotated fields: {sorted(unknown_fields)}")
+
+    gold_by_key = {item.boundary_key: item for item in gold_list}
+    predicted_by_key = {item.boundary_key: item for item in predicted_list}
+    if len(gold_by_key) != len(gold_list):
+        raise ValueError("duplicate gold boundary key")
+    if len(predicted_by_key) != len(predicted_list):
+        raise ValueError("duplicate predicted boundary key")
+
+    gold_keys = set(gold_by_key)
+    predicted_keys = set(predicted_by_key)
+    matched_keys = gold_keys & predicted_keys
+
+    boundary_metric = CountMetric(
+        true_positive=len(matched_keys),
+        false_positive=len(predicted_keys - gold_keys),
+        false_negative=len(gold_keys - predicted_keys),
+    )
+
+    field_counts: dict[str, _MutableCounts] = defaultdict(_MutableCounts)
+    matched_by_family: Counter[str] = Counter()
+    gold_by_family: Counter[str] = Counter(item.layout_family for item in gold_list)
+
+    for key in sorted(matched_keys):
+        expected = gold_by_key[key]
+        actual = predicted_by_key[key]
+        matched_by_family[expected.layout_family] += 1
+        _score_fields(expected, actual, field_counts)
+
+    return EvaluationMetrics(
+        boundaries=boundary_metric,
+        fields={name: counts.freeze() for name, counts in sorted(field_counts.items())},
+        reviewed_gold_cases=len(gold_list),
+        exact_boundary_matches=len(matched_keys),
+        gold_cases_by_family=dict(sorted(gold_by_family.items())),
+        matched_cases_by_family=dict(sorted(matched_by_family.items())),
+    )
+
+
+def evaluate_stratified(
+    gold: Iterable[CaseAnnotation], predicted: Iterable[CaseAnnotation]
+) -> EvaluationReport:
+    gold_list = list(gold)
+    predicted_list = list(predicted)
+    families = sorted(
+        {item.layout_family for item in gold_list}
+        | {item.layout_family for item in predicted_list}
+    )
+
+    by_family = {
+        family: evaluate_cases(
+            [item for item in gold_list if item.layout_family == family],
+            [item for item in predicted_list if item.layout_family == family],
+        )
+        for family in families
+    }
+
+    return EvaluationReport(
+        overall=evaluate_cases(gold_list, predicted_list),
+        by_family=by_family,
+    )
+
+
+def _metric_below(value: float | None, threshold: float) -> bool:
+    return value is None or value < threshold
+
+
+def _append_threshold_failures(
+    *,
+    label: str,
+    metrics: EvaluationMetrics,
+    thresholds: PromotionThresholds,
+    reasons: list[str],
+) -> None:
+    if _metric_below(metrics.boundaries.precision, thresholds.boundary_precision):
+        reasons.append(
+            f"{label}boundary precision {metrics.boundaries.precision!r} < "
+            f"{thresholds.boundary_precision}"
+        )
+    if _metric_below(metrics.boundaries.recall, thresholds.boundary_recall):
+        reasons.append(
+            f"{label}boundary recall {metrics.boundaries.recall!r} < "
+            f"{thresholds.boundary_recall}"
+        )
+
+    threshold_pairs = {
+        "decision_number": (
+            thresholds.decision_number_precision,
+            thresholds.decision_number_recall,
+        ),
+        "decision_date": (
+            thresholds.decision_date_precision,
+            thresholds.decision_date_recall,
+        ),
+    }
+    for field_name, (precision_threshold, recall_threshold) in threshold_pairs.items():
+        field_metric = metrics.fields.get(field_name)
+        precision = field_metric.counts.precision if field_metric else None
+        recall = field_metric.counts.recall if field_metric else None
+        if _metric_below(precision, precision_threshold):
+            reasons.append(
+                f"{label}{field_name} precision {precision!r} < {precision_threshold}"
+            )
+        if _metric_below(recall, recall_threshold):
+            reasons.append(
+                f"{label}{field_name} recall {recall!r} < {recall_threshold}"
+            )
+
+    organ = metrics.fields.get("court_organ")
+    organ_precision = organ.counts.precision if organ else None
+    if _metric_below(organ_precision, thresholds.court_organ_precision):
+        reasons.append(
+            f"{label}court_organ precision {organ_precision!r} < "
+            f"{thresholds.court_organ_precision}"
+        )
+
+
+def evaluate_promotion_gate(
+    report: EvaluationReport,
+    *,
+    sample_policy: SamplePolicy | None = None,
+    thresholds: PromotionThresholds | None = None,
+) -> GateResult:
+    policy = sample_policy or SamplePolicy()
+    threshold_policy = thresholds or PromotionThresholds()
+    readiness_reasons: list[str] = []
+    overall = report.overall
+
+    if overall.reviewed_gold_cases < policy.minimum_total_cases:
+        readiness_reasons.append(
+            "reviewed gold cases "
+            f"{overall.reviewed_gold_cases} < required {policy.minimum_total_cases}"
+        )
+
+    overrides = dict(policy.family_minimums)
+    configured_families = policy.required_families | frozenset(overrides)
+    families = configured_families or frozenset(
+        family for family, metrics in report.by_family.items() if metrics.reviewed_gold_cases
+    )
+
+    for family in sorted(families):
+        family_metrics = report.by_family.get(family)
+        reviewed = family_metrics.reviewed_gold_cases if family_metrics else 0
+        required = overrides.get(family, policy.minimum_cases_per_family)
+        if reviewed < required:
+            readiness_reasons.append(
+                f"family {family!r} has {reviewed} reviewed cases; requires {required}"
+            )
+
+        for field_name in sorted(policy.required_fields):
+            field_metric = family_metrics.fields.get(field_name) if family_metrics else None
+            annotated = field_metric.annotated_cases if field_metric else 0
+            if annotated < policy.minimum_annotated_cases_per_field:
+                readiness_reasons.append(
+                    f"family {family!r} field {field_name!r} has {annotated} annotated "
+                    f"cases; requires {policy.minimum_annotated_cases_per_field}"
+                )
+
+    if readiness_reasons:
+        return GateResult(
+            status=EvaluationStatus.INSUFFICIENT_SAMPLE,
+            reasons=tuple(readiness_reasons),
+        )
+
+    failure_reasons: list[str] = []
+    _append_threshold_failures(
+        label="",
+        metrics=overall,
+        thresholds=threshold_policy,
+        reasons=failure_reasons,
+    )
+    for family in sorted(families):
+        _append_threshold_failures(
+            label=f"family {family!r} ",
+            metrics=report.by_family[family],
+            thresholds=threshold_policy,
+            reasons=failure_reasons,
+        )
+
+    if failure_reasons:
+        return GateResult(status=EvaluationStatus.FAIL, reasons=tuple(failure_reasons))
+    return GateResult(status=EvaluationStatus.PASS, reasons=())
