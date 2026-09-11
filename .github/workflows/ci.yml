@@ -41,13 +41,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build backend test image
         run: docker compose --profile test build test
-      - name: Show Ruff canonical import fix
-        run: |
-          docker compose --profile test run --rm --no-deps test sh -lc '
-            .venv/bin/ruff check --fix src/jurisnexo/ingestion/scj_segment_metadata.py >/dev/null || true
-            cat src/jurisnexo/ingestion/scj_segment_metadata.py
-            exit 1
-          '
+      - name: Ruff
+        run: docker compose --profile test run --rm --no-deps test ruff check src tests migrations
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
 
