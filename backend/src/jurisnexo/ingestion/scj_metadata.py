@@ -93,6 +93,14 @@ def _collapse_whitespace(value: str) -> str:
     return " ".join(value.split())
 
 
+def _parse_spanish_date_match(match: re.Match[str]) -> date | None:
+    month = _MONTHS[match.group("month").lower()]
+    try:
+        return date(int(match.group("year")), month, int(match.group("day")))
+    except ValueError:
+        return None
+
+
 def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObservation]:
     """Extract only high-precision metadata patterns observed in SCJ compilations.
 
@@ -152,8 +160,9 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
             )
 
     for match in _SPANISH_DATE_RE.finditer(text):
-        month = _MONTHS[match.group("month").lower()]
-        parsed = date(int(match.group("year")), month, int(match.group("day")))
+        parsed = _parse_spanish_date_match(match)
+        if parsed is None:
+            continue
         observations.append(
             MetadataObservation(
                 field_name="decision_date_candidate",
