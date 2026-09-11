@@ -15,6 +15,7 @@ from jurisnexo.ingestion.document_environment import (
     TextSearchHit,
 )
 from jurisnexo.model_providers.contracts import (
+    JsonObject,
     ModelProvider,
     ModelUsage,
     StructuredGenerationResult,
@@ -29,6 +30,9 @@ ToolName = Literal[
     "sample_pages",
     "finish",
 ]
+
+_BASIC_TOOLS = ["get_page", "get_pages", "search_text", "sample_pages", "finish"]
+_PRINTED_PAGE_TOOLS = ["get_printed_page", "get_printed_pages"]
 
 
 class DiscoveryToolDecision(BaseModel):
@@ -158,6 +162,7 @@ def run_agentic_document_discovery(
     steps: list[DiscoveryStep] = []
     model_results: list[StructuredGenerationResult] = []
     seen_tool_keys: set[tuple[object, ...]] = set()
+    decision_schema = _tool_decision_schema(environment)
 
     for step_number in range(1, active_budget.max_model_calls):
         prompt = _build_tool_prompt(
@@ -168,7 +173,7 @@ def run_agentic_document_discovery(
         )
         result = provider.generate_structured(
             prompt=prompt,
-            json_schema=DiscoveryToolDecision.model_json_schema(),
+            json_schema=decision_schema,
             max_output_tokens=decision_max_output_tokens,
             thinking_level=thinking_level,
         )
@@ -221,6 +226,22 @@ def run_agentic_document_discovery(
         synthesis_result=synthesis_result,
         usage=_aggregate_usage(model_results),
     )
+
+
+def _tool_decision_schema(environment: DocumentEnvironment) -> JsonObject:
+    schema: JsonObject = DiscoveryToolDecision.model_json_schema()
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise RuntimeError("tool decision schema is missing properties")
+    tool_schema = properties.get("tool")
+    if not isinstance(tool_schema, dict):
+        raise RuntimeError("tool decision schema is missing tool property")
+
+    allowed_tools = list(_BASIC_TOOLS)
+    if environment.supports_printed_page_lookup:
+        allowed_tools.extend(_PRINTED_PAGE_TOOLS)
+    tool_schema["enum"] = allowed_tools
+    return schema
 
 
 def _build_tool_prompt(
