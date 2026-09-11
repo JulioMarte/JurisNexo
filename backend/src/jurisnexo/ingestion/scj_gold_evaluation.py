@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Iterable
 
@@ -86,6 +86,12 @@ class EvaluationMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class EvaluationReport:
+    overall: EvaluationMetrics
+    by_family: dict[str, EvaluationMetrics]
+
+
+@dataclass(frozen=True, slots=True)
 class SamplePolicy:
     minimum_total_cases: int = 60
     minimum_cases_per_family: int = 8
@@ -154,7 +160,9 @@ def _normalize_set(values: Iterable[str]) -> frozenset[str]:
     )
 
 
-def _score_scalar(expected: str | None, predicted: str | None, counts: _MutableCounts) -> None:
+def _score_scalar(
+    expected: str | None, predicted: str | None, counts: _MutableCounts
+) -> None:
     counts.annotated_cases += 1
     expected_normalized = _normalize_scalar(expected)
     predicted_normalized = _normalize_scalar(predicted)
@@ -254,6 +262,30 @@ def evaluate_cases(
         exact_boundary_matches=len(matched_keys),
         gold_cases_by_family=dict(sorted(gold_by_family.items())),
         matched_cases_by_family=dict(sorted(matched_by_family.items())),
+    )
+
+
+def evaluate_stratified(
+    gold: Iterable[CaseAnnotation], predicted: Iterable[CaseAnnotation]
+) -> EvaluationReport:
+    gold_list = list(gold)
+    predicted_list = list(predicted)
+    families = sorted({item.layout_family for item in gold_list})
+
+    by_family: dict[str, EvaluationMetrics] = {}
+    for family in families:
+        family_gold = [item for item in gold_list if item.layout_family == family]
+        family_artifacts = {item.artifact_id for item in family_gold}
+        family_predicted = [
+            item
+            for item in predicted_list
+            if item.layout_family == family or item.artifact_id in family_artifacts
+        ]
+        by_family[family] = evaluate_cases(family_gold, family_predicted)
+
+    return EvaluationReport(
+        overall=evaluate_cases(gold_list, predicted_list),
+        by_family=by_family,
     )
 
 
