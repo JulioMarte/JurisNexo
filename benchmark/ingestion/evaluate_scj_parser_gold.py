@@ -74,7 +74,16 @@ def _load_manifest(path: Path) -> tuple[SamplePolicy, PromotionThresholds, dict[
     sample_policy = SamplePolicy(
         minimum_total_cases=int(sample.get("minimum_total_cases", 60)),
         minimum_cases_per_family=int(sample.get("minimum_cases_per_family", 8)),
+        minimum_annotated_cases_per_field=int(
+            sample.get("minimum_annotated_cases_per_field", 8)
+        ),
         required_families=frozenset(sample.get("required_families", ())),
+        required_fields=frozenset(
+            sample.get(
+                "required_fields",
+                ("decision_number", "decision_date", "court_organ"),
+            )
+        ),
     )
     promotion_thresholds = PromotionThresholds(
         boundary_precision=float(thresholds.get("boundary_precision", 0.99)),
@@ -132,6 +141,16 @@ def _report(report: EvaluationReport) -> dict[str, Any]:
     }
 
 
+def _sample_policy_json(policy: SamplePolicy) -> dict[str, Any]:
+    return {
+        "minimum_total_cases": policy.minimum_total_cases,
+        "minimum_cases_per_family": policy.minimum_cases_per_family,
+        "minimum_annotated_cases_per_field": policy.minimum_annotated_cases_per_field,
+        "required_families": sorted(policy.required_families),
+        "required_fields": sorted(policy.required_fields),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate SCJ parser predictions against independently reviewed gold JSONL."
@@ -152,7 +171,7 @@ def main() -> None:
     predicted = _load_jsonl(args.predicted, require_reviewed=False)
     report = evaluate_stratified(gold, predicted)
     gate = evaluate_promotion_gate(
-        report.overall,
+        report,
         sample_policy=sample_policy,
         thresholds=thresholds,
     )
@@ -166,7 +185,7 @@ def main() -> None:
             "reasons": list(gate.reasons),
         },
         "policy": {
-            "sample": asdict(sample_policy),
+            "sample": _sample_policy_json(sample_policy),
             "thresholds": asdict(thresholds),
         },
     }
