@@ -14,6 +14,32 @@
     }
   ],
   "hypothesis": {
-    "has_index": true
+    "has_index": true,
+    "index_reference_investigations": [
+      {
+        "reference_as_printed": 183,
+        "resolution_status": "confirmed_at_reference",
+        "observed_decision_start_printed_page": 183,
+        "evidence_printed_pages": [183],
+        "evidence_view_pages": [6],
+        "confidence": 0.98
+      },
+      {
+        "reference_as_printed": 189,
+        "resolution_status": "confirmed_at_reference",
+        "observed_decision_start_printed_page": 189,
+        "evidence_printed_pages": [189],
+        "evidence_view_pages": [12],
+        "confidence": 0.97
+      },
+      {
+        "reference_as_printed": 193,
+        "resolution_status": "confirmed_at_reference",
+        "observed_decision_start_printed_page": 193,
+        "evidence_printed_pages": [193],
+        "evidence_view_pages": [16],
+        "confidence": 0.96
+      }
+    ]
   }
 }
