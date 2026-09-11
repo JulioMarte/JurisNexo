@@ -71,6 +71,10 @@ def _load_manifest(path: Path) -> tuple[SamplePolicy, PromotionThresholds, dict[
 
     sample = payload.get("sample_policy", {})
     thresholds = payload.get("promotion_thresholds", {})
+    family_minimums_payload = sample.get("family_minimums", {})
+    if not isinstance(family_minimums_payload, dict):
+        raise ValueError("sample_policy.family_minimums must be an object")
+
     sample_policy = SamplePolicy(
         minimum_total_cases=int(sample.get("minimum_total_cases", 60)),
         minimum_cases_per_family=int(sample.get("minimum_cases_per_family", 8)),
@@ -83,6 +87,9 @@ def _load_manifest(path: Path) -> tuple[SamplePolicy, PromotionThresholds, dict[
                 "required_fields",
                 ("decision_number", "decision_date", "court_organ"),
             )
+        ),
+        family_minimums=tuple(
+            sorted((str(name), int(count)) for name, count in family_minimums_payload.items())
         ),
     )
     promotion_thresholds = PromotionThresholds(
@@ -148,6 +155,7 @@ def _sample_policy_json(policy: SamplePolicy) -> dict[str, Any]:
         "minimum_annotated_cases_per_field": policy.minimum_annotated_cases_per_field,
         "required_families": sorted(policy.required_families),
         "required_fields": sorted(policy.required_fields),
+        "family_minimums": dict(policy.family_minimums),
     }
 
 
