@@ -16,6 +16,11 @@ on:
         required: true
         default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_full_sample.txt
         type: string
+      truth_path:
+        description: Repo-relative structural ground-truth JSON file
+        required: true
+        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_full_sample.truth.json
+        type: string
       artifact_label:
         description: Human-readable artifact label for the discovery prompt
         required: true
@@ -122,10 +127,23 @@ jobs:
               --max-output-tokens "${{ inputs.max_output_tokens }}"
           fi
 
+      - name: Score structural discovery
+        working-directory: backend
+        run: |
+          uv run python ../benchmark/ingestion/evaluate_document_discovery.py \
+            --result "../benchmark-output/discovery-result.json" \
+            --truth "../${{ inputs.truth_path }}" \
+            --output "../benchmark-output/discovery-score.json"
+
+      - name: Show structural score
+        run: cat benchmark-output/discovery-score.json
+
       - name: Upload discovery evidence
         uses: actions/upload-artifact@v4
         with:
           name: document-discovery-${{ inputs.mode }}-${{ github.run_id }}
-          path: benchmark-output/discovery-result.json
+          path: |
+            benchmark-output/discovery-result.json
+            benchmark-output/discovery-score.json
           if-no-files-found: error
           retention-days: 14
