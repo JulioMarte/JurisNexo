@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "dataset_id": "historical-bulletin-831-index-gold-v1",
+  "source_origin": "https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf",
+  "source_sha256": "0edd1beefaf198cb88db26127fb83cbd3a56832176af24b57e4e94e48e37f2f2",
+  "artifact_label": "Boletín Judicial Núm. 831, febrero 1980",
+  "review_method": "Manual primary-source verification against the official PDF and the deterministic logical-document view before any paid agent benchmark result was observed.",
+  "acceptance_policy": {
+    "minimum_distinct_verified_index_references": 3,
+    "require_index_detected": true
+  },
+  "entries": [
+    {
+      "index_order": 1,
+      "printed_page": 183,
+      "view_page": 6,
+      "source_physical_pages": [5, 6],
+      "side": "right",
+      "decision_heading_date": "1980-02-06"
+    },
+    {
+      "index_order": 2,
+      "printed_page": 189,
+      "view_page": 12,
+      "source_physical_pages": [11, 12],
+      "side": "right",
+      "decision_heading_date": "1980-02-06"
+    },
+    {
+      "index_order": 3,
+      "printed_page": 193,
+      "view_page": 16,
+      "source_physical_pages": [15, 16],
+      "side": "right",
+      "decision_heading_date": "1980-02-06"
+    },
+    {
+      "index_order": 4,
+      "printed_page": 198,
+      "view_page": 21,
+      "source_physical_pages": [21, 22],
+      "side": "left",
+      "decision_heading_date": "1980-02-08"
+    },
+    {
+      "index_order": 5,
+      "printed_page": 205,
+      "view_page": 28,
+      "source_physical_pages": [27, 28],
+      "side": "right",
+      "decision_heading_date": "1980-02-08"
+    },
+    {
+      "index_order": 6,
+      "printed_page": 213,
+      "view_page": 36,
+      "source_physical_pages": [35, 36],
+      "side": "right",
+      "decision_heading_date": "1980-02-08"
+    },
+    {
+      "index_order": 7,
+      "printed_page": 223,
+      "view_page": 46,
+      "source_physical_pages": [45, 46],
+      "side": "right",
+      "decision_heading_date": "1980-02-13"
+    },
+    {
+      "index_order": 8,
+      "printed_page": 229,
+      "view_page": 52,
+      "source_physical_pages": [51, 52],
+      "side": "right",
+      "decision_heading_date": "1980-02-13"
+    },
+    {
+      "index_order": 9,
+      "printed_page": 236,
+      "view_page": 59,
+      "source_physical_pages": [59, 60],
+      "side": "left",
+      "decision_heading_date": "1980-02-13"
+    },
+    {
+      "index_order": 10,
+      "printed_page": 241,
+      "view_page": 64,
+      "source_physical_pages": [63, 64],
+      "side": "right",
+      "decision_heading_date": "1980-02-13"
+    },
+    {
+      "index_order": 11,
+      "printed_page": 248,
+      "view_page": 71,
+      "source_physical_pages": [71, 72],
+      "side": "left",
+      "decision_heading_date": "1980-02-13"
+    },
+    {
+      "index_order": 12,
+      "printed_page": 251,
+      "view_page": 74,
+      "source_physical_pages": [73, 74],
+      "side": "right",
+      "decision_heading_date": "1980-02-15"
+    }
+  ]
+}

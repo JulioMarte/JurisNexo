@@ -48,6 +48,18 @@ jobs:
           docker compose --profile test run --rm --no-deps
           -v "$PWD/benchmark:/benchmark:ro"
           test ruff check /benchmark/ingestion
+      - name: Historical benchmark scorer smoke test
+        run: |
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD/benchmark:/benchmark:ro" \
+            test sh -ec '
+              python /benchmark/ingestion/evaluate_historical_bulletin_agent.py \
+                --result /benchmark/ingestion/fixtures/historical_agent_score.pass.json \
+                --gold /benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
+                --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
+                --output /tmp/historical-agent-score.json
+              python -c "import json; p=json.load(open(\"/tmp/historical-agent-score.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"metrics\"][\"verified_gold_reference_count\"] == 3"
+            '
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
 

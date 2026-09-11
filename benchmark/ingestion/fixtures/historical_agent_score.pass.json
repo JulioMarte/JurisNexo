@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "decision": {"tool": "get_printed_page", "printed_page_number": 183},
+      "tool_output": "--- VIEW PAGE 6 | PRINTED PAGE 183 | SOURCE physical_pages=5,6; side=right ---"
+    },
+    {
+      "decision": {"tool": "get_printed_page", "printed_page_number": 189},
+      "tool_output": "--- VIEW PAGE 12 | PRINTED PAGE 189 | SOURCE physical_pages=11,12; side=right ---"
+    },
+    {
+      "decision": {"tool": "get_printed_page", "printed_page_number": 193},
+      "tool_output": "--- VIEW PAGE 16 | PRINTED PAGE 193 | SOURCE physical_pages=15,16; side=right ---"
+    }
+  ],
+  "hypothesis": {
+    "has_index": true
+  }
+}
