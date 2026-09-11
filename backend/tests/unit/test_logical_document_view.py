@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from jurisnexo.ingestion.logical_document_view import (
+    LogicalDocumentView,
     build_document_environment_from_logical_view,
     materialize_logical_document_view,
 )
@@ -52,7 +53,7 @@ def _page(
     )
 
 
-def _sample_view():
+def _sample_view() -> LogicalDocumentView:
     pages = (
         _page(
             1,
