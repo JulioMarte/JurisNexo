@@ -60,6 +60,34 @@ def test_printed_page_lookup_returns_resolved_page_with_provenance() -> None:
         environment.get_printed_page(184)
 
 
+def test_printed_page_range_preserves_provenance_and_reports_gaps() -> None:
+    environment = DocumentEnvironment(
+        ("before", "target", "after"),
+        printed_page_numbers=(352, 353, 355),
+        source_references=(
+            "physical_pages=174; side=left",
+            "physical_pages=174; side=right",
+            "physical_pages=176; side=right",
+        ),
+    )
+
+    page_range = environment.get_printed_pages(352, 355, max_pages=5)
+
+    assert [page.printed_page_number for page in page_range.pages] == [352, 353, 355]
+    assert page_range.unresolved_printed_pages == (354,)
+    assert page_range.pages[1].source_reference == "physical_pages=174; side=right"
+
+
+def test_printed_page_range_is_bounded_by_editorial_span() -> None:
+    environment = DocumentEnvironment(
+        tuple(f"page {value}" for value in range(351, 359)),
+        printed_page_numbers=tuple(range(351, 359)),
+    )
+
+    with pytest.raises(DocumentEnvironmentError, match="tool limit is 7"):
+        environment.get_printed_pages(351, 358, max_pages=7)
+
+
 def test_printed_page_lookup_requires_unique_resolved_numbers() -> None:
     with pytest.raises(DocumentEnvironmentError, match="must be unique"):
         DocumentEnvironment(
