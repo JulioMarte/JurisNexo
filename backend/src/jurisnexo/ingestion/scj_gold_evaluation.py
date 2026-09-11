@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Iterable
+
+
+_FIELD_NAMES = frozenset(
+    {"decision_number", "docket_numbers", "decision_date", "court_organ"}
+)
 
 
 class EvaluationStatus(StrEnum):
@@ -94,18 +99,31 @@ class EvaluationReport:
 @dataclass(frozen=True, slots=True)
 class SamplePolicy:
     minimum_total_cases: int = 60
-    minimum_cases_per_family: int = 1
+    minimum_cases_per_family: int = 8
+    minimum_annotated_cases_per_field: int = 8
     required_families: frozenset[str] = frozenset()
+    required_fields: frozenset[str] = frozenset(
+        {"decision_number", "decision_date", "court_organ"}
+    )
     family_minimums: tuple[tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
-        if self.minimum_total_cases < 0 or self.minimum_cases_per_family < 0:
+        if (
+            self.minimum_total_cases < 0
+            or self.minimum_cases_per_family < 0
+            or self.minimum_annotated_cases_per_field < 0
+        ):
             raise ValueError("sample minimums must be non-negative")
         names = [name for name, _ in self.family_minimums]
         if len(names) != len(set(names)):
             raise ValueError("duplicate family minimum")
         if any(not name or count < 0 for name, count in self.family_minimums):
             raise ValueError("invalid family minimum")
+        unknown_required_fields = self.required_fields - _FIELD_NAMES
+        if unknown_required_fields:
+            raise ValueError(
+                f"unsupported required fields: {sorted(unknown_required_fields)}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,16 +161,6 @@ class _MutableCounts:
             annotated_cases=self.annotated_cases,
             exact_matches=self.exact_matches,
         )
-
-
-_FIELD_NAMES = frozenset(
-    {
-        "decision_number",
-        "docket_numbers",
-        "decision_date",
-        "court_organ",
-    }
-)
 
 
 def _normalize_scalar(value: str | None) -> str | None:
@@ -204,11 +212,47 @@ def _score_set(
     counts.false_negative += len(expected_normalized - predicted_normalized)
 
 
+def _score_fields(
+    expected: CaseAnnotation,
+    actual: CaseAnnotation,
+    field_counts: dict[str, _MutableCounts],
+) -> None:
+    if "decision_number" in expected.annotated_fields:
+        _score_scalar(
+            expected.decision_number,
+            actual.decision_number,
+            field_counts["decision_number"],
+        )
+    if "docket_numbers" in expected.annotated_fields:
+        _score_set(
+            expected.docket_numbers,
+            actual.docket_numbers,
+            field_counts["docket_numbers"],
+        )
+    if "decision_date" in expected.annotated_fields:
+        _score_scalar(
+            expected.decision_date,
+            actual.decision_date,
+            field_counts["decision_date"],
+        )
+    if "court_organ" in expected.annotated_fields:
+        _score_scalar(
+            expected.court_organ,
+            actual.court_organ,
+            field_counts["court_organ"],
+        )
+
+
 def evaluate_cases(
     gold: Iterable[CaseAnnotation], predicted: Iterable[CaseAnnotation]
 ) -> EvaluationMetrics:
     gold_list = list(gold)
     predicted_list = list(predicted)
+
+    for item in gold_list:
+        unknown_fields = item.annotated_fields - _FIELD_NAMES
+        if unknown_fields:
+            raise ValueError(f"unsupported annotated fields: {sorted(unknown_fields)}")
 
     gold_by_key = {item.boundary_key: item for item in gold_list}
     predicted_by_key = {item.boundary_key: item for item in predicted_list}
@@ -235,35 +279,7 @@ def evaluate_cases(
         expected = gold_by_key[key]
         actual = predicted_by_key[key]
         matched_by_family[expected.layout_family] += 1
-
-        unknown_fields = expected.annotated_fields - _FIELD_NAMES
-        if unknown_fields:
-            raise ValueError(f"unsupported annotated fields: {sorted(unknown_fields)}")
-
-        if "decision_number" in expected.annotated_fields:
-            _score_scalar(
-                expected.decision_number,
-                actual.decision_number,
-                field_counts["decision_number"],
-            )
-        if "docket_numbers" in expected.annotated_fields:
-            _score_set(
-                expected.docket_numbers,
-                actual.docket_numbers,
-                field_counts["docket_numbers"],
-            )
-        if "decision_date" in expected.annotated_fields:
-            _score_scalar(
-                expected.decision_date,
-                actual.decision_date,
-                field_counts["decision_date"],
-            )
-        if "court_organ" in expected.annotated_fields:
-            _score_scalar(
-                expected.court_organ,
-                actual.court_organ,
-                field_counts["court_organ"],
-            )
+        _score_fields(expected, actual, field_counts)
 
     return EvaluationMetrics(
         boundaries=boundary_metric,
@@ -303,52 +319,25 @@ def _metric_below(value: float | None, threshold: float) -> bool:
     return value is None or value < threshold
 
 
-def evaluate_promotion_gate(
-    metrics: EvaluationMetrics,
+def _append_threshold_failures(
     *,
-    sample_policy: SamplePolicy = SamplePolicy(),
-    thresholds: PromotionThresholds = PromotionThresholds(),
-) -> GateResult:
-    readiness_reasons: list[str] = []
-    if metrics.reviewed_gold_cases < sample_policy.minimum_total_cases:
-        readiness_reasons.append(
-            "reviewed gold cases "
-            f"{metrics.reviewed_gold_cases} < required {sample_policy.minimum_total_cases}"
+    label: str,
+    metrics: EvaluationMetrics,
+    thresholds: PromotionThresholds,
+    reasons: list[str],
+) -> None:
+    if _metric_below(metrics.boundaries.precision, thresholds.boundary_precision):
+        reasons.append(
+            f"{label}boundary precision {metrics.boundaries.precision!r} < "
+            f"{thresholds.boundary_precision}"
+        )
+    if _metric_below(metrics.boundaries.recall, thresholds.boundary_recall):
+        reasons.append(
+            f"{label}boundary recall {metrics.boundaries.recall!r} < "
+            f"{thresholds.boundary_recall}"
         )
 
-    overrides = dict(sample_policy.family_minimums)
-    families = (
-        sample_policy.required_families
-        or frozenset(overrides)
-        or frozenset(metrics.gold_cases_by_family)
-    )
-    for family in sorted(families):
-        count = metrics.gold_cases_by_family.get(family, 0)
-        required = overrides.get(family, sample_policy.minimum_cases_per_family)
-        if count < required:
-            readiness_reasons.append(
-                f"family {family!r} has {count} reviewed cases; requires {required}"
-            )
-
-    if readiness_reasons:
-        return GateResult(
-            status=EvaluationStatus.INSUFFICIENT_SAMPLE,
-            reasons=tuple(readiness_reasons),
-        )
-
-    failure_reasons: list[str] = []
-    boundary_precision = metrics.boundaries.precision
-    boundary_recall = metrics.boundaries.recall
-    if _metric_below(boundary_precision, thresholds.boundary_precision):
-        failure_reasons.append(
-            f"boundary precision {boundary_precision!r} < {thresholds.boundary_precision}"
-        )
-    if _metric_below(boundary_recall, thresholds.boundary_recall):
-        failure_reasons.append(
-            f"boundary recall {boundary_recall!r} < {thresholds.boundary_recall}"
-        )
-
-    required_field_thresholds = {
+    threshold_pairs = {
         "decision_number": (
             thresholds.decision_number_precision,
             thresholds.decision_number_recall,
@@ -358,25 +347,88 @@ def evaluate_promotion_gate(
             thresholds.decision_date_recall,
         ),
     }
-    for field_name, (precision_threshold, recall_threshold) in required_field_thresholds.items():
+    for field_name, (precision_threshold, recall_threshold) in threshold_pairs.items():
         field_metric = metrics.fields.get(field_name)
         precision = field_metric.counts.precision if field_metric else None
         recall = field_metric.counts.recall if field_metric else None
         if _metric_below(precision, precision_threshold):
-            failure_reasons.append(
-                f"{field_name} precision {precision!r} < {precision_threshold}"
+            reasons.append(
+                f"{label}{field_name} precision {precision!r} < {precision_threshold}"
             )
         if _metric_below(recall, recall_threshold):
-            failure_reasons.append(
-                f"{field_name} recall {recall!r} < {recall_threshold}"
+            reasons.append(
+                f"{label}{field_name} recall {recall!r} < {recall_threshold}"
             )
 
     organ = metrics.fields.get("court_organ")
     organ_precision = organ.counts.precision if organ else None
     if _metric_below(organ_precision, thresholds.court_organ_precision):
-        failure_reasons.append(
-            f"court_organ precision {organ_precision!r} < "
+        reasons.append(
+            f"{label}court_organ precision {organ_precision!r} < "
             f"{thresholds.court_organ_precision}"
+        )
+
+
+def evaluate_promotion_gate(
+    report: EvaluationReport,
+    *,
+    sample_policy: SamplePolicy | None = None,
+    thresholds: PromotionThresholds | None = None,
+) -> GateResult:
+    policy = sample_policy or SamplePolicy()
+    threshold_policy = thresholds or PromotionThresholds()
+    readiness_reasons: list[str] = []
+    overall = report.overall
+
+    if overall.reviewed_gold_cases < policy.minimum_total_cases:
+        readiness_reasons.append(
+            "reviewed gold cases "
+            f"{overall.reviewed_gold_cases} < required {policy.minimum_total_cases}"
+        )
+
+    overrides = dict(policy.family_minimums)
+    configured_families = policy.required_families | frozenset(overrides)
+    families = configured_families or frozenset(
+        family for family, metrics in report.by_family.items() if metrics.reviewed_gold_cases
+    )
+
+    for family in sorted(families):
+        family_metrics = report.by_family.get(family)
+        reviewed = family_metrics.reviewed_gold_cases if family_metrics else 0
+        required = overrides.get(family, policy.minimum_cases_per_family)
+        if reviewed < required:
+            readiness_reasons.append(
+                f"family {family!r} has {reviewed} reviewed cases; requires {required}"
+            )
+
+        for field_name in sorted(policy.required_fields):
+            field_metric = family_metrics.fields.get(field_name) if family_metrics else None
+            annotated = field_metric.annotated_cases if field_metric else 0
+            if annotated < policy.minimum_annotated_cases_per_field:
+                readiness_reasons.append(
+                    f"family {family!r} field {field_name!r} has {annotated} annotated "
+                    f"cases; requires {policy.minimum_annotated_cases_per_field}"
+                )
+
+    if readiness_reasons:
+        return GateResult(
+            status=EvaluationStatus.INSUFFICIENT_SAMPLE,
+            reasons=tuple(readiness_reasons),
+        )
+
+    failure_reasons: list[str] = []
+    _append_threshold_failures(
+        label="",
+        metrics=overall,
+        thresholds=threshold_policy,
+        reasons=failure_reasons,
+    )
+    for family in sorted(families):
+        _append_threshold_failures(
+            label=f"family {family!r} ",
+            metrics=report.by_family[family],
+            thresholds=threshold_policy,
+            reasons=failure_reasons,
         )
 
     if failure_reasons:
