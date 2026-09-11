@@ -66,10 +66,11 @@ _LABELED_TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
         "scj_labeled_rapporteur_v1",
     ),
 )
-_SPANISH_DATE_RE = re.compile(
-    r"(?i)\ben\s+fecha\s+(?P<day>\d{1,2})\s+de\s+"
+_SCJ_DECISION_DATE_RE = re.compile(
+    r"(?is)(?P<date_phrase>\ben\s+fecha\s+(?P<day>\d{1,2})\s+de\s+"
     r"(?P<month>enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\s+"
-    r"de\s+(?P<year>\d{4})\b"
+    r"de\s+(?P<year>\d{4})\b)"
+    r"(?=.{0,240}\bdicta\s+la\s+siguiente\s+sentencia\b)"
 )
 
 _MONTHS = {
@@ -159,7 +160,7 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
                 )
             )
 
-    for match in _SPANISH_DATE_RE.finditer(text):
+    for match in _SCJ_DECISION_DATE_RE.finditer(text):
         parsed = _parse_spanish_date_match(match)
         if parsed is None:
             continue
@@ -167,12 +168,12 @@ def parse_scj_page_metadata(text: str, *, page_number: int) -> list[MetadataObse
             MetadataObservation(
                 field_name="decision_date_candidate",
                 value_type=ObservationValueType.DATE,
-                raw_value=match.group(0),
+                raw_value=match.group("date_phrase"),
                 normalized_date=parsed,
-                method_name="scj_body_date_phrase_v1",
+                method_name="scj_decision_formula_date_v1",
                 page_number=page_number,
-                char_start=match.start(),
-                char_end=match.end(),
+                char_start=match.start("date_phrase"),
+                char_end=match.end("date_phrase"),
             )
         )
 
