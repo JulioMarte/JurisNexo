@@ -63,6 +63,30 @@ class ScriptedProvider:
         )
 
 
+def _candidate_hypothesis() -> JsonObject:
+    return {
+        "artifact_class": "bulletin",
+        "family_name_candidate": "legacy_bulletin_candidate",
+        "structure_confidence": 0.8,
+        "has_index": True,
+        "index_page_candidates": [1],
+        "candidate_segments": [],
+        "segmentation_hypotheses": [
+            {
+                "description": "Decision starts use SENTENCIA DEL date headings.",
+                "evidence": ["printed page 183"],
+                "confidence": 0.85,
+            }
+        ],
+        "metadata_hypotheses": [],
+        "anomalies": ["Only one candidate start was inspected directly."],
+        "recommended_next_actions": [
+            "Validate all index targets before accepting the family."
+        ],
+        "status": "candidate",
+    }
+
+
 def test_agent_searches_then_inspects_then_synthesizes() -> None:
     provider = ScriptedProvider(
         responses=(
@@ -82,26 +106,7 @@ def test_agent_searches_then_inspects_then_synthesizes() -> None:
                     "The index and repeated heading provide enough evidence for a candidate."
                 ),
             },
-            {
-                "artifact_class": "bulletin",
-                "family_name_candidate": "legacy_bulletin_candidate",
-                "structure_confidence": 0.8,
-                "has_index": True,
-                "index_page_candidates": [1],
-                "segmentation_hypotheses": [
-                    {
-                        "description": "Decision starts use SENTENCIA DEL date headings.",
-                        "evidence": ["physical page 4"],
-                        "confidence": 0.85,
-                    }
-                ],
-                "metadata_hypotheses": [],
-                "anomalies": ["Only one candidate start was inspected directly."],
-                "recommended_next_actions": [
-                    "Validate all heading hits against the index before accepting the family."
-                ],
-                "status": "candidate",
-            },
+            _candidate_hypothesis(),
         )
     )
     environment = DocumentEnvironment(
@@ -123,11 +128,49 @@ def test_agent_searches_then_inspects_then_synthesizes() -> None:
     )
 
     assert [step.decision.tool for step in result.steps] == ["search_text", "get_page"]
-    assert "page 4" in result.steps[0].tool_output
+    assert "view_page=4" in result.steps[0].tool_output
+    assert "VIEW PAGE 4" in result.steps[1].tool_output
     assert result.hypothesis.artifact_class == "bulletin"
     assert result.usage.total_tokens == 80
     assert len(provider.prompts) == 4
     assert "untrusted data" in provider.prompts[0]
+    assert "get_printed_page" not in provider.prompts[0]
+
+
+def test_agent_can_follow_resolved_printed_page_reference_with_provenance() -> None:
+    provider = ScriptedProvider(
+        responses=(
+            {
+                "tool": "get_printed_page",
+                "rationale": "The index points to printed page 183.",
+                "printed_page_number": 183,
+            },
+            {"tool": "finish", "rationale": "The target page confirms the heading."},
+            _candidate_hypothesis(),
+        )
+    )
+    environment = DocumentEnvironment(
+        (
+            "SUMARIO\nMateria Correccional .... Pág. 183",
+            "SENTENCIA DE FECHA 6 DE FEBRERO DEL 1980\nMateria: Correccional",
+        ),
+        printed_page_numbers=(None, 183),
+        source_references=("physical_pages=3", "physical_pages=5,6; side=right"),
+    )
+
+    result = run_agentic_document_discovery(
+        provider=provider,
+        environment=environment,
+        artifact_label="Boletin Judicial 831",
+        budget=DiscoveryBudget(max_model_calls=4, max_total_tokens=500),
+    )
+
+    assert [step.decision.tool for step in result.steps] == ["get_printed_page"]
+    output = result.steps[0].tool_output
+    assert "PRINTED PAGE 183" in output
+    assert "physical_pages=5,6; side=right" in output
+    assert "get_printed_page" in provider.prompts[0]
+    assert "resolved_printed_pages=1" in provider.prompts[0]
 
 
 def test_exact_duplicate_tool_call_is_not_reexecuted() -> None:
@@ -142,6 +185,7 @@ def test_exact_duplicate_tool_call_is_not_reexecuted() -> None:
                 "structure_confidence": 0.2,
                 "has_index": False,
                 "index_page_candidates": [],
+                "candidate_segments": [],
                 "segmentation_hypotheses": [],
                 "metadata_hypotheses": [],
                 "anomalies": ["Insufficient evidence"],
