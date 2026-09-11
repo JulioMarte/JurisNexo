@@ -185,7 +185,10 @@ def test_agent_can_expand_around_a_disputed_printed_reference() -> None:
             "evidence_printed_pages": [352, 353, 354, 355],
             "evidence_view_pages": [1, 2, 3, 4],
             "observed_description": "Heading begins on printed page 354",
-            "explanation": "Page 353 continues the prior matter; page 354 starts the expected decision.",
+            "explanation": (
+                "Page 353 continues the prior matter; "
+                "page 354 starts the expected decision."
+            ),
             "confidence": 0.93,
         }
     ]
