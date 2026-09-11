@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -19,14 +21,14 @@ class ObservationPersistenceContext:
 
 def _normalized_values(
     observation: MetadataObservation,
-) -> tuple[str | None, object | None, None]:
+) -> tuple[str | None, date | None]:
     if observation.value_type is ObservationValueType.DATE:
-        return None, observation.normalized_date, None
-    return observation.normalized_text, None, None
+        return None, observation.normalized_date
+    return observation.normalized_text, None
 
 
 def persist_metadata_observations(
-    connection: psycopg.Connection[object],
+    connection: psycopg.Connection[Any],
     *,
     context: ObservationPersistenceContext,
     observations: Sequence[MetadataObservation],
@@ -51,9 +53,7 @@ def persist_metadata_observations(
                     f"{observation.page_number}"
                 ) from exc
 
-            normalized_text, normalized_date, normalized_json = _normalized_values(
-                observation
-            )
+            normalized_text, normalized_date = _normalized_values(observation)
             cursor.execute(
                 """
                 INSERT INTO corpus.case_metadata_observations (
@@ -66,7 +66,6 @@ def persist_metadata_observations(
                     raw_value,
                     normalized_text,
                     normalized_date,
-                    normalized_json,
                     observation_method,
                     method_name,
                     evidence_case_page_id,
@@ -76,7 +75,7 @@ def persist_metadata_observations(
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, 'deterministic_parser', %s, %s, %s, %s, %s
+                    %s, 'deterministic_parser', %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (ingestion_job_id, observation_key) DO NOTHING
                 """,
@@ -90,7 +89,6 @@ def persist_metadata_observations(
                     observation.raw_value,
                     normalized_text,
                     normalized_date,
-                    normalized_json,
                     observation.method_name,
                     evidence_case_page_id,
                     observation.raw_value,
