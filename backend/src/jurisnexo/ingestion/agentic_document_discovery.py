@@ -101,25 +101,28 @@ Your task is to learn enough about document structure to support a later
 candidate family hypothesis.
 
 Use the smallest useful tool call. Prefer search before opening many pages.
-When the document exposes resolved printed/editorial pagination, prefer that
-pagination for following index or table-of-contents references.
-
 An index reference is a claim made by the source, not automatically the true
-start location of the referenced decision. If a referenced printed page does
-not clearly match the expected decision heading, parties, date, or other
-identity evidence, do not stop at "does not match" and do not silently correct
-the source. Investigate a small bounded printed-page neighborhood with
-get_printed_pages. Determine, when evidence permits, whether the decision
-starts on the referenced page, starts nearby, continues from an earlier page,
-or remains unresolved. Preserve the distinction between reference_as_printed,
-observed document location, and normalized decision start.
+start location of the referenced decision. Do not silently correct source
+pagination. Unknown or review-required is preferable to unsupported certainty.
 
 Do not repeat a tool call unless new evidence makes repetition necessary.
 Choose `finish` only when the current evidence is sufficient for a cautious
 structural hypothesis and any material discrepancy you encountered has either
-been investigated with nearby evidence or explicitly remains unresolved due to
-budget/evidence limits. Unknown or review-required is preferable to unsupported
-certainty.
+been investigated with available evidence or explicitly remains unresolved due
+to budget/evidence limits.
+"""
+
+_PRINTED_PAGE_INVESTIGATION_INSTRUCTIONS = """\
+This environment exposes resolved printed/editorial pagination. Prefer it when
+following index or table-of-contents references.
+
+If a referenced printed page does not clearly match the expected decision
+heading, parties, date, or other identity evidence, do not stop at "does not
+match". Investigate a small bounded printed-page neighborhood with
+get_printed_pages. Determine, when evidence permits, whether the decision starts
+on the referenced page, starts nearby, continues from an earlier page, or
+remains unresolved. Preserve the distinction between reference_as_printed,
+observed document location, and normalized decision start.
 """
 
 _SYNTHESIS_INSTRUCTIONS = """\
@@ -229,6 +232,11 @@ def _build_tool_prompt(
 ) -> str:
     first_page = environment.get_page(1)
     history = _render_history(steps)
+    printed_page_guidance = (
+        _PRINTED_PAGE_INVESTIGATION_INSTRUCTIONS
+        if environment.supports_printed_page_lookup
+        else ""
+    )
     printed_page_tools = (
         "- get_printed_page(printed_page_number), resolves one observed editorial page\n"
         "- get_printed_pages(start_printed_page_number, end_printed_page_number), "
@@ -238,6 +246,7 @@ def _build_tool_prompt(
     )
     prompt = (
         f"{_AGENT_INSTRUCTIONS}\n\n"
+        f"{printed_page_guidance}\n"
         f"Artifact: {artifact_label}\n"
         f"Environment: {environment.describe()}\n"
         f"Initial page 1 preview:\n{_render_page(first_page)}\n\n"
