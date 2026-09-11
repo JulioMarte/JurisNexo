@@ -11,12 +11,16 @@ class PageView:
     page_number: int
     text: str
     truncated: bool
+    printed_page_number: int | None = None
+    source_reference: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TextSearchHit:
     page_number: int
     snippet: str
+    printed_page_number: int | None = None
+    source_reference: str | None = None
 
 
 class DocumentEnvironmentError(ValueError):
@@ -27,22 +31,59 @@ class DocumentEnvironmentError(ValueError):
 class DocumentEnvironment:
     pages: tuple[str, ...]
     max_page_chars: int = 12_000
+    printed_page_numbers: tuple[int | None, ...] = ()
+    source_references: tuple[str | None, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.pages:
             raise DocumentEnvironmentError("document environment requires at least one page")
         if self.max_page_chars < 500:
             raise DocumentEnvironmentError("max_page_chars must be at least 500")
+        if self.printed_page_numbers and len(self.printed_page_numbers) != len(self.pages):
+            raise DocumentEnvironmentError(
+                "printed_page_numbers must be empty or match the page count"
+            )
+        if self.source_references and len(self.source_references) != len(self.pages):
+            raise DocumentEnvironmentError(
+                "source_references must be empty or match the page count"
+            )
+
+        resolved = [value for value in self.printed_page_numbers if value is not None]
+        if len(resolved) != len(set(resolved)):
+            raise DocumentEnvironmentError("resolved printed page numbers must be unique")
 
     @property
     def page_count(self) -> int:
         return len(self.pages)
 
+    @property
+    def supports_printed_page_lookup(self) -> bool:
+        return any(value is not None for value in self.printed_page_numbers)
+
     def get_page(self, page_number: int) -> PageView:
         self._validate_page_number(page_number)
         text = self.pages[page_number - 1]
         clipped, truncated = self._clip(text)
-        return PageView(page_number=page_number, text=clipped, truncated=truncated)
+        return PageView(
+            page_number=page_number,
+            text=clipped,
+            truncated=truncated,
+            printed_page_number=self._printed_page_number(page_number),
+            source_reference=self._source_reference(page_number),
+        )
+
+    def get_printed_page(self, printed_page_number: int) -> PageView:
+        if not self.supports_printed_page_lookup:
+            raise DocumentEnvironmentError("printed-page lookup is unavailable in this environment")
+        if printed_page_number < 1:
+            raise DocumentEnvironmentError("printed_page_number must be positive")
+
+        for page_number, resolved in enumerate(self.printed_page_numbers, start=1):
+            if resolved == printed_page_number:
+                return self.get_page(page_number)
+        raise DocumentEnvironmentError(
+            f"printed page {printed_page_number} is not resolved in this document view"
+        )
 
     def get_pages(
         self,
@@ -88,7 +129,14 @@ class DocumentEnvironment:
             start = max(0, offset - context_chars)
             end = min(len(text), offset + len(query) + context_chars)
             snippet = " ".join(text[start:end].split())
-            hits.append(TextSearchHit(page_number=page_number, snippet=snippet))
+            hits.append(
+                TextSearchHit(
+                    page_number=page_number,
+                    snippet=snippet,
+                    printed_page_number=self._printed_page_number(page_number),
+                    source_reference=self._source_reference(page_number),
+                )
+            )
             if len(hits) >= max_hits:
                 break
         return tuple(hits)
@@ -112,9 +160,13 @@ class DocumentEnvironment:
     def describe(self) -> str:
         non_empty_pages = sum(1 for page in self.pages if page.strip())
         total_chars = sum(len(page) for page in self.pages)
+        resolved_printed_pages = sum(
+            1 for value in self.printed_page_numbers if value is not None
+        )
         return (
             f"page_count={self.page_count}; non_empty_pages={non_empty_pages}; "
-            f"total_text_characters={total_chars}"
+            f"total_text_characters={total_chars}; "
+            f"resolved_printed_pages={resolved_printed_pages}"
         )
 
     def _validate_page_number(self, page_number: int) -> None:
@@ -122,6 +174,16 @@ class DocumentEnvironment:
             raise DocumentEnvironmentError(
                 f"page_number {page_number} is outside 1..{self.page_count}"
             )
+
+    def _printed_page_number(self, page_number: int) -> int | None:
+        if not self.printed_page_numbers:
+            return None
+        return self.printed_page_numbers[page_number - 1]
+
+    def _source_reference(self, page_number: int) -> str | None:
+        if not self.source_references:
+            return None
+        return self.source_references[page_number - 1]
 
     def _clip(self, text: str) -> tuple[str, bool]:
         if len(text) <= self.max_page_chars:

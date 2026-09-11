@@ -19,7 +19,14 @@ from jurisnexo.model_providers.contracts import (
     StructuredGenerationResult,
 )
 
-ToolName = Literal["get_page", "get_pages", "search_text", "sample_pages", "finish"]
+ToolName = Literal[
+    "get_page",
+    "get_printed_page",
+    "get_pages",
+    "search_text",
+    "sample_pages",
+    "finish",
+]
 
 
 class DiscoveryToolDecision(BaseModel):
@@ -28,6 +35,7 @@ class DiscoveryToolDecision(BaseModel):
     tool: ToolName
     rationale: str
     page_number: int | None = None
+    printed_page_number: int | None = None
     start_page: int | None = None
     end_page: int | None = None
     query: str | None = None
@@ -84,6 +92,8 @@ Your task is to learn enough about document structure to support a later
 candidate family hypothesis.
 
 Use the smallest useful tool call. Prefer search before opening many pages.
+When the document exposes resolved printed/editorial pagination, prefer that
+pagination for following index or table-of-contents references.
 Do not repeat a tool call unless new evidence makes repetition necessary.
 Choose `finish` when the current evidence is sufficient for a cautious
 structural hypothesis. Unknown or review-required is preferable to
@@ -187,6 +197,11 @@ def _build_tool_prompt(
 ) -> str:
     first_page = environment.get_page(1)
     history = _render_history(steps)
+    printed_page_tool = (
+        "- get_printed_page(printed_page_number), resolves observed editorial pagination\n"
+        if environment.supports_printed_page_lookup
+        else ""
+    )
     prompt = (
         f"{_AGENT_INSTRUCTIONS}\n\n"
         f"Artifact: {artifact_label}\n"
@@ -194,9 +209,10 @@ def _build_tool_prompt(
         f"Initial page 1 preview:\n{_render_page(first_page)}\n\n"
         f"Prior tool evidence:\n{history or '(none yet)'}\n\n"
         "Available tools:\n"
-        "- get_page(page_number)\n"
+        "- get_page(page_number), uses the derived view-page sequence\n"
+        f"{printed_page_tool}"
         "- get_pages(start_page, end_page), maximum bounded by the environment\n"
-        "- search_text(query), literal case-insensitive search across all pages\n"
+        "- search_text(query), literal case-insensitive search across all view pages\n"
         "- sample_pages(sample_strategy=head|tail|even, sample_count)\n"
         "- finish\n"
     )
@@ -230,6 +246,11 @@ def _execute_tool(
             if decision.page_number is None:
                 return "Invalid tool request: get_page requires page_number."
             return _render_page(environment.get_page(decision.page_number))
+
+        if decision.tool == "get_printed_page":
+            if decision.printed_page_number is None:
+                return "Invalid tool request: get_printed_page requires printed_page_number."
+            return _render_page(environment.get_printed_page(decision.printed_page_number))
 
         if decision.tool == "get_pages":
             if decision.start_page is None or decision.end_page is None:
@@ -274,14 +295,25 @@ def _render_history(steps: tuple[DiscoveryStep, ...]) -> str:
 
 def _render_page(page: PageView) -> str:
     suffix = " [TRUNCATED]" if page.truncated else ""
-    return f"--- PHYSICAL PAGE {page.page_number}{suffix} ---\n{page.text}"
+    metadata: list[str] = [f"VIEW PAGE {page.page_number}"]
+    if page.printed_page_number is not None:
+        metadata.append(f"PRINTED PAGE {page.printed_page_number}")
+    if page.source_reference is not None:
+        metadata.append(f"SOURCE {page.source_reference}")
+    return f"--- {' | '.join(metadata)}{suffix} ---\n{page.text}"
 
 
 def _render_search_hits(query: str, hits: tuple[TextSearchHit, ...]) -> str:
     if not hits:
-        return f"No pages contained literal query {query!r}."
+        return f"No view pages contained literal query {query!r}."
     rendered = [f"Literal search {query!r} returned {len(hits)} hit(s):"]
-    rendered.extend(f"page {hit.page_number}: {hit.snippet}" for hit in hits)
+    for hit in hits:
+        metadata = [f"view_page={hit.page_number}"]
+        if hit.printed_page_number is not None:
+            metadata.append(f"printed_page={hit.printed_page_number}")
+        if hit.source_reference is not None:
+            metadata.append(f"source={hit.source_reference}")
+        rendered.append(f"{'; '.join(metadata)}: {hit.snippet}")
     return "\n".join(rendered)
 
 
@@ -289,6 +321,7 @@ def _tool_key(decision: DiscoveryToolDecision) -> tuple[object, ...]:
     return (
         decision.tool,
         decision.page_number,
+        decision.printed_page_number,
         decision.start_page,
         decision.end_page,
         decision.query,

@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from jurisnexo.ingestion.document_environment import DocumentEnvironment
 from jurisnexo.ingestion.scanned_page_materialization import (
     AdjacentDuplicateScan,
     LogicalPageRegion,
@@ -143,6 +144,29 @@ def materialize_logical_document_view(
         dominant_offset_support=support,
         pages_with_printed_candidates=candidate_page_count,
         resolved_printed_page_count=resolved_count,
+    )
+
+
+def build_document_environment_from_logical_view(
+    view: LogicalDocumentView,
+    *,
+    max_page_chars: int = 12_000,
+) -> DocumentEnvironment:
+    """Expose the derived logical view to an agent with physical provenance."""
+
+    return DocumentEnvironment(
+        pages=tuple(page.text for page in view.pages),
+        max_page_chars=max_page_chars,
+        printed_page_numbers=tuple(page.resolved_printed_page for page in view.pages),
+        source_references=tuple(_source_reference(page) for page in view.pages),
+    )
+
+
+def _source_reference(page: LogicalDocumentPage) -> str:
+    physical_pages = ",".join(str(number) for number in page.source_physical_pages)
+    return (
+        f"physical_pages={physical_pages}; side={page.side}; "
+        f"representative_physical_page={page.representative_physical_page}"
     )
 
 
