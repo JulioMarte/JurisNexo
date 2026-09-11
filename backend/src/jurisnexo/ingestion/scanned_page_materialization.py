@@ -9,6 +9,7 @@ PageSide = Literal["left", "right"]
 _XHTML_NS = "http://www.w3.org/1999/xhtml"
 _TOKEN_PATTERN = re.compile(r"[0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}")
 _PRINTED_PAGE_PATTERN = re.compile(r"\d{1,4}")
+_XML_10_FORBIDDEN_CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,19 @@ class AdjacentDuplicateScan:
     shared_printed_page_candidates: tuple[int, ...]
 
 
+def sanitize_bbox_layout_xml(xml_text: str) -> tuple[str, int]:
+    """Replace only XML 1.0-forbidden control characters emitted by noisy OCR.
+
+    The replacement count must be retained as a diagnostic. We intentionally do
+    not attempt to correct OCR text or normalize legal content here.
+    """
+
+    count = len(_XML_10_FORBIDDEN_CONTROLS.findall(xml_text))
+    if count == 0:
+        return xml_text, 0
+    return _XML_10_FORBIDDEN_CONTROLS.sub("�", xml_text), count
+
+
 def parse_bbox_layout(xml_text: str) -> tuple[PhysicalPageLayout, ...]:
     """Convert Poppler bbox-layout XHTML into left/right logical page regions.
 
@@ -57,7 +71,8 @@ def parse_bbox_layout(xml_text: str) -> tuple[PhysicalPageLayout, ...]:
     views and must never replace or delete the source physical page.
     """
 
-    root = ET.fromstring(xml_text)
+    sanitized, _ = sanitize_bbox_layout_xml(xml_text)
+    root = ET.fromstring(sanitized)
     namespace = {"x": _XHTML_NS}
     pages: list[PhysicalPageLayout] = []
 
