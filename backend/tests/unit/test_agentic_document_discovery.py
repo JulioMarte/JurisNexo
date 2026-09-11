@@ -19,11 +19,19 @@ from jurisnexo.model_providers.contracts import (
 pytestmark = pytest.mark.unit
 
 
+def _empty_prompts() -> list[str]:
+    return []
+
+
+def _empty_schemas() -> list[JsonObject]:
+    return []
+
+
 @dataclass(slots=True)
 class ScriptedProvider:
     responses: tuple[JsonObject, ...]
-    prompts: list[str] = field(default_factory=list)
-    schemas: list[JsonObject] = field(default_factory=list)
+    prompts: list[str] = field(default_factory=_empty_prompts)
+    schemas: list[JsonObject] = field(default_factory=_empty_schemas)
     cursor: int = 0
 
     @property
