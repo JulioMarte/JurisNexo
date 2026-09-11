@@ -51,6 +51,32 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _document_state(
+    *,
+    physical_page_count: int,
+    duplicate_scan_count: int,
+    logical_view: object,
+    xml_replacement_count: int,
+    environment: object,
+) -> dict[str, object]:
+    return {
+        "document_view": {
+            "physical_page_count": physical_page_count,
+            "duplicate_scan_count": duplicate_scan_count,
+            "scan_group_count": logical_view.scan_group_count,
+            "view_page_count": len(logical_view.pages),
+            "resolved_printed_page_count": logical_view.resolved_printed_page_count,
+            "dominant_printed_page_offset": logical_view.dominant_printed_page_offset,
+            "xml_forbidden_control_character_count": xml_replacement_count,
+        },
+        "environment": {
+            "page_count": environment.page_count,
+            "description": environment.describe(),
+            "supports_printed_page_lookup": environment.supports_printed_page_lookup,
+        },
+    }
+
+
 def main() -> None:
     args = _parse_args()
     api_key = os.getenv("GEMINI_API_KEY", "")
@@ -67,6 +93,13 @@ def main() -> None:
         minimum_region_characters=args.minimum_region_characters,
     )
     environment = build_document_environment_from_logical_view(logical_view)
+    document_state = _document_state(
+        physical_page_count=len(physical_pages),
+        duplicate_scan_count=len(duplicate_scans),
+        logical_view=logical_view,
+        xml_replacement_count=xml_replacement_count,
+        environment=environment,
+    )
 
     provider = GoogleGeminiProvider(
         api_key=api_key,
@@ -77,39 +110,45 @@ def main() -> None:
         parent_soft_limit_tokens=args.parent_context_soft_limit,
         delegated_soft_limit_tokens=args.delegated_context_soft_limit,
     )
-    result = run_agentic_document_discovery(
-        provider=provider,
-        environment=environment,
-        artifact_label=args.artifact_label,
-        thinking_level=args.thinking_level,
-        decision_max_output_tokens=args.decision_max_output_tokens,
-        synthesis_max_output_tokens=args.synthesis_max_output_tokens,
-        budget=DiscoveryBudget(
-            max_model_calls=args.max_model_calls,
-            max_total_tokens=args.max_total_tokens,
-            context_policy=context_policy,
-        ),
-    )
+    try:
+        result = run_agentic_document_discovery(
+            provider=provider,
+            environment=environment,
+            artifact_label=args.artifact_label,
+            thinking_level=args.thinking_level,
+            decision_max_output_tokens=args.decision_max_output_tokens,
+            synthesis_max_output_tokens=args.synthesis_max_output_tokens,
+            budget=DiscoveryBudget(
+                max_model_calls=args.max_model_calls,
+                max_total_tokens=args.max_total_tokens,
+                context_policy=context_policy,
+            ),
+        )
+    except Exception as exc:
+        error_payload = {
+            "status": "ERROR",
+            "stage": "agentic_discovery",
+            "provider": provider.provider_name,
+            "model": provider.model_name,
+            "service_tier": args.service_tier,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            **document_state,
+        }
+        error_path = args.output.with_name("discovery-error.json")
+        error_path.parent.mkdir(parents=True, exist_ok=True)
+        error_path.write_text(
+            json.dumps(error_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        raise
 
     payload = {
         "provider": result.synthesis_result.provider,
         "model": result.synthesis_result.model,
         "model_version": result.synthesis_result.model_version,
         "service_tier": args.service_tier,
-        "document_view": {
-            "physical_page_count": len(physical_pages),
-            "duplicate_scan_count": len(duplicate_scans),
-            "scan_group_count": logical_view.scan_group_count,
-            "view_page_count": len(logical_view.pages),
-            "resolved_printed_page_count": logical_view.resolved_printed_page_count,
-            "dominant_printed_page_offset": logical_view.dominant_printed_page_offset,
-            "xml_forbidden_control_character_count": xml_replacement_count,
-        },
-        "environment": {
-            "page_count": environment.page_count,
-            "description": environment.describe(),
-            "supports_printed_page_lookup": environment.supports_printed_page_lookup,
-        },
+        **document_state,
         "budget": {
             "max_model_calls": args.max_model_calls,
             "max_total_tokens": args.max_total_tokens,
