@@ -65,6 +65,12 @@ jobs:
                 --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
                 --output /tmp/historical-agent-score-unsupported.json
               python -c "import json; p=json.load(open(\"/tmp/historical-agent-score-unsupported.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"FAIL\"; assert p[\"semantic_metrics\"][\"confirmed_gold_reference_count\"] == 2; assert p[\"semantic_metrics\"][\"investigations\"][2][\"trace_supported\"] is False"
+              python /benchmark/ingestion/evaluate_historical_bulletin_agent.py \
+                --result /benchmark/ingestion/fixtures/historical_agent_score.delegated.json \
+                --gold /benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
+                --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
+                --output /tmp/historical-agent-score-delegated.json
+              python -c "import json; p=json.load(open(\"/tmp/historical-agent-score-delegated.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"PASS\"; assert p[\"semantic_metrics\"][\"confirmed_gold_reference_count\"] == 3; assert p[\"metrics\"][\"delegated_printed_page_attempts\"] == [192,193,194]; assert p[\"metrics\"][\"verified_printed_pages\"] == [183,189,193]"
             '
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
