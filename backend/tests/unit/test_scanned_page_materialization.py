@@ -5,6 +5,7 @@ import pytest
 from jurisnexo.ingestion.scanned_page_materialization import (
     detect_adjacent_duplicate_scans,
     parse_bbox_layout,
+    sanitize_bbox_layout_xml,
 )
 
 pytestmark = pytest.mark.unit
@@ -67,6 +68,24 @@ def test_printed_page_detection_ignores_year_in_outer_header() -> None:
 """
     page = parse_bbox_layout(xml)[0]
     assert page.printed_page_candidates == (183,)
+
+
+def test_bbox_parser_replaces_only_xml_forbidden_ocr_controls() -> None:
+    xml = _document(
+        _bbox_page(
+            left_page="184",
+            right_page="185",
+            left_body="c\x12isacion",
+            right_body="Sentencia",
+        )
+    )
+
+    sanitized, replacement_count = sanitize_bbox_layout_xml(xml)
+    layouts = parse_bbox_layout(xml)
+
+    assert replacement_count == 1
+    assert "\x12" not in sanitized
+    assert "c�isacion" in layouts[0].regions[0].text
 
 
 def test_duplicate_detection_flags_similar_adjacent_scans_without_collapsing() -> None:
