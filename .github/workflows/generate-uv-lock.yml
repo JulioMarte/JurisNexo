@@ -5,7 +5,7 @@ on:
     branches: [chore/uv-lock]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate:
@@ -23,9 +23,14 @@ jobs:
       - name: Validate frozen sync
         working-directory: backend
         run: uv sync --frozen --group dev
-      - name: Upload lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-uv-lock
-          path: backend/uv.lock
-          if-no-files-found: error
+      - name: Commit lockfile when changed
+        run: |
+          if git diff --quiet -- backend/uv.lock && git ls-files --error-unmatch backend/uv.lock >/dev/null 2>&1; then
+            echo "uv.lock already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/uv.lock
+          git commit -m "lock backend Python dependencies"
+          git push origin HEAD:chore/uv-lock
