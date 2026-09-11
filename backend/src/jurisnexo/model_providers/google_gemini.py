@@ -13,6 +13,7 @@ from jurisnexo.model_providers.contracts import (
     JsonObject,
     JsonValue,
     ModelProviderError,
+    ModelProviderIncompleteError,
     ModelUsage,
     StructuredGenerationResult,
 )
@@ -160,7 +161,10 @@ class GoogleGeminiProvider:
             url=_INTERACTIONS_ENDPOINT,
             payload=payload,
         )
-        return self._parse_interaction(response)
+        return self._parse_interaction(
+            response,
+            requested_max_output_tokens=max_output_tokens,
+        )
 
     def _post_with_retry(
         self, *, transport: JsonTransport, url: str, payload: JsonObject
@@ -186,8 +190,48 @@ class GoogleGeminiProvider:
                 self.sleep(delay)
         raise AssertionError("Gemini retry loop exited unexpectedly")
 
-    def _parse_interaction(self, response: JsonObject) -> StructuredGenerationResult:
+    def _parse_interaction(
+        self,
+        response: JsonObject,
+        *,
+        requested_max_output_tokens: int,
+    ) -> StructuredGenerationResult:
         status = response.get("status")
+        usage = self._parse_usage(response.get("usage"))
+        response_model = response.get("model")
+        effective_model = response_model if isinstance(response_model, str) else self.model
+        response_id = response.get("id")
+        effective_response_id = response_id if isinstance(response_id, str) else None
+
+        if status == "incomplete":
+            details: JsonObject = {
+                "status": "incomplete",
+                "requested_max_output_tokens": requested_max_output_tokens,
+            }
+            incomplete_details = response.get("incomplete_details")
+            if isinstance(incomplete_details, dict):
+                details["incomplete_details"] = cast(JsonObject, incomplete_details)
+            error = response.get("error")
+            if isinstance(error, dict):
+                details["error"] = cast(JsonObject, error)
+            generated = _sum_known_pair(usage.output_tokens, usage.thinking_tokens)
+            message = (
+                "Gemini interaction incomplete"
+                f"; response_id={effective_response_id!r}"
+                f"; max_output_tokens={requested_max_output_tokens}"
+                f"; output_tokens={usage.output_tokens}"
+                f"; thinking_tokens={usage.thinking_tokens}"
+                f"; generated_tokens={generated}"
+                f"; total_tokens={usage.total_tokens}"
+            )
+            raise ModelProviderIncompleteError(
+                message,
+                provider=self.provider_name,
+                model=effective_model,
+                response_id=effective_response_id,
+                usage=usage,
+                details=details,
+            )
         if status != "completed":
             raise ModelProviderError(
                 f"Gemini interaction did not complete; status={status!r}"
@@ -219,16 +263,13 @@ class GoogleGeminiProvider:
         if not isinstance(parsed_value, dict):
             raise ModelProviderError("Gemini structured response must be a JSON object")
 
-        response_model = response.get("model")
-        effective_model = response_model if isinstance(response_model, str) else self.model
-        response_id = response.get("id")
         return StructuredGenerationResult(
             value=cast(JsonObject, parsed_value),
             provider=self.provider_name,
             model=effective_model,
             model_version=None,
-            response_id=response_id if isinstance(response_id, str) else None,
-            usage=self._parse_usage(response.get("usage")),
+            response_id=effective_response_id,
+            usage=usage,
         )
 
     @staticmethod
@@ -246,3 +287,9 @@ class GoogleGeminiProvider:
             thinking_tokens=integer("total_thought_tokens"),
             total_tokens=integer("total_tokens"),
         )
+
+
+def _sum_known_pair(first: int | None, second: int | None) -> int | None:
+    if first is None and second is None:
+        return None
+    return (first or 0) + (second or 0)

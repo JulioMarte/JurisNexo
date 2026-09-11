@@ -29,6 +29,27 @@ class ModelProviderError(RuntimeError):
     """Raised when a model provider cannot return a valid structured response."""
 
 
+class ModelProviderIncompleteError(ModelProviderError):
+    """A provider completed a request but could not finish the requested output."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        model: str,
+        response_id: str | None,
+        usage: ModelUsage,
+        details: JsonObject | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.model = model
+        self.response_id = response_id
+        self.usage = usage
+        self.details = details or {}
+
+
 class ModelProvider(Protocol):
     @property
     def provider_name(self) -> str: ...
