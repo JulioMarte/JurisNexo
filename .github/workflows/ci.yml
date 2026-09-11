@@ -46,6 +46,72 @@ jobs:
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
 
+  benchmark-contracts:
+    name: Benchmark contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.4"
+      - name: Install locked backend environment
+        working-directory: backend
+        run: uv sync --frozen --group dev
+      - name: Ruff benchmark code
+        working-directory: backend
+        run: .venv/bin/ruff check ../benchmark/ingestion
+      - name: Exercise pending packet builder
+        run: |
+          cat > /tmp/profile.json <<'JSON'
+          {
+            "source": {"filename": "fixture.pdf", "sha256": "abc123"},
+            "profiles": [
+              {"ordinal": 1, "layout": "family_a", "start_page": 1, "end_page": 2, "decision_numbers_observed": ["A"], "dockets_observed": [], "decision_dates_observed": ["2025-01-01"], "court_organs_observed": ["Sala A"], "diagnostics": []},
+              {"ordinal": 2, "layout": "family_a", "start_page": 3, "end_page": 4, "decision_numbers_observed": ["B"], "dockets_observed": [], "decision_dates_observed": ["2025-01-02"], "court_organs_observed": ["Sala A"], "diagnostics": ["hard_case"]},
+              {"ordinal": 3, "layout": "family_a", "start_page": 5, "end_page": 6, "decision_numbers_observed": ["C"], "dockets_observed": [], "decision_dates_observed": ["2025-01-03"], "court_organs_observed": ["Sala A"], "diagnostics": []}
+            ]
+          }
+          JSON
+          python benchmark/ingestion/build_scj_gold_packet.py \
+            /tmp/profile.json --output /tmp/pending.jsonl --per-family 3 --hard-fraction 0.5
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          rows = [json.loads(line) for line in Path('/tmp/pending.jsonl').read_text().splitlines()]
+          assert len(rows) == 3
+          assert all(row['review_status'] == 'pending' for row in rows)
+          assert len({(row['artifact_id'], row['start_page'], row['end_page']) for row in rows}) == 3
+          assert any(row['sample_reason'] == 'diagnostic_hard_case' for row in rows)
+          assert all(row['annotated_fields'] == [] for row in rows)
+          PY
+      - name: Exercise gold evaluator manifest and JSON output
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          cat > /tmp/gold.jsonl <<'JSONL'
+          {"schema_version":1,"review_status":"reviewed","artifact_id":"fixture","start_page":1,"end_page":1,"layout_family":"principales_2023_2024_sentence","annotated_fields":["decision_number","decision_date","court_organ"],"decision_number":"SCJ-X","docket_numbers":[],"decision_date":"2025-01-01","court_organ":"Sala"}
+          JSONL
+          cat > /tmp/predicted.jsonl <<'JSONL'
+          {"schema_version":1,"artifact_id":"fixture","start_page":1,"end_page":1,"layout_family":"principales_2023_2024_sentence","decision_number":"SCJ-X","docket_numbers":[],"decision_date":"2025-01-01","court_organ":"Sala"}
+          JSONL
+          backend/.venv/bin/python benchmark/ingestion/evaluate_scj_parser_gold.py \
+            --manifest benchmark/ingestion/gold/scj-parser-v1/manifest.json \
+            --gold /tmp/gold.jsonl \
+            --predicted /tmp/predicted.jsonl \
+            --output /tmp/evaluation.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          result = json.loads(Path('/tmp/evaluation.json').read_text())
+          assert result['dataset_id'] == 'scj-parser-v1'
+          assert result['gate']['status'] == 'insufficient_sample'
+          assert len(result['policy']['sample']['required_families']) == 6
+          PY
+
   docker-runtime:
     name: Docker runtime smoke test
     needs: backend-database
@@ -73,7 +139,7 @@ jobs:
   aggregate:
     name: CI aggregate
     if: always()
-    needs: [backend-database, backend-quality, docker-runtime]
+    needs: [backend-database, backend-quality, benchmark-contracts, docker-runtime]
     runs-on: ubuntu-24.04
     steps:
       - name: Require all jobs to pass
