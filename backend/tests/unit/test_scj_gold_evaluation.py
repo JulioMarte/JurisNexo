@@ -7,6 +7,7 @@ from jurisnexo.ingestion.scj_gold_evaluation import (
     SamplePolicy,
     evaluate_cases,
     evaluate_promotion_gate,
+    evaluate_stratified,
 )
 
 pytestmark = pytest.mark.unit
@@ -152,7 +153,7 @@ def test_duplicate_boundary_keys_are_rejected() -> None:
         evaluate_cases([duplicate, duplicate], [duplicate])
 
 
-def test_unknown_annotated_field_is_rejected() -> None:
+def test_unknown_annotated_field_is_rejected_even_when_boundary_is_missed() -> None:
     gold = [
         case(
             start=1,
@@ -162,18 +163,34 @@ def test_unknown_annotated_field_is_rejected() -> None:
     ]
 
     with pytest.raises(ValueError, match="unsupported annotated fields"):
-        evaluate_cases(gold, [case(start=1, end=1)])
+        evaluate_cases(gold, [])
+
+
+def test_stratified_metrics_do_not_mix_families_in_same_artifact() -> None:
+    gold = [
+        case(artifact="mixed.pdf", start=1, end=1, family="family_a"),
+        case(artifact="mixed.pdf", start=2, end=2, family="family_b"),
+    ]
+    predicted = list(gold)
+
+    report = evaluate_stratified(gold, predicted)
+
+    assert report.by_family["family_a"].boundaries.true_positive == 1
+    assert report.by_family["family_a"].boundaries.false_positive == 0
+    assert report.by_family["family_b"].boundaries.true_positive == 1
+    assert report.by_family["family_b"].boundaries.false_positive == 0
 
 
 def test_small_perfect_sample_cannot_pass_promotion_gate() -> None:
     gold = [case(start=index, end=index, family="family_a") for index in range(1, 8)]
-    metrics = evaluate_cases(gold, gold)
+    report = evaluate_stratified(gold, gold)
 
     gate = evaluate_promotion_gate(
-        metrics,
+        report,
         sample_policy=SamplePolicy(
             minimum_total_cases=20,
             minimum_cases_per_family=5,
+            minimum_annotated_cases_per_field=5,
             required_families=frozenset({"family_a", "family_b"}),
         ),
     )
@@ -183,19 +200,48 @@ def test_small_perfect_sample_cannot_pass_promotion_gate() -> None:
     assert any("family 'family_b'" in reason for reason in gate.reasons)
 
 
+def test_field_sample_size_is_separate_from_total_family_size() -> None:
+    gold = [
+        case(
+            start=index,
+            end=index,
+            family="family_a",
+            annotated_fields=(
+                ALL_FIELDS if index <= 2 else frozenset({"decision_number", "court_organ"})
+            ),
+        )
+        for index in range(1, 11)
+    ]
+    report = evaluate_stratified(gold, gold)
+
+    gate = evaluate_promotion_gate(
+        report,
+        sample_policy=SamplePolicy(
+            minimum_total_cases=10,
+            minimum_cases_per_family=10,
+            minimum_annotated_cases_per_field=5,
+            required_families=frozenset({"family_a"}),
+        ),
+    )
+
+    assert gate.status is EvaluationStatus.INSUFFICIENT_SAMPLE
+    assert any("field 'decision_date' has 2 annotated" in reason for reason in gate.reasons)
+
+
 def test_sufficient_perfect_sample_can_pass_strict_gate() -> None:
     gold = [
         case(start=index, end=index, family="family_a") for index in range(1, 6)
     ] + [
         case(start=index, end=index, family="family_b") for index in range(10, 15)
     ]
-    metrics = evaluate_cases(gold, gold)
+    report = evaluate_stratified(gold, gold)
 
     gate = evaluate_promotion_gate(
-        metrics,
+        report,
         sample_policy=SamplePolicy(
             minimum_total_cases=10,
             minimum_cases_per_family=5,
+            minimum_annotated_cases_per_field=5,
             required_families=frozenset({"family_a", "family_b"}),
         ),
     )
@@ -204,15 +250,48 @@ def test_sufficient_perfect_sample_can_pass_strict_gate() -> None:
     assert gate.reasons == ()
 
 
+def test_bad_family_cannot_hide_behind_good_global_metrics() -> None:
+    gold = [
+        case(start=index, end=index, family="family_a") for index in range(1, 101)
+    ] + [
+        case(start=index, end=index, family="family_b") for index in range(200, 205)
+    ]
+    predicted = list(gold)
+    predicted[-1] = case(
+        start=204,
+        end=204,
+        family="family_b",
+        decision_date="2024-12-31",
+    )
+    report = evaluate_stratified(gold, predicted)
+
+    gate = evaluate_promotion_gate(
+        report,
+        sample_policy=SamplePolicy(
+            minimum_total_cases=105,
+            minimum_cases_per_family=5,
+            minimum_annotated_cases_per_field=5,
+            required_families=frozenset({"family_a", "family_b"}),
+        ),
+    )
+
+    assert gate.status is EvaluationStatus.FAIL
+    assert any("family 'family_b' decision_date precision" in reason for reason in gate.reasons)
+
+
 def test_sufficient_sample_fails_when_boundary_or_field_threshold_missed() -> None:
     gold = [case(start=index, end=index) for index in range(1, 11)]
     predicted = list(gold)
     predicted[-1] = case(start=10, end=10, decision_date="2024-12-31")
-    metrics = evaluate_cases(gold, predicted)
+    report = evaluate_stratified(gold, predicted)
 
     gate = evaluate_promotion_gate(
-        metrics,
-        sample_policy=SamplePolicy(minimum_total_cases=10, minimum_cases_per_family=1),
+        report,
+        sample_policy=SamplePolicy(
+            minimum_total_cases=10,
+            minimum_cases_per_family=10,
+            minimum_annotated_cases_per_field=10,
+        ),
         thresholds=PromotionThresholds(decision_date_precision=0.99),
     )
 
