@@ -20,6 +20,7 @@ def _load_profiles(input_dir: Path) -> list[dict[str, Any]]:
         payload = json.loads(profile_path.read_text(encoding="utf-8"))
         source = payload["source"]
         filename = str(source["filename"])
+        origin = str(source["origin"])
         sha256 = str(source["sha256"])
         artifact_id = f"sha256:{sha256}"
 
@@ -31,6 +32,7 @@ def _load_profiles(input_dir: Path) -> list[dict[str, Any]]:
                     "review_status": "pending",
                     "artifact_id": artifact_id,
                     "source_filename": filename,
+                    "source_origin": origin,
                     "source_sha256": sha256,
                     "ordinal": int(profile["ordinal"]),
                     "start_page": int(profile["start_page"]),
