@@ -146,6 +146,7 @@ def _review_sample(profiles: list[dict[str, Any]], limit: int) -> list[dict[str,
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("pdf", type=Path)
+    parser.add_argument("--source-origin", required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--review-sample", type=Path, required=True)
     parser.add_argument("--review-limit", type=int, default=100)
@@ -188,6 +189,7 @@ def main() -> None:
     report = {
         "source": {
             "filename": args.pdf.name,
+            "origin": args.source_origin,
             "sha256": hashlib.sha256(pdf_bytes).hexdigest(),
             "byte_size": len(pdf_bytes),
             "page_count": len(pages),
