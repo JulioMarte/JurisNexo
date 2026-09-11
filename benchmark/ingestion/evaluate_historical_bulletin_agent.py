@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+_PRINTED_PAGE_MARKER = re.compile(r"PRINTED PAGE (\d+)")
+_CONFIRMED_STATUSES = {"confirmed_at_reference", "confirmed_nearby"}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -58,23 +62,73 @@ def _verified_navigation_pages(result: dict[str, Any]) -> tuple[set[int], set[in
         if not isinstance(step, dict):
             continue
         decision = step.get("decision")
-        if not isinstance(decision, dict) or decision.get("tool") != "get_printed_page":
+        if not isinstance(decision, dict):
             continue
-        printed_page = decision.get("printed_page_number")
-        if not isinstance(printed_page, int):
-            continue
-        attempted.add(printed_page)
-
+        tool = decision.get("tool")
         tool_output = step.get("tool_output")
         if not isinstance(tool_output, str):
+            tool_output = ""
+
+        if tool == "get_printed_page":
+            printed_page = decision.get("printed_page_number")
+            if not isinstance(printed_page, int):
+                continue
+            attempted.add(printed_page)
+            if (
+                f"PRINTED PAGE {printed_page}" in tool_output
+                and "SOURCE physical_pages=" in tool_output
+            ):
+                verified.add(printed_page)
             continue
-        if (
-            f"PRINTED PAGE {printed_page}" in tool_output
-            and "SOURCE physical_pages=" in tool_output
-        ):
-            verified.add(printed_page)
+
+        if tool != "get_printed_pages":
+            continue
+        start = decision.get("start_printed_page_number")
+        end = decision.get("end_printed_page_number")
+        if not isinstance(start, int) or not isinstance(end, int) or start > end:
+            continue
+        attempted.update(range(start, end + 1))
+        for match in _PRINTED_PAGE_MARKER.finditer(tool_output):
+            printed_page = int(match.group(1))
+            if start <= printed_page <= end and "SOURCE physical_pages=" in tool_output:
+                verified.add(printed_page)
 
     return attempted, verified
+
+
+def _semantic_confirmations(result: dict[str, Any]) -> tuple[set[int], set[int], list[dict[str, Any]]]:
+    hypothesis = result.get("hypothesis")
+    if not isinstance(hypothesis, dict):
+        return set(), set(), []
+    investigations = hypothesis.get("index_reference_investigations")
+    if not isinstance(investigations, list):
+        return set(), set(), []
+
+    confirmed_references: set[int] = set()
+    observed_starts: set[int] = set()
+    normalized: list[dict[str, Any]] = []
+    for investigation in investigations:
+        if not isinstance(investigation, dict):
+            continue
+        reference = investigation.get("reference_as_printed")
+        status = investigation.get("resolution_status")
+        observed_start = investigation.get("observed_decision_start_printed_page")
+        if not isinstance(reference, int) or not isinstance(status, str):
+            continue
+        if status in _CONFIRMED_STATUSES:
+            confirmed_references.add(reference)
+            if isinstance(observed_start, int):
+                observed_starts.add(observed_start)
+        normalized.append(
+            {
+                "reference_as_printed": reference,
+                "resolution_status": status,
+                "observed_decision_start_printed_page": observed_start,
+                "evidence_printed_pages": investigation.get("evidence_printed_pages", []),
+                "confidence": investigation.get("confidence"),
+            }
+        )
+    return confirmed_references, observed_starts, normalized
 
 
 def main() -> None:
@@ -95,6 +149,8 @@ def main() -> None:
     attempted_pages, verified_pages = _verified_navigation_pages(result)
     verified_gold_pages = verified_pages & gold_pages
     unexpected_attempts = attempted_pages - gold_pages
+    confirmed_references, observed_starts, investigations = _semantic_confirmations(result)
+    confirmed_gold_references = confirmed_references & gold_pages
 
     hypothesis = result.get("hypothesis")
     has_index = isinstance(hypothesis, dict) and hypothesis.get("has_index") is True
@@ -107,14 +163,23 @@ def main() -> None:
         raise ValueError("minimum_distinct_verified_index_references must be positive")
     require_index_detected = policy.get("require_index_detected") is True
 
-    passed = len(verified_gold_pages) >= minimum_verified and (
+    navigation_passed = len(verified_gold_pages) >= minimum_verified and (
         has_index or not require_index_detected
     )
+    semantic_available = bool(investigations)
+    semantic_passed = semantic_available and len(confirmed_gold_references) >= minimum_verified and (
+        has_index or not require_index_detected
+    )
+
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "dataset_id": gold.get("dataset_id"),
         "source_sha256": observed_sha256,
-        "status": "PASS" if passed else "FAIL",
+        "status": "PASS" if navigation_passed else "FAIL",
+        "navigation_status": "PASS" if navigation_passed else "FAIL",
+        "semantic_status": (
+            "PASS" if semantic_passed else "FAIL" if semantic_available else "NOT_AVAILABLE"
+        ),
         "metrics": {
             "gold_reference_count": len(gold_pages),
             "attempted_printed_pages": sorted(attempted_pages),
@@ -124,9 +189,20 @@ def main() -> None:
             "unexpected_printed_page_attempts": sorted(unexpected_attempts),
             "index_detected": has_index,
         },
+        "semantic_metrics": {
+            "confirmed_index_references": sorted(confirmed_references),
+            "confirmed_gold_references": sorted(confirmed_gold_references),
+            "confirmed_gold_reference_count": len(confirmed_gold_references),
+            "observed_decision_start_printed_pages": sorted(observed_starts),
+            "investigations": investigations,
+        },
         "policy": {
             "minimum_distinct_verified_index_references": minimum_verified,
             "require_index_detected": require_index_detected,
+            "note": (
+                "status preserves the frozen v1 navigation acceptance rule; semantic_status "
+                "separately measures model-supported reference confirmation without rewriting gold"
+            ),
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
