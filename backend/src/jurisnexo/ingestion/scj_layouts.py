@@ -56,6 +56,12 @@ _FORMAL_SENTENCE_RE = re.compile(
     rf"(?P<year>\d{{4}})\s*,?\s*N[ÚU]M\.?\s*"
     r"(?P<number>SCJ-[A-Z]{2,4}-\d{2}-\d{3,6})\s*$"
 )
+_FORMAL_DATED_RESOLUTION_RE = re.compile(
+    rf"(?im)^\s*(?:\d{{1,3}}[-.)]\s*)?RESOLUCI[ÓO]N\s+DEL\s+"
+    rf"(?P<day>\d{{1,2}})\s+DE\s+(?P<month>{_MONTH})\s+DE\s+"
+    rf"(?P<year>\d{{4}})\s*,?\s*N[ÚU]M\.?\s*"
+    r"(?P<number>SCJ-[A-Z]{2,4}-\d{2}-\d{2,6})\s*$"
+)
 # Deliberately case-sensitive. The old publication starts are typographically
 # upper-case; body citations such as "resolución núm." must not become boundaries.
 _FORMAL_RESOLUTION_RE = re.compile(
@@ -66,7 +72,7 @@ _MODERN_RESOLUTION_RE = re.compile(
     r"(?im)^\s*Resoluci[oó]n\s+n[úu]m\.?\s*(?P<number>[A-Z0-9.-]+)\s*$"
 )
 _SCJ_PS_RE = re.compile(r"\bSCJ-PS-\d{2}-\d{3,6}\b", re.IGNORECASE)
-_SCJ_ANY_RE = re.compile(r"\bSCJ-[A-Z]{2,4}-\d{2}-\d{3,6}\b", re.IGNORECASE)
+_SCJ_ANY_RE = re.compile(r"\bSCJ-[A-Z]{2,4}-\d{2}-\d{2,6}\b", re.IGNORECASE)
 _EXP_2025_RE = re.compile(
     r"(?im)^\s*Exp(?:s)?\.?\s*(?:n[úu]m(?:s)?\.?)?\s*:?\s*(?P<value>[^\n\r]+?)\s*$"
 )
@@ -81,7 +87,7 @@ _PARTIES_RE = re.compile(r"(?im)^\s*Partes\s*:\s*(?P<value>[^\n\r]+?)\s*$")
 _RAPPORTEUR_RE = re.compile(r"(?im)^\s*Ponente\s*:\s*(?P<value>[^\n\r]+?)\s*$")
 _SENTENCE_NUM_RE = re.compile(
     r"(?im)^\s*Sentencia\s+n[úu]m\.?\s*"
-    r"(?P<number>SCJ-[A-Z]{2,4}-\d{2}-\d{3,6})\s*$"
+    r"(?P<number>SCJ-[A-Z]{2,4}-\d{2}-\d{2,6})\s*$"
 )
 _FULL_COURT_EXP_RE = re.compile(
     r"(?im)^\s*Expediente\s+n[úu]m\.?\s*:\s*(?P<value>[^\n\r]+?)\s*$"
@@ -135,6 +141,24 @@ def detect_scj_page_layout(text: str, *, page_number: int) -> PageLayoutDetectio
             primary_decision_number=number,
             header_date=parsed_date,
             evidence=(_normalized(formal.group(0)),),
+        )
+
+    dated_resolution = _FORMAL_DATED_RESOLUTION_RE.search(text)
+    if dated_resolution is not None:
+        parsed_date = _parse_date(
+            dated_resolution.group("day"),
+            dated_resolution.group("month"),
+            dated_resolution.group("year"),
+        )
+        number = dated_resolution.group("number").upper()
+        return PageLayoutDetection(
+            page_number=page_number,
+            family=SCJLayoutFamily.PRINCIPALES_2023_2024_RESOLUTION,
+            status=LayoutDetectionStatus.RECOGNIZED,
+            signature_key=number,
+            primary_decision_number=number,
+            header_date=parsed_date,
+            evidence=(_normalized(dated_resolution.group(0)),),
         )
 
     formal_resolution = _FORMAL_RESOLUTION_RE.search(text)
