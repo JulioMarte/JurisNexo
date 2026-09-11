@@ -75,7 +75,8 @@ jobs:
             "benchmark-output/${CORPUS_ID}.pdf" \
             --report "benchmark-output/${CORPUS_ID}-profile.json" \
             --review-sample "benchmark-output/${CORPUS_ID}-review.jsonl" \
-            --review-limit 100
+            --review-limit 100 \
+            --require-declared-count-match
       - name: Upload reproducible pilot evidence
         uses: actions/upload-artifact@v4
         with:
