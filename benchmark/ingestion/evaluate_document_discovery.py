@@ -42,7 +42,9 @@ def main() -> None:
             "artifact_class": hypothesis.artifact_class,
             "has_index": hypothesis.has_index,
             "index_pages": hypothesis.index_page_candidates,
-            "segments": [segment.model_dump(mode="json") for segment in hypothesis.candidate_segments],
+            "segments": [
+                segment.model_dump(mode="json") for segment in hypothesis.candidate_segments
+            ],
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
