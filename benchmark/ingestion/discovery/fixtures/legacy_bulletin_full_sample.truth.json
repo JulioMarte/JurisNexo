@@ -2,5 +2,21 @@
   "artifact_class": "bulletin",
   "has_index": true,
   "index_pages": [1],
-  "segment_start_pages": [5, 12, 20]
+  "segments": [
+    {
+      "start_page": 5,
+      "end_page": 11,
+      "metadata": []
+    },
+    {
+      "start_page": 12,
+      "end_page": 19,
+      "metadata": []
+    },
+    {
+      "start_page": 20,
+      "end_page": 25,
+      "metadata": []
+    }
+  ]
 }
