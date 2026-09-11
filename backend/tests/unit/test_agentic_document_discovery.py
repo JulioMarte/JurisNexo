@@ -74,7 +74,9 @@ def test_agent_searches_then_inspects_then_synthesizes() -> None:
             },
             {
                 "tool": "finish",
-                "rationale": "The index and repeated heading provide enough evidence for a candidate.",
+                "rationale": (
+                    "The index and repeated heading provide enough evidence for a candidate."
+                ),
             },
             {
                 "artifact_class": "bulletin",
