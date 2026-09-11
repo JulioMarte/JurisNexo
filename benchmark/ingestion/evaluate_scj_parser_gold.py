@@ -9,14 +9,14 @@ from typing import Any
 from jurisnexo.ingestion.scj_gold_evaluation import (
     CaseAnnotation,
     CountMetric,
-    evaluate_promotion_gate,
-    evaluate_stratified,
     EvaluationMetrics,
     EvaluationReport,
     EvaluationStatus,
     FieldMetric,
     PromotionThresholds,
     SamplePolicy,
+    evaluate_promotion_gate,
+    evaluate_stratified,
 )
 
 _SUPPORTED_REVIEW_STATUSES = {"reviewed", "adjudicated"}
