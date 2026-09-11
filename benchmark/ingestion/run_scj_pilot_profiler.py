@@ -39,8 +39,8 @@ def _extract_pages(pdf_path: Path) -> list[str]:
 
 
 def _declared_decision_count(pages: list[str]) -> int | None:
-    # Front matter is the only place this compilation-level count is useful.
-    # It is a diagnostic, not ground truth for individual boundaries.
+    # This is an independent compilation-level invariant supplied by the source,
+    # not gold truth for any one boundary.
     front_matter = "\n".join(pages[:12])
     match = _DECLARED_DECISIONS_RE.search(front_matter)
     return int(match.group("count")) if match is not None else None
@@ -118,8 +118,6 @@ def _review_sample(profiles: list[dict[str, Any]], limit: int) -> list[dict[str,
     elif limit <= 1:
         chosen = [profiles[0]]
     else:
-        # Deterministic spacing keeps reruns stable. Layout-level stratification
-        # will be added when the gold annotation workflow is introduced.
         indexes = {
             round(index * (len(profiles) - 1) / (limit - 1))
             for index in range(limit)
@@ -155,6 +153,11 @@ def main() -> None:
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--review-sample", type=Path, required=True)
     parser.add_argument("--review-limit", type=int, default=100)
+    parser.add_argument(
+        "--require-declared-count-match",
+        action="store_true",
+        help="fail when front matter declares N decisions and segmentation finds a different N",
+    )
     args = parser.parse_args()
 
     pdf_bytes = args.pdf.read_bytes()
@@ -250,6 +253,15 @@ def main() -> None:
             indent=2,
         )
     )
+
+    if (
+        args.require_declared_count_match
+        and declared is not None
+        and len(segments) != declared
+    ):
+        raise SystemExit(
+            f"segmentation count mismatch: detected={len(segments)} declared={declared}"
+        )
 
 
 if __name__ == "__main__":
