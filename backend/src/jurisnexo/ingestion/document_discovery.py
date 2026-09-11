@@ -75,6 +75,48 @@ def _empty_metadata_hypotheses() -> list[MetadataHypothesis]:
     return []
 
 
+class IndexReferenceInvestigation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reference_as_printed: int = Field(ge=1)
+    expected_description: str
+    resolution_status: Literal[
+        "confirmed_at_reference",
+        "confirmed_nearby",
+        "unresolved",
+        "contradictory",
+    ]
+    observed_decision_start_printed_page: int | None = Field(default=None, ge=1)
+    evidence_printed_pages: list[int] = Field(default_factory=_empty_ints)
+    evidence_view_pages: list[int] = Field(default_factory=_empty_ints)
+    observed_description: str
+    explanation: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> IndexReferenceInvestigation:
+        if (
+            self.resolution_status in {"confirmed_at_reference", "confirmed_nearby"}
+            and self.observed_decision_start_printed_page is None
+        ):
+            raise ValueError("confirmed reference investigations require an observed decision start")
+        if (
+            self.resolution_status == "confirmed_at_reference"
+            and self.observed_decision_start_printed_page != self.reference_as_printed
+        ):
+            raise ValueError("confirmed_at_reference must start on reference_as_printed")
+        if (
+            self.resolution_status == "confirmed_nearby"
+            and self.observed_decision_start_printed_page == self.reference_as_printed
+        ):
+            raise ValueError("confirmed_nearby must identify a different observed start page")
+        return self
+
+
+def _empty_index_reference_investigations() -> list[IndexReferenceInvestigation]:
+    return []
+
+
 class DocumentStructureHypothesis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -96,6 +138,9 @@ class DocumentStructureHypothesis(BaseModel):
     candidate_segments: list[CandidateSegment] = Field(default_factory=_empty_candidate_segments)
     metadata_hypotheses: list[MetadataHypothesis] = Field(
         default_factory=_empty_metadata_hypotheses
+    )
+    index_reference_investigations: list[IndexReferenceInvestigation] = Field(
+        default_factory=_empty_index_reference_investigations
     )
     anomalies: list[str] = Field(default_factory=_empty_strings)
     recommended_next_actions: list[str] = Field(default_factory=_empty_strings)
