@@ -21,7 +21,7 @@ The v1 sample covers these observed production families:
 - `principales_2025_tercera_sala`
 - `principales_2025_pleno_resolution`
 
-The manifest contains the release-sample minima. Rare resolution families have explicit lower per-family minima, but the overall minimum remains 60 reviewed cases. These are engineering gates, not statistical confidence claims.
+The v1 manifest requires at least 60 reviewed cases overall, at least 8 reviewed cases in every listed family, and at least 8 reviewed annotations for every required field inside each family. These are engineering release gates, not statistical confidence claims. The evaluator supports explicit family-specific overrides, but v1 intentionally defines none until corpus evidence justifies them.
 
 ## Annotation unit
 
@@ -86,9 +86,23 @@ The evaluation runner ignores this object.
 6. Set `review_status` to `reviewed` only after primary-source verification.
 7. If two reviewers disagree on a material boundary or field, keep the row out of gold until adjudication; the resolved row uses `adjudicated`.
 
+## Building a pending review packet
+
+First generate full profiler reports for the source compilations, then build a deterministic stratified packet:
+
+```text
+python benchmark/ingestion/build_scj_gold_packet.py \
+  benchmark-output/*-profile.json \
+  --output benchmark-output/scj-parser-v1-pending.jsonl \
+  --per-family 12 \
+  --hard-fraction 0.35
+```
+
+The builder always emits `review_status: pending`. It cannot certify its own parser suggestions as gold.
+
 ## Hard-case sampling
 
-The packet builder prioritizes cases with parser diagnostics in addition to deterministic coverage across each family. The reviewed set must therefore include both ordinary and adversarial examples; a dataset containing only clean headers is not sufficient for a promotion decision.
+The packet builder samples diagnostic-bearing cases as a dedicated hard-case stratum and ordinary cases separately, then fills unused capacity deterministically. The reviewed set must therefore include both ordinary and adversarial examples; a dataset containing only clean headers is not sufficient for a promotion decision.
 
 ## Evaluation
 
