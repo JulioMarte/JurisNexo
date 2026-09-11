@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from jurisnexo.model_providers.contracts import (
@@ -18,6 +19,7 @@ from jurisnexo.model_providers.contracts import (
 
 _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 _INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
+_COUNT_TOKENS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens"
 _SERVICE_TIERS = frozenset({"flex", "standard", "priority"})
 
 
@@ -63,8 +65,7 @@ class UrllibJsonTransport:
             ) from exc
         except URLError as exc:
             raise GeminiTransportError(
-                f"Gemini network error: {exc.reason}",
-                retryable=True,
+                f"Gemini network error: {exc.reason}", retryable=True
             ) from exc
 
         parsed = json.loads(raw)
@@ -105,6 +106,29 @@ class GoogleGeminiProvider:
     def model_name(self) -> str:
         return self.model
 
+    def count_input_tokens(self, text: str) -> int:
+        """Count input tokens with Gemini's model tokenizer before a model call."""
+        if not self.api_key:
+            raise ModelProviderError("GEMINI_API_KEY is required")
+        model = self.model.removeprefix("models/")
+        endpoint = _COUNT_TOKENS_ENDPOINT.format(model=quote(model, safe="-._"))
+        payload: JsonObject = {
+            "contents": [{"role": "user", "parts": [{"text": text}]}]
+        }
+        response = (self.transport or UrllibJsonTransport()).post_json(
+            url=endpoint,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
+            payload=payload,
+            timeout_seconds=self.timeout_seconds,
+        )
+        total_tokens = response.get("totalTokens")
+        if not isinstance(total_tokens, int) or isinstance(total_tokens, bool):
+            raise ModelProviderError("Gemini countTokens returned no integer totalTokens")
+        return total_tokens
+
     def generate_structured(
         self,
         *,
@@ -136,16 +160,12 @@ class GoogleGeminiProvider:
             },
         }
         response = self._post_with_retry(
-            transport=self.transport or UrllibJsonTransport(),
-            payload=payload,
+            transport=self.transport or UrllibJsonTransport(), payload=payload
         )
         return self._parse_interaction(response)
 
     def _post_with_retry(
-        self,
-        *,
-        transport: JsonTransport,
-        payload: JsonObject,
+        self, *, transport: JsonTransport, payload: JsonObject
     ) -> JsonObject:
         for attempt in range(1, self.max_attempts + 1):
             try:
@@ -166,13 +186,14 @@ class GoogleGeminiProvider:
                     self.retry_max_delay_seconds,
                 )
                 self.sleep(delay)
-
         raise AssertionError("Gemini retry loop exited unexpectedly")
 
     def _parse_interaction(self, response: JsonObject) -> StructuredGenerationResult:
         status = response.get("status")
         if status != "completed":
-            raise ModelProviderError(f"Gemini interaction did not complete; status={status!r}")
+            raise ModelProviderError(
+                f"Gemini interaction did not complete; status={status!r}"
+            )
 
         text_parts: list[str] = []
         steps = response.get("steps")
