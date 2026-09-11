@@ -76,8 +76,8 @@ Identify possible document type, index pages, case-boundary signals, recurring m
 and anomalies that require further inspection. Prefer an explicit unknown/review-required conclusion
 over unsupported certainty.
 
-Do not claim a rule is validated. Describe evidence and recommend the next programmatic checks needed
-to validate or reject each important hypothesis.
+Do not claim a rule is validated. Describe evidence and recommend the next programmatic checks
+needed to validate or reject each important hypothesis.
 """
 
 
