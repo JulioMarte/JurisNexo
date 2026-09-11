@@ -20,7 +20,9 @@ from jurisnexo.ingestion.scanned_page_materialization import (
     parse_bbox_layout,
     sanitize_bbox_layout_xml,
 )
+from jurisnexo.model_providers.contracts import ModelProviderIncompleteError
 from jurisnexo.model_providers.google_gemini import GoogleGeminiProvider
+from jurisnexo.model_providers.token_budget import TokenBudgetedModelProvider
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,7 +48,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--parent-context-soft-limit", type=int, default=120_000)
     parser.add_argument("--delegated-context-soft-limit", type=int, default=120_000)
     parser.add_argument("--decision-max-output-tokens", type=int, default=1024)
-    parser.add_argument("--synthesis-max-output-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--synthesis-max-output-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Optional synthesis generation ceiling. By default the synthesis may use "
+            "the run budget that remains after prior calls and its input prompt."
+        ),
+    )
     parser.add_argument("--minimum-region-characters", type=int, default=80)
     return parser.parse_args()
 
@@ -84,15 +94,20 @@ def main() -> None:
         },
     }
 
-    provider = GoogleGeminiProvider(
+    gemini = GoogleGeminiProvider(
         api_key=api_key,
         model=args.model,
         service_tier=args.service_tier,
+    )
+    provider = TokenBudgetedModelProvider(
+        provider=gemini,
+        max_total_tokens=args.max_total_tokens,
     )
     context_policy = ContextPolicy(
         parent_soft_limit_tokens=args.parent_context_soft_limit,
         delegated_soft_limit_tokens=args.delegated_context_soft_limit,
     )
+    synthesis_ceiling = args.synthesis_max_output_tokens or args.max_total_tokens
     try:
         result = run_agentic_document_discovery(
             provider=provider,
@@ -100,7 +115,7 @@ def main() -> None:
             artifact_label=args.artifact_label,
             thinking_level=args.thinking_level,
             decision_max_output_tokens=args.decision_max_output_tokens,
-            synthesis_max_output_tokens=args.synthesis_max_output_tokens,
+            synthesis_max_output_tokens=synthesis_ceiling,
             budget=DiscoveryBudget(
                 max_model_calls=args.max_model_calls,
                 max_total_tokens=args.max_total_tokens,
@@ -116,8 +131,20 @@ def main() -> None:
             "service_tier": args.service_tier,
             "error_type": type(exc).__name__,
             "error_message": str(exc),
+            "provider_tokens_consumed_before_failure": provider.consumed_total_tokens,
+            "synthesis_output_policy": (
+                args.synthesis_max_output_tokens
+                if args.synthesis_max_output_tokens is not None
+                else "remaining_run_budget"
+            ),
             **document_state,
         }
+        if isinstance(exc, ModelProviderIncompleteError):
+            error_payload["incomplete_interaction"] = {
+                "response_id": exc.response_id,
+                "usage": asdict(exc.usage),
+                "details": exc.details,
+            }
         error_path = args.output.with_name("discovery-error.json")
         error_path.parent.mkdir(parents=True, exist_ok=True)
         error_path.write_text(
@@ -137,8 +164,14 @@ def main() -> None:
             "max_total_tokens": args.max_total_tokens,
             "parent_context_soft_limit_tokens": args.parent_context_soft_limit,
             "delegated_context_soft_limit_tokens": args.delegated_context_soft_limit,
+            "synthesis_output_policy": (
+                args.synthesis_max_output_tokens
+                if args.synthesis_max_output_tokens is not None
+                else "remaining_run_budget"
+            ),
         },
         "usage": asdict(result.usage),
+        "provider_tokens_consumed": provider.consumed_total_tokens,
         "steps": [
             {
                 "step_number": step.step_number,
