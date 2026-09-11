@@ -23,6 +23,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-label", required=True)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL", "gemini-3.8-flash"))
     parser.add_argument(
+        "--service-tier",
+        choices=("flex", "standard", "priority"),
+        default=os.getenv("LLM_SERVICE_TIER", "flex"),
+    )
+    parser.add_argument(
         "--thinking-level",
         choices=("low", "medium", "high"),
         default=os.getenv("LLM_THINKING_LEVEL", "medium"),
@@ -50,7 +55,11 @@ def main() -> None:
     if not pages:
         raise SystemExit("Input contains no non-empty pages")
 
-    provider = GoogleGeminiProvider(api_key=api_key, model=args.model)
+    provider = GoogleGeminiProvider(
+        api_key=api_key,
+        model=args.model,
+        service_tier=args.service_tier,
+    )
     environment = DocumentEnvironment(pages)
     result = run_agentic_document_discovery(
         provider=provider,
@@ -69,6 +78,7 @@ def main() -> None:
         "provider": result.synthesis_result.provider,
         "model": result.synthesis_result.model,
         "model_version": result.synthesis_result.model_version,
+        "service_tier": args.service_tier,
         "environment": {
             "page_count": environment.page_count,
             "description": environment.describe(),
@@ -81,6 +91,7 @@ def main() -> None:
         "steps": [
             {
                 "step_number": step.step_number,
+                "model": step.model_result.model,
                 "decision": step.decision.model_dump(mode="json"),
                 "tool_output": step.tool_output,
                 "usage": asdict(step.model_result.usage),

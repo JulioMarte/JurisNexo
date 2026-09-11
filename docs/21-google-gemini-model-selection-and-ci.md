@@ -2,15 +2,15 @@
 
 ## 1. Decision date and scope
 
-This decision reflects the Google Gemini Developer API offering available in September 2026. Model availability and pricing are operational facts and must be re-checked periodically; they are not permanent JurisNexo invariants.
+This decision reflects the Google Gemini Developer API offering available in September 2026. Model availability, pricing, and inference tiers are operational facts and must be re-checked periodically; they are not permanent JurisNexo invariants.
 
-The purpose of the first model integration is **document-structure discovery and benchmark work**, not ordinary pull-request CI and not direct canonical data generation.
+The purpose of the model integration is **document-structure discovery and benchmark work**, not ordinary pull-request CI and not direct canonical data generation.
 
 ---
 
-## 2. Models considered
+## 2. Default model
 
-### Gemini 3.8 Flash — default discovery model
+### Gemini 3.8 Flash
 
 Model ID:
 
@@ -18,240 +18,239 @@ Model ID:
 gemini-3.8-flash
 ```
 
-Why it is the default:
+JurisNexo uses Gemini 3.8 Flash as the primary structure-discovery benchmark model because it supports long context, structured output, multimodal input, tools/function calling, and configurable reasoning while remaining materially cheaper than the Pro tier.
 
-- generally available for production use;
-- Google's most capable current Flash model;
-- designed for autonomous agents, long-horizon tasks, and complex workflows;
-- 1,048,576-token input context and 65,536-token output limit;
-- text, image, video, audio, and PDF input;
-- structured output;
-- function calling;
-- code execution support;
-- configurable `low`, `medium`, and `high` thinking levels;
-- substantially cheaper than the Pro tier for repeated discovery experiments.
-
-Current introductory standard pricing through 2026-12-31:
+Current standard introductory pricing through 2026-12-31 is approximately:
 
 ```text
 input:  USD 0.75 / 1M tokens
 output: USD 3.75 / 1M tokens, including thinking tokens
 ```
 
-Google currently states that standard pricing rises on 2027-01-01, so costs must be re-evaluated before that date.
-
-Initial JurisNexo default:
+The benchmark default is now:
 
 ```text
 LLM_PROVIDER=google
 LLM_MODEL=gemini-3.8-flash
+LLM_SERVICE_TIER=flex
 LLM_THINKING_LEVEL=medium
 ```
 
-Use `low` for simple classification/triage benchmarks. Use `high` only when a measured hard case justifies the extra latency/output-thinking cost.
+---
 
-### Gemini 3.1 Flash-Lite — cheap triage candidate
+## 3. Interactions API is the transport contract
 
-Model ID:
+Google made the Interactions API its default Gemini interface in June 2026 and recommends it for new projects and agentic workloads. `generateContent` remains supported but is considered legacy for new development.
+
+JurisNexo therefore uses:
 
 ```text
-gemini-3.1-flash-lite
+POST https://generativelanguage.googleapis.com/v1beta/interactions
 ```
 
-Current standard pricing:
+with API-key authentication in the `x-goog-api-key` header.
+
+Structured responses use:
+
+```json
+{
+  "response_format": {
+    "type": "text",
+    "mime_type": "application/json",
+    "schema": {}
+  }
+}
+```
+
+Reasoning and output limits are supplied through `generation_config`.
+
+The provider parses the current Interactions response shape:
+
+```text
+steps[].type == model_output
+steps[].content[].type == text
+usage.total_input_tokens
+usage.total_output_tokens
+usage.total_thought_tokens
+usage.total_tokens
+```
+
+The provider sets `store=false` for benchmark requests; model output remains benchmark evidence, not canonical legal data.
+
+---
+
+## 4. Flex inference decision
+
+For offline document-discovery benchmarks, JurisNexo defaults to:
+
+```text
+service_tier = flex
+```
+
+Flex is an inference tier, not a different hostname. It is selected in the Interactions request body.
+
+Google currently prices Flex at a 50% discount to the standard tier. For Gemini 3.8 Flash during the current introductory period this is approximately:
+
+```text
+input:  USD 0.375 / 1M tokens
+output: USD 1.875 / 1M tokens, including thinking tokens
+```
+
+Flex is appropriate for JurisNexo benchmark/discovery workloads because they are asynchronous from the user's point of view and can tolerate minutes of latency.
+
+However, Flex has deliberately weaker availability characteristics:
+
+- best-effort / sheddable capacity;
+- target latency can be roughly 1–15 minutes;
+- `429` and `503` are expected capacity signals under load;
+- Google does not automatically upgrade Flex requests to Standard;
+- clients are responsible for bounded retry/backoff;
+- client timeouts should allow approximately 10 minutes or more for queued Flex work.
+
+Therefore a `503` from a Flex request does **not** by itself mean the Gemini API or API key is broken. It can simply mean Flex capacity was unavailable at that moment.
+
+JurisNexo uses a 15-minute per-request transport timeout for Flex and bounded retries. A benchmark may explicitly choose `standard` or `priority` through the workflow input when availability/latency is more important than cost.
+
+---
+
+## 5. Benchmark comparability policy
+
+A benchmark intended to compare structure quality should not silently switch model families after an availability error. Mixing models makes accuracy and cost attribution ambiguous.
+
+Therefore the default benchmark keeps a single requested model for the full run and records:
+
+```text
+provider
+model
+service_tier
+response_id
+input tokens
+output tokens
+thinking tokens
+total tokens
+```
+
+Retries may repeat the same request/model/tier only for transient transport/capacity errors.
+
+If a different model or tier is tested, it must be a separate benchmark run.
+
+---
+
+## 6. Other model candidates
+
+### Gemini 3.1 Flash-Lite
+
+Role:
+
+- page/document triage;
+- simple classification;
+- high-volume low-complexity subtasks;
+- cost baseline against 3.8 Flash.
+
+Approximate standard pricing:
 
 ```text
 input:  USD 0.25 / 1M text/image/video tokens
 output: USD 1.50 / 1M tokens
 ```
 
+### Gemini 3.1 Pro Preview
+
 Role:
 
-- page/document triage;
-- simple classification;
-- high-volume low-complexity sub-tasks;
-- benchmark competitor against 3.8 Flash.
+- difficult-artifact benchmark;
+- quality-ceiling comparison;
+- not the production/default discovery model while it remains preview and substantially more expensive.
 
-It is not the initial structure-discovery default because the primary risk is incorrect structural inference, not token cost.
-
-### Gemini 3.1 Pro Preview — escalation benchmark only
-
-Model ID:
-
-```text
-gemini-3.1-pro-preview
-```
-
-Current standard pricing for prompts up to 200k tokens:
+Approximate standard pricing up to the lower prompt tier:
 
 ```text
 input:  USD 2.00 / 1M tokens
 output: USD 12.00 / 1M tokens
 ```
 
-For prompts above 200k tokens the published price is higher.
-
-Role:
-
-- occasional benchmark on difficult artifacts;
-- quality ceiling comparison;
-- not the default because it is preview and materially more expensive.
-
 ---
 
-## 3. Illustrative request cost
+## 7. What JurisNexo measures
 
-For a bounded discovery experiment using approximately:
+Model selection must be based on measured legal-document performance, not model reputation alone.
 
-```text
-100,000 input tokens
-10,000 output/thinking tokens
-```
+Required dimensions:
 
-rough standard cost at current prices is approximately:
-
-```text
-Gemini 3.8 Flash       USD 0.1125
-Gemini 3.1 Flash-Lite  USD 0.0400
-Gemini 3.1 Pro Preview USD 0.3200  (assuming <=200k prompt tier)
-```
-
-This is only an illustration. Real discovery cost must be recorded from provider usage metadata for every run.
-
-JurisNexo should prefer selective RLM-style inspection over placing an entire 700-page OCR transcript into every model call even when the context window permits it.
-
----
-
-## 4. Performance and speed interpretation
-
-Google describes 3.8 Flash as its most intelligent Flash model and explicitly targets agentic/long-horizon work while retaining Flash-class cost and speed characteristics.
-
-Google describes Flash-Lite as the cost-efficient high-volume option.
-
-Google does not publish one universal latency number that would make a fair legal-document comparison across these models. JurisNexo therefore must benchmark latency itself using the same artifacts, prompts, thinking levels, and output schemas.
-
-Required benchmark dimensions:
-
-- boundary/structure accuracy;
+- boundary/structure precision and recall;
 - schema-valid response rate;
 - unresolved-anomaly rate;
+- robustness to OCR noise;
 - input/output/thinking tokens;
-- provider-reported model version;
 - wall-clock latency;
 - cost per artifact;
-- number of follow-up calls required to reach a valid hypothesis.
+- tool calls/model calls needed to reach a valid hypothesis;
+- provider/tier availability failure rate.
 
-A cheaper first call is not cheaper if it creates materially more review work or additional calls.
+A cheaper call is not cheaper if it creates materially more review work or additional calls.
 
 ---
 
-## 5. GitHub CI secret setup
+## 8. GitHub secret and workflow policy
 
-The API key must not be committed to the repository.
+The API key must never be committed to the repository.
 
-Create a GitHub Environment named:
+GitHub Environment:
 
 ```text
 llm-benchmark
 ```
 
-Inside that Environment create this secret:
+Environment secret:
 
 ```text
 GEMINI_API_KEY
 ```
 
-The manual workflow references it as:
+Paid model calls run only from explicit `workflow_dispatch`; they are not triggered by push, pull request, merge, Dependabot, or ordinary CI.
 
-```yaml
-env:
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-```
+The workflow runs with `contents: read` and receives no Supabase service-role/database credential.
 
-Recommended non-secret configuration remains workflow input or environment/repository variables:
+The benchmark exposes `service_tier` as an explicit input with:
 
 ```text
-LLM_PROVIDER=google
-LLM_MODEL=gemini-3.8-flash
-LLM_THINKING_LEVEL=medium
+flex       # default: cheaper, variable latency/best effort
+standard   # ordinary service tier
+priority   # higher-cost low-latency tier when available
 ```
-
-The initial integration accepts either Google-supported API-key environment convention at the provider layer in the future, but GitHub standardizes on `GEMINI_API_KEY` to avoid ambiguous precedence.
 
 ---
 
-## 6. Workflow security policy
-
-Paid model calls run only from an explicit `workflow_dispatch` workflow.
-
-They are not triggered by:
-
-- push;
-- pull request;
-- merge;
-- routine CI;
-- Dependabot or other untrusted automation.
-
-The job runs with:
-
-```text
-contents: read
-```
-
-and receives no database/service-role secret.
-
-The first workflow performs exactly one bounded structured-generation request and has explicit input/output limits. Future recursive discovery workflows must add explicit request/token/cost budgets before being enabled.
-
-If `GEMINI_API_KEY` is absent, the workflow fails closed.
-
----
-
-## 7. Provider data policy
+## 9. Provider-data policy
 
 Public jurisprudence may be suitable for external-model processing subject to provider terms and project policy.
 
-Tenant-private material is a separate data class. It must not be sent to Gemini merely because the public-corpus discovery workflow supports Gemini.
+Tenant-private material is a different data class. It must not be sent to Gemini merely because public-corpus discovery supports Gemini.
 
-Before any private artifact is sent to a model provider, JurisNexo must have an explicit tenant/provider-data policy covering retention, training use, jurisdiction, contractual terms, and user disclosure where applicable.
-
----
-
-## 8. Transport decision
-
-The first implementation uses Google's documented Gemini REST `generateContent` endpoint for a bounded, non-interactive structured-output request.
-
-Reason:
-
-- no additional Python dependency or lockfile change;
-- simple to fake in unit tests;
-- sufficient for the one-call baseline;
-- keeps the provider behind a JurisNexo interface.
-
-Google currently recommends the Interactions API for richer agentic workflows. When JurisNexo implements the recursive discovery environment and multi-step tool loop, the Google provider should be benchmarked/migrated to Interactions without leaking provider-specific types into ingestion domain code.
+Before private artifacts are sent to a model provider, JurisNexo needs an explicit tenant/provider-data policy covering retention, training use, jurisdiction, contractual terms, access controls, and user disclosure where applicable.
 
 ---
 
-## 9. Model-selection policy
+## 10. Model-selection policy
 
-Current default:
+Current defaults:
 
 ```text
-structure discovery: gemini-3.8-flash / medium
-simple triage candidate: gemini-3.1-flash-lite / low or minimal where supported
+structure discovery: gemini-3.8-flash / flex / medium
+simple triage candidate: gemini-3.1-flash-lite
 hard-case comparison: gemini-3.1-pro-preview / benchmark only
 ```
 
-No model gains permanent preferred status.
+No model or service tier has permanent preferred status.
 
-A replacement model should win on a measured combination of:
+A replacement should win on a measured combination of:
 
 ```text
 legal-document structural accuracy
 + robustness to OCR noise
-+ tool/structured-output reliability
++ structured-output/tool reliability
++ availability
 + latency
 + cost
 + provider/data-policy suitability
 ```
-
-not on leaderboard reputation alone.

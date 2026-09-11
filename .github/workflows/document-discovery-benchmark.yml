@@ -31,6 +31,15 @@ on:
         required: true
         default: gemini-3.8-flash
         type: string
+      service_tier:
+        description: Gemini inference tier
+        required: true
+        default: flex
+        type: choice
+        options:
+          - flex
+          - standard
+          - priority
       thinking_level:
         description: Gemini thinking level
         required: true
@@ -67,12 +76,15 @@ jobs:
   discover:
     name: Bounded Gemini discovery
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Flex is a best-effort tier. Google documents a 1-15 minute latency target per request,
+    # so a bounded multi-step run needs more room than ordinary CI.
+    timeout-minutes: 120
     environment: llm-benchmark
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       LLM_PROVIDER: google
       LLM_MODEL: ${{ inputs.model }}
+      LLM_SERVICE_TIER: ${{ inputs.service_tier }}
       LLM_THINKING_LEVEL: ${{ inputs.thinking_level }}
       UV_PYTHON: "3.13"
     steps:
@@ -113,6 +125,7 @@ jobs:
               --output "../benchmark-output/discovery-result.json" \
               --artifact-label "${{ inputs.artifact_label }}" \
               --model "${{ inputs.model }}" \
+              --service-tier "${{ inputs.service_tier }}" \
               --thinking-level "${{ inputs.thinking_level }}" \
               --max-model-calls "${{ inputs.max_model_calls }}" \
               --max-total-tokens "${{ inputs.max_total_tokens }}" \
@@ -123,6 +136,7 @@ jobs:
               --output "../benchmark-output/discovery-result.json" \
               --artifact-label "${{ inputs.artifact_label }}" \
               --model "${{ inputs.model }}" \
+              --service-tier "${{ inputs.service_tier }}" \
               --thinking-level "${{ inputs.thinking_level }}" \
               --max-output-tokens "${{ inputs.max_output_tokens }}"
           fi
@@ -141,7 +155,7 @@ jobs:
       - name: Upload discovery evidence
         uses: actions/upload-artifact@v4
         with:
-          name: document-discovery-${{ inputs.mode }}-${{ github.run_id }}
+          name: document-discovery-${{ inputs.mode }}-${{ inputs.service_tier }}-${{ github.run_id }}
           path: |
             benchmark-output/discovery-result.json
             benchmark-output/discovery-score.json
