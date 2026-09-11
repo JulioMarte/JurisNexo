@@ -159,7 +159,9 @@ def test_large_range_preflight_then_delegates_to_fresh_locator() -> None:
             "evidence_printed_pages": [353, 354],
             "evidence_view_pages": [2, 3],
             "observed_description": "Expected heading starts on 354",
-            "explanation": "353 continues the prior matter; 354 starts the expected decision.",
+            "explanation": (
+                "353 continues the prior matter; 354 starts the expected decision."
+            ),
             "confidence": 0.93,
         }
     ]
@@ -191,7 +193,10 @@ def test_large_range_preflight_then_delegates_to_fresh_locator() -> None:
                 "explanation": "The expected decision starts here.",
                 "confidence": 0.96,
             },
-            {"tool": "finish", "rationale": "Delegated evidence resolves the discrepancy."},
+            {
+                "tool": "finish",
+                "rationale": "Delegated evidence resolves the discrepancy.",
+            },
             hypothesis,
         )
     )
@@ -233,7 +238,9 @@ def test_large_range_preflight_then_delegates_to_fresh_locator() -> None:
     assert "DELEGATED DECISION LOCATOR RESULT" in result.steps[2].tool_output
     assert "PRINTED PAGE 354" in result.steps[2].tool_output
     assert "physical_pages=175,176; side=left" in result.steps[2].tool_output
-    assert result.hypothesis.index_reference_investigations[0].observed_decision_start_printed_page == 354
+    assert len(result.steps[2].delegated_model_results) == 1
+    investigation = result.hypothesis.index_reference_investigations[0]
+    assert investigation.observed_decision_start_printed_page == 354
 
 
 def test_locator_rejects_evidence_it_never_received() -> None:
@@ -257,7 +264,8 @@ def test_locator_rejects_evidence_it_never_received() -> None:
         )
     )
     environment = DocumentEnvironment(
-        ("a", "b", "c", "d"), printed_page_numbers=(352, 353, 354, 355)
+        ("a", "b", "c", "d"),
+        printed_page_numbers=(352, 353, 354, 355),
     )
     with pytest.raises(ValueError, match="outside its inspected chunk"):
         run_agentic_document_discovery(
