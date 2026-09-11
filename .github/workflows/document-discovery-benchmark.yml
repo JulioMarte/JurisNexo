@@ -14,17 +14,17 @@ on:
       input_path:
         description: Repo-relative text file; form-feed separates physical/sample pages
         required: true
-        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_full_sample.txt
+        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_adversarial_sample.txt
         type: string
       truth_path:
         description: Repo-relative structural ground-truth JSON file
         required: true
-        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_full_sample.truth.json
+        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_adversarial_sample.truth.json
         type: string
       artifact_label:
         description: Human-readable artifact label for the discovery prompt
         required: true
-        default: synthetic-legacy-bulletin-full
+        default: synthetic-legacy-bulletin-adversarial
         type: string
       model:
         description: Gemini model ID

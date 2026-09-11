@@ -1,0 +1,43 @@
+{
+  "artifact_class": "bulletin",
+  "has_index": true,
+  "index_pages": [2, 3],
+  "segments": [
+    {
+      "start_page": 6,
+      "end_page": 12,
+      "metadata": [
+        {"field_name": "document_type", "value": "sentencia"},
+        {"field_name": "decision_date", "value": "12 de enero de 1984"},
+        {"field_name": "docket_number", "value": "84-CIV-001"}
+      ]
+    },
+    {
+      "start_page": 13,
+      "end_page": 20,
+      "metadata": [
+        {"field_name": "document_type", "value": "sentencia"},
+        {"field_name": "decision_date", "value": "7 de febrero de 1984"},
+        {"field_name": "docket_number", "value": "84-PEN-014"}
+      ]
+    },
+    {
+      "start_page": 21,
+      "end_page": 27,
+      "metadata": [
+        {"field_name": "document_type", "value": "sentencia"},
+        {"field_name": "decision_date", "value": "21 de marzo de 1984"},
+        {"field_name": "docket_number", "value": "84-TIE-208"}
+      ]
+    },
+    {
+      "start_page": 28,
+      "end_page": 34,
+      "metadata": [
+        {"field_name": "document_type", "value": "resolución"},
+        {"field_name": "decision_date", "value": "4 de abril de 1984"},
+        {"field_name": "docket_number", "value": "84-PL-007"}
+      ]
+    }
+  ]
+}
