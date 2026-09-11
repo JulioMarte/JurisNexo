@@ -128,6 +128,15 @@ jobs:
             --max-model-calls "${{ inputs.max_model_calls }}" \
             --max-total-tokens "${{ inputs.max_total_tokens }}"
 
+      - name: Score navigation against frozen primary-source gold
+        working-directory: backend
+        run: |
+          uv run python ../benchmark/ingestion/evaluate_historical_bulletin_agent.py \
+            --result ../benchmark-output/discovery-result.json \
+            --gold ../benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
+            --sha256 ../benchmark-output/sha256.txt \
+            --output ../benchmark-output/benchmark-score.json
+
       - name: Show bounded benchmark summary
         working-directory: backend
         run: |
@@ -136,6 +145,7 @@ jobs:
           from pathlib import Path
 
           payload = json.loads(Path('../benchmark-output/discovery-result.json').read_text())
+          score = json.loads(Path('../benchmark-output/benchmark-score.json').read_text())
           summary = {
               'model': payload['model'],
               'service_tier': payload['service_tier'],
@@ -145,6 +155,8 @@ jobs:
               'tools': [step['decision']['tool'] for step in payload['steps']],
               'status': payload['hypothesis']['status'],
               'artifact_class': payload['hypothesis']['artifact_class'],
+              'benchmark_status': score['status'],
+              'benchmark_metrics': score['metrics'],
           }
           print(json.dumps(summary, ensure_ascii=False, indent=2))
           PY
@@ -157,5 +169,6 @@ jobs:
             benchmark-output/source-origin.txt
             benchmark-output/sha256.txt
             benchmark-output/discovery-result.json
+            benchmark-output/benchmark-score.json
           if-no-files-found: error
           retention-days: 14
