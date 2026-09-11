@@ -51,32 +51,6 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _document_state(
-    *,
-    physical_page_count: int,
-    duplicate_scan_count: int,
-    logical_view: object,
-    xml_replacement_count: int,
-    environment: object,
-) -> dict[str, object]:
-    return {
-        "document_view": {
-            "physical_page_count": physical_page_count,
-            "duplicate_scan_count": duplicate_scan_count,
-            "scan_group_count": logical_view.scan_group_count,
-            "view_page_count": len(logical_view.pages),
-            "resolved_printed_page_count": logical_view.resolved_printed_page_count,
-            "dominant_printed_page_offset": logical_view.dominant_printed_page_offset,
-            "xml_forbidden_control_character_count": xml_replacement_count,
-        },
-        "environment": {
-            "page_count": environment.page_count,
-            "description": environment.describe(),
-            "supports_printed_page_lookup": environment.supports_printed_page_lookup,
-        },
-    }
-
-
 def main() -> None:
     args = _parse_args()
     api_key = os.getenv("GEMINI_API_KEY", "")
@@ -93,13 +67,22 @@ def main() -> None:
         minimum_region_characters=args.minimum_region_characters,
     )
     environment = build_document_environment_from_logical_view(logical_view)
-    document_state = _document_state(
-        physical_page_count=len(physical_pages),
-        duplicate_scan_count=len(duplicate_scans),
-        logical_view=logical_view,
-        xml_replacement_count=xml_replacement_count,
-        environment=environment,
-    )
+    document_state = {
+        "document_view": {
+            "physical_page_count": len(physical_pages),
+            "duplicate_scan_count": len(duplicate_scans),
+            "scan_group_count": logical_view.scan_group_count,
+            "view_page_count": len(logical_view.pages),
+            "resolved_printed_page_count": logical_view.resolved_printed_page_count,
+            "dominant_printed_page_offset": logical_view.dominant_printed_page_offset,
+            "xml_forbidden_control_character_count": xml_replacement_count,
+        },
+        "environment": {
+            "page_count": environment.page_count,
+            "description": environment.describe(),
+            "supports_printed_page_lookup": environment.supports_printed_page_lookup,
+        },
+    }
 
     provider = GoogleGeminiProvider(
         api_key=api_key,
