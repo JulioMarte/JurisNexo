@@ -115,7 +115,7 @@ jobs:
             benchmark-output/source.pdf \
             benchmark-output/bbox-layout.html
 
-      - name: Run bounded Gemini discovery over logical pages
+      - name: Run token-governed Gemini discovery over logical pages
         working-directory: backend
         run: |
           uv run python ../benchmark/ingestion/run_agentic_scanned_document_discovery.py \
@@ -137,33 +137,55 @@ jobs:
             --sha256 ../benchmark-output/sha256.txt \
             --output ../benchmark-output/benchmark-score.json
 
-      - name: Show bounded benchmark summary
+      - name: Show benchmark summary or failure diagnostic
+        if: always()
         working-directory: backend
         run: |
           uv run python - <<'PY'
           import json
           from pathlib import Path
 
-          payload = json.loads(Path('../benchmark-output/discovery-result.json').read_text())
-          score = json.loads(Path('../benchmark-output/benchmark-score.json').read_text())
-          summary = {
-              'model': payload['model'],
-              'service_tier': payload['service_tier'],
-              'document_view': payload['document_view'],
-              'environment': payload['environment'],
-              'usage': payload['usage'],
-              'tools': [step['decision']['tool'] for step in payload['steps']],
-              'status': payload['hypothesis']['status'],
-              'artifact_class': payload['hypothesis']['artifact_class'],
-              'navigation_status': score['navigation_status'],
-              'semantic_status': score['semantic_status'],
-              'benchmark_metrics': score['metrics'],
-              'semantic_metrics': score['semantic_metrics'],
-          }
-          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          output = Path('../benchmark-output')
+          result_path = output / 'discovery-result.json'
+          score_path = output / 'benchmark-score.json'
+          error_path = output / 'discovery-error.json'
+
+          if result_path.exists():
+              payload = json.loads(result_path.read_text())
+              summary = {
+                  'run_status': 'completed',
+                  'model': payload['model'],
+                  'service_tier': payload['service_tier'],
+                  'document_view': payload['document_view'],
+                  'environment': payload['environment'],
+                  'usage': payload['usage'],
+                  'tools': [step['decision']['tool'] for step in payload['steps']],
+                  'status': payload['hypothesis']['status'],
+                  'artifact_class': payload['hypothesis']['artifact_class'],
+              }
+              if score_path.exists():
+                  score = json.loads(score_path.read_text())
+                  summary.update({
+                      'navigation_status': score['navigation_status'],
+                      'semantic_status': score['semantic_status'],
+                      'benchmark_metrics': score['metrics'],
+                      'semantic_metrics': score['semantic_metrics'],
+                  })
+              print(json.dumps(summary, ensure_ascii=False, indent=2))
+          elif error_path.exists():
+              error = json.loads(error_path.read_text())
+              print(json.dumps({
+                  'run_status': 'provider_or_agent_error',
+                  **error,
+              }, ensure_ascii=False, indent=2))
+          else:
+              print(json.dumps({
+                  'run_status': 'failed_before_discovery_diagnostic',
+              }, indent=2))
           PY
 
       - name: Upload benchmark evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: historical-bulletin-agent-${{ inputs.service_tier }}-${{ github.run_id }}
@@ -171,6 +193,7 @@ jobs:
             benchmark-output/source-origin.txt
             benchmark-output/sha256.txt
             benchmark-output/discovery-result.json
+            benchmark-output/discovery-error.json
             benchmark-output/benchmark-score.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
