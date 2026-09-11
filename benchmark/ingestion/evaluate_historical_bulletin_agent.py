@@ -67,12 +67,15 @@ def _resolved_pages_from_output(tool_output: str) -> dict[int, int]:
     return resolved
 
 
-def _navigation_evidence(result: dict[str, Any]) -> tuple[set[int], dict[int, int]]:
+def _navigation_evidence(
+    result: dict[str, Any],
+) -> tuple[set[int], set[int], dict[int, int]]:
     steps = result.get("steps")
     if not isinstance(steps, list):
         raise ValueError("discovery result steps must be a list")
 
-    attempted: set[int] = set()
+    direct_attempts: set[int] = set()
+    range_attempts: set[int] = set()
     resolved: dict[int, int] = {}
     for step in steps:
         if not isinstance(step, dict):
@@ -89,13 +92,13 @@ def _navigation_evidence(result: dict[str, Any]) -> tuple[set[int], dict[int, in
             printed_page = decision.get("printed_page_number")
             if not isinstance(printed_page, int):
                 continue
-            attempted.add(printed_page)
+            direct_attempts.add(printed_page)
         elif tool == "get_printed_pages":
             start = decision.get("start_printed_page_number")
             end = decision.get("end_printed_page_number")
             if not isinstance(start, int) or not isinstance(end, int) or start > end:
                 continue
-            attempted.update(range(start, end + 1))
+            range_attempts.update(range(start, end + 1))
         else:
             continue
 
@@ -107,7 +110,7 @@ def _navigation_evidence(result: dict[str, Any]) -> tuple[set[int], dict[int, in
                 )
             resolved[printed_page] = view_page
 
-    return attempted, resolved
+    return direct_attempts, range_attempts, resolved
 
 
 def _int_list(value: object) -> list[int] | None:
@@ -166,9 +169,13 @@ def _semantic_confirmations(
 
         if status in _CONFIRMED_STATUSES:
             if reference not in evidence_printed:
-                support_errors.append("confirmed reference itself was not cited as inspected evidence")
+                support_errors.append(
+                    "confirmed reference itself was not cited as inspected evidence"
+                )
             if not isinstance(observed_start, int) or observed_start not in evidence_printed:
-                support_errors.append("confirmed observed start was not cited as inspected evidence")
+                support_errors.append(
+                    "confirmed observed start was not cited as inspected evidence"
+                )
 
         trace_supported = not support_errors
         if status in _CONFIRMED_STATUSES and trace_supported:
@@ -206,10 +213,12 @@ def main() -> None:
         )
 
     gold_pages = _gold_pages(gold)
-    attempted_pages, resolved_pages = _navigation_evidence(result)
+    direct_attempts, range_attempts, resolved_pages = _navigation_evidence(result)
+    attempted_pages = direct_attempts | range_attempts
+    investigative_neighbors = range_attempts - direct_attempts
     verified_pages = set(resolved_pages)
     verified_gold_pages = verified_pages & gold_pages
-    unexpected_attempts = attempted_pages - gold_pages
+    unexpected_direct_attempts = direct_attempts - gold_pages
     confirmed_references, observed_starts, investigations = _semantic_confirmations(
         result,
         resolved_pages,
@@ -248,10 +257,13 @@ def main() -> None:
         "metrics": {
             "gold_reference_count": len(gold_pages),
             "attempted_printed_pages": sorted(attempted_pages),
+            "direct_printed_page_attempts": sorted(direct_attempts),
+            "range_printed_page_attempts": sorted(range_attempts),
+            "investigative_neighbor_attempts": sorted(investigative_neighbors),
             "verified_printed_pages": sorted(verified_pages),
             "verified_gold_references": sorted(verified_gold_pages),
             "verified_gold_reference_count": len(verified_gold_pages),
-            "unexpected_printed_page_attempts": sorted(unexpected_attempts),
+            "unexpected_printed_page_attempts": sorted(unexpected_direct_attempts),
             "index_detected": has_index,
         },
         "semantic_metrics": {
