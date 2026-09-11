@@ -67,35 +67,7 @@ def main() -> None:
         minimum_region_characters=args.minimum_region_characters,
     )
     environment = build_document_environment_from_logical_view(logical_view)
-
-    provider = GoogleGeminiProvider(
-        api_key=api_key,
-        model=args.model,
-        service_tier=args.service_tier,
-    )
-    context_policy = ContextPolicy(
-        parent_soft_limit_tokens=args.parent_context_soft_limit,
-        delegated_soft_limit_tokens=args.delegated_context_soft_limit,
-    )
-    result = run_agentic_document_discovery(
-        provider=provider,
-        environment=environment,
-        artifact_label=args.artifact_label,
-        thinking_level=args.thinking_level,
-        decision_max_output_tokens=args.decision_max_output_tokens,
-        synthesis_max_output_tokens=args.synthesis_max_output_tokens,
-        budget=DiscoveryBudget(
-            max_model_calls=args.max_model_calls,
-            max_total_tokens=args.max_total_tokens,
-            context_policy=context_policy,
-        ),
-    )
-
-    payload = {
-        "provider": result.synthesis_result.provider,
-        "model": result.synthesis_result.model,
-        "model_version": result.synthesis_result.model_version,
-        "service_tier": args.service_tier,
+    document_state = {
         "document_view": {
             "physical_page_count": len(physical_pages),
             "duplicate_scan_count": len(duplicate_scans),
@@ -110,6 +82,56 @@ def main() -> None:
             "description": environment.describe(),
             "supports_printed_page_lookup": environment.supports_printed_page_lookup,
         },
+    }
+
+    provider = GoogleGeminiProvider(
+        api_key=api_key,
+        model=args.model,
+        service_tier=args.service_tier,
+    )
+    context_policy = ContextPolicy(
+        parent_soft_limit_tokens=args.parent_context_soft_limit,
+        delegated_soft_limit_tokens=args.delegated_context_soft_limit,
+    )
+    try:
+        result = run_agentic_document_discovery(
+            provider=provider,
+            environment=environment,
+            artifact_label=args.artifact_label,
+            thinking_level=args.thinking_level,
+            decision_max_output_tokens=args.decision_max_output_tokens,
+            synthesis_max_output_tokens=args.synthesis_max_output_tokens,
+            budget=DiscoveryBudget(
+                max_model_calls=args.max_model_calls,
+                max_total_tokens=args.max_total_tokens,
+                context_policy=context_policy,
+            ),
+        )
+    except Exception as exc:
+        error_payload = {
+            "status": "ERROR",
+            "stage": "agentic_discovery",
+            "provider": provider.provider_name,
+            "model": provider.model_name,
+            "service_tier": args.service_tier,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            **document_state,
+        }
+        error_path = args.output.with_name("discovery-error.json")
+        error_path.parent.mkdir(parents=True, exist_ok=True)
+        error_path.write_text(
+            json.dumps(error_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        raise
+
+    payload = {
+        "provider": result.synthesis_result.provider,
+        "model": result.synthesis_result.model,
+        "model_version": result.synthesis_result.model_version,
+        "service_tier": args.service_tier,
+        **document_state,
         "budget": {
             "max_model_calls": args.max_model_calls,
             "max_total_tokens": args.max_total_tokens,

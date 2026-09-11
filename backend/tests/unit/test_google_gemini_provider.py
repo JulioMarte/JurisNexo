@@ -177,6 +177,40 @@ def test_retryable_transport_failure_recovers_with_bounded_backoff() -> None:
     assert sleep.delays == [2.0]
 
 
+def test_default_retry_policy_survives_repeated_high_demand_500s() -> None:
+    transient = GeminiTransportError("Gemini HTTP error 500: high demand", retryable=True)
+    transport = SequenceTransport(
+        outcomes=(transient, transient, transient, _success_response())
+    )
+    sleep = RecordingSleep()
+    provider = GoogleGeminiProvider(
+        api_key="test-secret",
+        transport=transport,
+        sleep=sleep,
+    )
+
+    _generate(provider)
+
+    assert transport.calls == 4
+    assert sleep.delays == [2.0, 4.0, 8.0]
+
+
+def test_count_tokens_uses_same_retry_policy() -> None:
+    transient = GeminiTransportError("Gemini HTTP error 500: high demand", retryable=True)
+    transport = SequenceTransport(outcomes=(transient, {"totalTokens": 123}))
+    sleep = RecordingSleep()
+    provider = GoogleGeminiProvider(
+        api_key="test-secret",
+        transport=transport,
+        max_attempts=2,
+        sleep=sleep,
+    )
+
+    assert provider.count_input_tokens("evidence") == 123
+    assert transport.calls == 2
+    assert sleep.delays == [2.0]
+
+
 def test_non_retryable_transport_failure_fails_immediately() -> None:
     transport = SequenceTransport(
         outcomes=(GeminiTransportError("Gemini HTTP error 400", retryable=False),)
