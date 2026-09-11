@@ -4,7 +4,6 @@ from jurisnexo.ingestion.scj_layouts import SCJLayoutFamily, detect_scj_page_lay
 from jurisnexo.ingestion.scj_metadata import MetadataObservation, parse_scj_page_metadata
 from jurisnexo.ingestion.scj_segmentation import CaseSegment
 
-
 _OLD_FAMILIES = {
     SCJLayoutFamily.PRINCIPALES_2023_2024_SENTENCE,
     SCJLayoutFamily.PRINCIPALES_2023_2024_RESOLUTION,
