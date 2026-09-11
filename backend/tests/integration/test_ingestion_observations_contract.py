@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from datetime import date
 from typing import Any
 
 import psycopg
@@ -17,7 +18,13 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
         yield conn
 
 
-def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str) -> dict[str, object]:
+def _scalar(cursor: psycopg.Cursor[Any]) -> Any:
+    row = cursor.fetchone()
+    assert row is not None
+    return row[0]
+
+
+def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str) -> dict[str, Any]:
     cursor.execute(
         """
         insert into corpus.source_registries (code, name, institution, authority_class)
@@ -26,7 +33,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (f"SCJ-{suffix}", f"SCJ test registry {suffix}"),
     )
-    registry_id = cursor.fetchone()[0]
+    registry_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -38,7 +45,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (registry_id, suffix.lower().zfill(64)[-64:]),
     )
-    artifact_id = cursor.fetchone()[0]
+    artifact_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -50,7 +57,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (artifact_id,),
     )
-    artifact_page_id = cursor.fetchone()[0]
+    artifact_page_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -60,7 +67,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (f"COURT-{suffix}", f"Court {suffix}"),
     )
-    court_id = cursor.fetchone()[0]
+    court_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -70,7 +77,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (court_id,),
     )
-    case_id = cursor.fetchone()[0]
+    case_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -80,7 +87,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (case_id, artifact_page_id),
     )
-    case_page_id = cursor.fetchone()[0]
+    case_page_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -92,7 +99,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (suffix,),
     )
-    parser_version_id = cursor.fetchone()[0]
+    parser_version_id = _scalar(cursor)
 
     cursor.execute(
         """
@@ -104,7 +111,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
         """,
         (artifact_id, parser_version_id, f"job:{suffix}"),
     )
-    ingestion_job_id = cursor.fetchone()[0]
+    ingestion_job_id = _scalar(cursor)
 
     return {
         "artifact_id": artifact_id,
@@ -150,7 +157,7 @@ def test_observation_can_store_auditable_date_candidate(
                 graph["case_page_id"],
             ),
         )
-        assert cursor.fetchone() == (psycopg.types.date.Date(2025, 4, 30), "observed")
+        assert cursor.fetchone() == (date(2025, 4, 30), "observed")
 
 
 def test_observation_cannot_reference_another_cases_page(
