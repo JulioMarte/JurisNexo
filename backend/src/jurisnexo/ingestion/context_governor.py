@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import ceil
 
-from jurisnexo.model_providers.contracts import InputTokenCountingProvider, ModelProvider
+from jurisnexo.model_providers.contracts import (
+    InputTokenCountingProvider,
+    ModelProvider,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +42,11 @@ class ContextPreflight:
 
 
 class ContextGovernor:
-    def __init__(self, provider: ModelProvider, policy: ContextPolicy | None = None) -> None:
+    def __init__(
+        self,
+        provider: ModelProvider,
+        policy: ContextPolicy | None = None,
+    ) -> None:
         self._provider = provider
         self.policy = policy or ContextPolicy()
 
@@ -50,18 +57,24 @@ class ContextGovernor:
                 exact=True,
                 method="provider_tokenizer",
             )
-        # Conservative fallback for providers without a tokenizer endpoint.
-        # It is intentionally labeled approximate in every preflight response.
         return TokenCount(
             tokens=max(1, ceil(len(text) / 4)),
             exact=False,
             method="approx_chars_div_4",
         )
 
-    def preflight_parent(self, *, active_prompt: str, evidence: str) -> ContextPreflight:
+    def preflight_parent(
+        self,
+        *,
+        active_prompt: str,
+        evidence: str,
+    ) -> ContextPreflight:
         active = self.count(active_prompt)
         requested = self.count(evidence)
         projected = active.tokens + requested.tokens
+        counting_method = active.method
+        if active.method != requested.method:
+            counting_method = f"{active.method}+{requested.method}"
         return ContextPreflight(
             active_context_tokens=active.tokens,
             requested_evidence_tokens=requested.tokens,
@@ -69,9 +82,7 @@ class ContextGovernor:
             soft_limit_tokens=self.policy.parent_soft_limit_tokens,
             should_inline=projected <= self.policy.parent_soft_limit_tokens,
             exact=active.exact and requested.exact,
-            counting_method=(
-                active.method if active.method == requested.method else f"{active.method}+{requested.method}"
-            ),
+            counting_method=counting_method,
         )
 
     def fits_delegated_context(self, text: str) -> bool:
