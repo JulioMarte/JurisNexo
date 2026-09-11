@@ -36,6 +36,10 @@ ToolName = Literal[
 ]
 
 
+def _empty_int_list() -> list[int]:
+    return []
+
+
 class DiscoveryToolDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,7 +62,7 @@ class DecisionLocatorResult(BaseModel):
 
     candidate_found: bool
     candidate_start_printed_page: int | None = Field(default=None, ge=1)
-    evidence_printed_pages: list[int] = Field(default_factory=list)
+    evidence_printed_pages: list[int] = Field(default_factory=_empty_int_list)
     observed_description: str
     explanation: str
     confidence: float = Field(ge=0.0, le=1.0)
