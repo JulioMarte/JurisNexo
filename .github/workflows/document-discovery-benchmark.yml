@@ -3,15 +3,23 @@ name: Document discovery benchmark
 on:
   workflow_dispatch:
     inputs:
-      input_path:
-        description: Repo-relative page-sample text file; form-feed separates sampled pages
+      mode:
+        description: Discovery strategy
         required: true
-        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_sample.txt
+        default: agentic
+        type: choice
+        options:
+          - agentic
+          - one-shot
+      input_path:
+        description: Repo-relative text file; form-feed separates physical/sample pages
+        required: true
+        default: benchmark/ingestion/discovery/fixtures/legacy_bulletin_full_sample.txt
         type: string
       artifact_label:
         description: Human-readable artifact label for the discovery prompt
         required: true
-        default: synthetic-legacy-bulletin
+        default: synthetic-legacy-bulletin-full
         type: string
       model:
         description: Gemini model ID
@@ -28,9 +36,19 @@ on:
           - medium
           - high
       max_output_tokens:
-        description: Hard output-token ceiling for this single request
+        description: Output-token ceiling for one-shot or final synthesis
         required: true
         default: "4096"
+        type: string
+      max_model_calls:
+        description: Agentic mode hard ceiling including final synthesis
+        required: true
+        default: "6"
+        type: string
+      max_total_tokens:
+        description: Agentic mode cumulative provider-reported token ceiling
+        required: true
+        default: "24000"
         type: string
 
 permissions:
@@ -44,13 +62,14 @@ jobs:
   discover:
     name: Bounded Gemini discovery
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: llm-benchmark
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       LLM_PROVIDER: google
       LLM_MODEL: ${{ inputs.model }}
       LLM_THINKING_LEVEL: ${{ inputs.thinking_level }}
+      UV_PYTHON: "3.13"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -60,9 +79,16 @@ jobs:
         with:
           version: 0.12.4
 
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
       - name: Install locked backend environment
         working-directory: backend
         run: uv sync --frozen --group dev
+
+      - name: Show benchmark runtime
+        working-directory: backend
+        run: uv run python --version
 
       - name: Require Gemini secret
         run: |
@@ -71,21 +97,35 @@ jobs:
             exit 1
           fi
 
-      - name: Run one bounded discovery request
+      - name: Run bounded discovery
         working-directory: backend
         run: |
-          uv run python ../benchmark/ingestion/run_document_discovery.py \
-            --input "../${{ inputs.input_path }}" \
-            --output "../benchmark-output/discovery-result.json" \
-            --artifact-label "${{ inputs.artifact_label }}" \
-            --model "${{ inputs.model }}" \
-            --thinking-level "${{ inputs.thinking_level }}" \
-            --max-output-tokens "${{ inputs.max_output_tokens }}"
+          set -euo pipefail
+
+          if [ "${{ inputs.mode }}" = "agentic" ]; then
+            uv run python ../benchmark/ingestion/run_agentic_document_discovery.py \
+              --input "../${{ inputs.input_path }}" \
+              --output "../benchmark-output/discovery-result.json" \
+              --artifact-label "${{ inputs.artifact_label }}" \
+              --model "${{ inputs.model }}" \
+              --thinking-level "${{ inputs.thinking_level }}" \
+              --max-model-calls "${{ inputs.max_model_calls }}" \
+              --max-total-tokens "${{ inputs.max_total_tokens }}" \
+              --synthesis-max-output-tokens "${{ inputs.max_output_tokens }}"
+          else
+            uv run python ../benchmark/ingestion/run_document_discovery.py \
+              --input "../${{ inputs.input_path }}" \
+              --output "../benchmark-output/discovery-result.json" \
+              --artifact-label "${{ inputs.artifact_label }}" \
+              --model "${{ inputs.model }}" \
+              --thinking-level "${{ inputs.thinking_level }}" \
+              --max-output-tokens "${{ inputs.max_output_tokens }}"
+          fi
 
       - name: Upload discovery evidence
         uses: actions/upload-artifact@v4
         with:
-          name: document-discovery-${{ github.run_id }}
+          name: document-discovery-${{ inputs.mode }}-${{ github.run_id }}
           path: benchmark-output/discovery-result.json
           if-no-files-found: error
           retention-days: 14
