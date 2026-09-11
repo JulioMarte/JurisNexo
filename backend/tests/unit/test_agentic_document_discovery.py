@@ -22,10 +22,15 @@ def _empty_prompts() -> list[str]:
     return []
 
 
+def _empty_schemas() -> list[JsonObject]:
+    return []
+
+
 @dataclass(slots=True)
 class ScriptedProvider:
     responses: tuple[JsonObject, ...]
     prompts: list[str] = field(default_factory=_empty_prompts)
+    schemas: list[JsonObject] = field(default_factory=_empty_schemas)
     cursor: int = 0
 
     @property
@@ -44,8 +49,9 @@ class ScriptedProvider:
         max_output_tokens: int,
         thinking_level: str,
     ) -> StructuredGenerationResult:
-        del json_schema, max_output_tokens, thinking_level
+        del max_output_tokens, thinking_level
         self.prompts.append(prompt)
+        self.schemas.append(json_schema)
         response = self.responses[self.cursor]
         self.cursor += 1
         return StructuredGenerationResult(
@@ -61,6 +67,17 @@ class ScriptedProvider:
                 total_tokens=20,
             ),
         )
+
+
+def _tool_enum(schema: JsonObject) -> list[str]:
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    tool = properties["tool"]
+    assert isinstance(tool, dict)
+    values = tool["enum"]
+    assert isinstance(values, list)
+    assert all(isinstance(value, str) for value in values)
+    return values
 
 
 def _candidate_hypothesis() -> JsonObject:
@@ -135,6 +152,8 @@ def test_agent_searches_then_inspects_then_synthesizes() -> None:
     assert len(provider.prompts) == 4
     assert "untrusted data" in provider.prompts[0]
     assert "get_printed_page" not in provider.prompts[0]
+    assert "get_printed_page" not in _tool_enum(provider.schemas[0])
+    assert "get_printed_pages" not in _tool_enum(provider.schemas[0])
 
 
 def test_agent_can_follow_resolved_printed_page_reference_with_provenance() -> None:
@@ -171,6 +190,8 @@ def test_agent_can_follow_resolved_printed_page_reference_with_provenance() -> N
     assert "physical_pages=5,6; side=right" in output
     assert "get_printed_page" in provider.prompts[0]
     assert "get_printed_pages" in provider.prompts[0]
+    assert "get_printed_page" in _tool_enum(provider.schemas[0])
+    assert "get_printed_pages" in _tool_enum(provider.schemas[0])
     assert "resolved_printed_pages=1" in provider.prompts[0]
 
 
