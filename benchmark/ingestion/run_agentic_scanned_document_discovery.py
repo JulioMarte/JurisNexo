@@ -125,6 +125,14 @@ def main() -> None:
                 "tool_output": step.tool_output,
                 "usage": asdict(step.model_result.usage),
                 "response_id": step.model_result.response_id,
+                "delegated_calls": [
+                    {
+                        "model": delegated.model,
+                        "response_id": delegated.response_id,
+                        "usage": asdict(delegated.usage),
+                    }
+                    for delegated in step.delegated_model_results
+                ],
             }
             for step in result.steps
         ],
