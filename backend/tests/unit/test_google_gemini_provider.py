@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from jurisnexo.model_providers.contracts import JsonObject, ModelProviderError
+from jurisnexo.model_providers.contracts import (
+    JsonObject,
+    ModelProviderError,
+    ModelProviderIncompleteError,
+)
 from jurisnexo.model_providers.google_gemini import (
     GeminiTransportError,
     GoogleGeminiProvider,
@@ -248,19 +252,37 @@ def test_retryable_failure_stops_at_attempt_limit() -> None:
     assert sleep.delays == [2.0]
 
 
-def test_incomplete_interaction_fails_closed() -> None:
+def test_incomplete_interaction_fails_closed_with_diagnostics() -> None:
     transport = RecordingTransport(
         response={
             "id": "int_incomplete",
             "model": "gemini-3.8-flash",
             "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
             "steps": [],
+            "usage": {
+                "total_input_tokens": 100,
+                "total_output_tokens": 0,
+                "total_thought_tokens": 512,
+                "total_tokens": 612,
+            },
         }
     )
     provider = GoogleGeminiProvider(api_key="test-secret", transport=transport)
 
-    with pytest.raises(ModelProviderError, match="did not complete"):
+    with pytest.raises(ModelProviderIncompleteError, match="interaction incomplete") as caught:
         _generate(provider)
+
+    error = caught.value
+    assert error.response_id == "int_incomplete"
+    assert error.provider == "google"
+    assert error.model == "gemini-3.8-flash"
+    assert error.usage.input_tokens == 100
+    assert error.usage.output_tokens == 0
+    assert error.usage.thinking_tokens == 512
+    assert error.usage.total_tokens == 612
+    assert error.details["requested_max_output_tokens"] == 512
+    assert error.details["incomplete_details"] == {"reason": "max_output_tokens"}
 
 
 def test_invalid_service_tier_is_rejected() -> None:
