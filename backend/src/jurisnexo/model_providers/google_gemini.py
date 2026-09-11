@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
@@ -13,6 +15,16 @@ from jurisnexo.model_providers.contracts import (
     ModelUsage,
     StructuredGenerationResult,
 )
+
+_RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+class GeminiTransportError(ModelProviderError):
+    """Transport-level Gemini failure with explicit retry semantics."""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class JsonTransport(Protocol):
@@ -43,11 +55,15 @@ class UrllibJsonTransport:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise ModelProviderError(
-                f"Gemini HTTP error {exc.code}: {detail[:500]}"
+            raise GeminiTransportError(
+                f"Gemini HTTP error {exc.code}: {detail[:500]}",
+                retryable=exc.code in _RETRYABLE_HTTP_STATUS,
             ) from exc
         except URLError as exc:
-            raise ModelProviderError(f"Gemini network error: {exc.reason}") from exc
+            raise GeminiTransportError(
+                f"Gemini network error: {exc.reason}",
+                retryable=True,
+            ) from exc
 
         parsed = json.loads(raw)
         if not isinstance(parsed, dict):
@@ -61,6 +77,18 @@ class GoogleGeminiProvider:
     model: str = "gemini-3.8-flash"
     timeout_seconds: float = 90.0
     transport: JsonTransport | None = None
+    max_attempts: int = 4
+    retry_base_delay_seconds: float = 1.0
+    retry_max_delay_seconds: float = 8.0
+    sleep: Callable[[float], None] = time.sleep
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
+        if self.retry_base_delay_seconds < 0:
+            raise ValueError("retry_base_delay_seconds must not be negative")
+        if self.retry_max_delay_seconds < 0:
+            raise ValueError("retry_max_delay_seconds must not be negative")
 
     @property
     def provider_name(self) -> str:
@@ -99,16 +127,41 @@ class GoogleGeminiProvider:
                 "thinkingConfig": {"thinkingLevel": thinking_level},
             },
         }
-        response = transport.post_json(
-            url=endpoint,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
+        response = self._post_with_retry(
+            transport=transport,
+            endpoint=endpoint,
             payload=payload,
-            timeout_seconds=self.timeout_seconds,
         )
         return self._parse_response(response)
+
+    def _post_with_retry(
+        self,
+        *,
+        transport: JsonTransport,
+        endpoint: str,
+        payload: JsonObject,
+    ) -> JsonObject:
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return transport.post_json(
+                    url=endpoint,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self.api_key,
+                    },
+                    payload=payload,
+                    timeout_seconds=self.timeout_seconds,
+                )
+            except GeminiTransportError as exc:
+                if not exc.retryable or attempt >= self.max_attempts:
+                    raise
+                delay = min(
+                    self.retry_base_delay_seconds * (2 ** (attempt - 1)),
+                    self.retry_max_delay_seconds,
+                )
+                self.sleep(delay)
+
+        raise AssertionError("Gemini retry loop exited unexpectedly")
 
     def _parse_response(self, response: JsonObject) -> StructuredGenerationResult:
         candidates = response.get("candidates")
