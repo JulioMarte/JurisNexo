@@ -219,11 +219,13 @@ def test_decision_date_evidence_cannot_point_to_another_case(
 
         cursor.execute(
             """
-            insert into corpus.case_pages (case_id, artifact_page_id, ordinal_in_case)
-            values (%s, %s, 1)
+            insert into corpus.case_pages (
+                case_id, artifact_id, artifact_page_id, ordinal_in_case
+            )
+            values (%s, %s, %s, 1)
             returning id
             """,
-            (case_a, artifact_page[0]),
+            (case_a, artifact[0], artifact_page[0]),
         )
         case_page = cursor.fetchone()
         assert case_page is not None
@@ -286,11 +288,13 @@ def test_case_identifier_evidence_cannot_point_to_another_case(
 
         cursor.execute(
             """
-            insert into corpus.case_pages (case_id, artifact_page_id, ordinal_in_case)
-            values (%s, %s, 1)
+            insert into corpus.case_pages (
+                case_id, artifact_id, artifact_page_id, ordinal_in_case
+            )
+            values (%s, %s, %s, 1)
             returning id
             """,
-            (case_a, artifact_page[0]),
+            (case_a, artifact[0], artifact_page[0]),
         )
         case_page = cursor.fetchone()
         assert case_page is not None
