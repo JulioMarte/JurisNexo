@@ -31,6 +31,7 @@ def test_extracts_observed_scj_metadata_patterns() -> None:
     assert by_field["decision_summary"].normalized_text == "Rechaza el recurso de casación"
     assert by_field["rapporteur"].normalized_text == "Magistrada Ejemplo"
     assert by_field["decision_date_candidate"].normalized_date == date(2025, 4, 30)
+    assert by_field["decision_date_candidate"].method_name == "scj_decision_formula_date_v1"
 
     for observation in observations:
         assert observation.page_number == 7
@@ -46,8 +47,19 @@ def test_observation_key_is_stable_for_same_input() -> None:
     assert [item.observation_key for item in first] == [item.observation_key for item in second]
 
 
-def test_invalid_calendar_date_is_not_emitted() -> None:
-    text = "La sala, en fecha 31 de febrero de 2025, dicta sentencia."
+def test_unrelated_procedural_date_is_not_treated_as_decision_date() -> None:
+    text = (
+        "La sentencia recurrida fue dictada en fecha 12 de enero de 2024. "
+        "La parte recurrente notificó posteriormente su recurso."
+    )
+
+    observations = parse_scj_page_metadata(text, page_number=3)
+
+    assert all(item.field_name != "decision_date_candidate" for item in observations)
+
+
+def test_invalid_calendar_date_is_not_emitted_even_with_decision_formula() -> None:
+    text = "La sala, en fecha 31 de febrero de 2025, dicta la siguiente sentencia."
 
     observations = parse_scj_page_metadata(text, page_number=1)
 
