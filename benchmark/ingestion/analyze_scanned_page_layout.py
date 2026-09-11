@@ -44,7 +44,9 @@ def main() -> None:
         "logical_region_count": sum(len(page.regions) for page in layouts),
         "xml_forbidden_control_character_count": forbidden_control_count,
         "regions_with_printed_page_candidates": printed_region_count,
-        "physical_pages_with_two_or_more_printed_page_candidates": pages_with_two_printed_candidates,
+        "physical_pages_with_two_or_more_printed_page_candidates": (
+            pages_with_two_printed_candidates
+        ),
         "adjacent_duplicate_scan_count": len(duplicates),
         "adjacent_duplicate_scans": [asdict(item) for item in duplicates],
         "pages": [
