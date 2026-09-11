@@ -17,16 +17,13 @@ def _empty_delays() -> list[float]:
     return []
 
 
-def _empty_urls() -> list[str]:
-    return []
-
-
 @dataclass(slots=True)
 class RecordingTransport:
     response: JsonObject
     last_url: str | None = None
     last_headers: dict[str, str] | None = None
     last_payload: JsonObject | None = None
+    last_timeout_seconds: float | None = None
 
     def post_json(
         self,
@@ -36,10 +33,10 @@ class RecordingTransport:
         payload: JsonObject,
         timeout_seconds: float,
     ) -> JsonObject:
-        del timeout_seconds
         self.last_url = url
         self.last_headers = headers
         self.last_payload = payload
+        self.last_timeout_seconds = timeout_seconds
         return self.response
 
 
@@ -47,7 +44,6 @@ class RecordingTransport:
 class SequenceTransport:
     outcomes: tuple[JsonObject | GeminiTransportError, ...]
     calls: int = 0
-    urls: list[str] = field(default_factory=_empty_urls)
 
     def post_json(
         self,
@@ -57,8 +53,7 @@ class SequenceTransport:
         payload: JsonObject,
         timeout_seconds: float,
     ) -> JsonObject:
-        del headers, payload, timeout_seconds
-        self.urls.append(url)
+        del url, headers, payload, timeout_seconds
         outcome = self.outcomes[self.calls]
         self.calls += 1
         if isinstance(outcome, GeminiTransportError):
@@ -74,27 +69,28 @@ class RecordingSleep:
         self.delays.append(delay)
 
 
-def _success_response(*, model_version: str = "gemini-3.8-flash-001") -> JsonObject:
+def _success_response() -> JsonObject:
     return {
-        "candidates": [
+        "id": "int_test_1",
+        "model": "gemini-3.8-flash",
+        "status": "completed",
+        "steps": [
             {
-                "content": {
-                    "parts": [
-                        {
-                            "text": '{"artifact_class":"compilation"}',
-                        }
-                    ]
-                }
+                "type": "model_output",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"artifact_class":"compilation"}',
+                    }
+                ],
             }
         ],
-        "usageMetadata": {
-            "promptTokenCount": 10,
-            "candidatesTokenCount": 4,
-            "thoughtsTokenCount": 3,
-            "totalTokenCount": 17,
+        "usage": {
+            "total_input_tokens": 10,
+            "total_output_tokens": 4,
+            "total_thought_tokens": 3,
+            "total_tokens": 17,
         },
-        "modelVersion": model_version,
-        "responseId": "response-1",
     }
 
 
@@ -107,11 +103,12 @@ def _generate(provider: GoogleGeminiProvider) -> None:
     )
 
 
-def test_structured_generation_sends_schema_and_parses_usage() -> None:
+def test_structured_generation_uses_interactions_flex_and_parses_usage() -> None:
     transport = RecordingTransport(response=_success_response())
     provider = GoogleGeminiProvider(
         api_key="test-secret",
         model="gemini-3.8-flash",
+        service_tier="flex",
         transport=transport,
     )
 
@@ -124,22 +121,32 @@ def test_structured_generation_sends_schema_and_parses_usage() -> None:
 
     assert result.value == {"artifact_class": "compilation"}
     assert result.model == "gemini-3.8-flash"
+    assert result.response_id == "int_test_1"
+    assert result.model_version is None
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 4
     assert result.usage.thinking_tokens == 3
-    assert result.model_version == "gemini-3.8-flash-001"
-    assert transport.last_url is not None
-    assert transport.last_url.endswith("gemini-3.8-flash:generateContent")
+    assert result.usage.total_tokens == 17
+    assert transport.last_url == "https://generativelanguage.googleapis.com/v1beta/interactions"
     assert transport.last_headers == {
         "Content-Type": "application/json",
         "x-goog-api-key": "test-secret",
     }
+    assert transport.last_timeout_seconds == 900.0
     assert transport.last_payload is not None
-    config = transport.last_payload["generationConfig"]
-    assert isinstance(config, dict)
-    assert config["responseMimeType"] == "application/json"
-    assert config["responseJsonSchema"] == {"type": "object"}
-    assert config["thinkingConfig"] == {"thinkingLevel": "medium"}
+    assert transport.last_payload["model"] == "gemini-3.8-flash"
+    assert transport.last_payload["input"] == "inspect"
+    assert transport.last_payload["service_tier"] == "flex"
+    assert transport.last_payload["store"] is False
+    assert transport.last_payload["response_format"] == {
+        "type": "text",
+        "mime_type": "application/json",
+        "schema": {"type": "object"},
+    }
+    assert transport.last_payload["generation_config"] == {
+        "max_output_tokens": 512,
+        "thinking_level": "medium",
+    }
 
 
 def test_retryable_transport_failure_recovers_with_bounded_backoff() -> None:
@@ -154,8 +161,7 @@ def test_retryable_transport_failure_recovers_with_bounded_backoff() -> None:
         api_key="test-secret",
         transport=transport,
         max_attempts=2,
-        retry_base_delay_seconds=1.0,
-        retry_max_delay_seconds=4.0,
+        retry_base_delay_seconds=2.0,
         sleep=sleep,
     )
 
@@ -168,52 +174,10 @@ def test_retryable_transport_failure_recovers_with_bounded_backoff() -> None:
 
     assert result.model == "gemini-3.8-flash"
     assert transport.calls == 2
-    assert sleep.delays == [1.0]
-    assert all("gemini-3.8-flash" in url for url in transport.urls)
+    assert sleep.delays == [2.0]
 
 
-def test_transient_primary_exhaustion_fails_over_and_pins_fallback() -> None:
-    transport = SequenceTransport(
-        outcomes=(
-            GeminiTransportError("Gemini HTTP error 503", retryable=True),
-            GeminiTransportError("Gemini HTTP error 503", retryable=True),
-            _success_response(model_version="gemini-3.7-flash-001"),
-            _success_response(model_version="gemini-3.7-flash-001"),
-        )
-    )
-    sleep = RecordingSleep()
-    provider = GoogleGeminiProvider(
-        api_key="test-secret",
-        transport=transport,
-        max_attempts=2,
-        sleep=sleep,
-    )
-
-    first = provider.generate_structured(
-        prompt="inspect",
-        json_schema={"type": "object"},
-        max_output_tokens=512,
-        thinking_level="medium",
-    )
-    second = provider.generate_structured(
-        prompt="inspect again",
-        json_schema={"type": "object"},
-        max_output_tokens=512,
-        thinking_level="medium",
-    )
-
-    assert first.model == "gemini-3.7-flash"
-    assert second.model == "gemini-3.7-flash"
-    assert provider.model_name == "gemini-3.7-flash"
-    assert transport.calls == 4
-    assert "gemini-3.8-flash" in transport.urls[0]
-    assert "gemini-3.8-flash" in transport.urls[1]
-    assert "gemini-3.7-flash" in transport.urls[2]
-    assert "gemini-3.7-flash" in transport.urls[3]
-    assert sleep.delays == [1.0]
-
-
-def test_non_retryable_transport_failure_does_not_fail_over() -> None:
+def test_non_retryable_transport_failure_fails_immediately() -> None:
     transport = SequenceTransport(
         outcomes=(GeminiTransportError("Gemini HTTP error 400", retryable=False),)
     )
@@ -229,13 +193,12 @@ def test_non_retryable_transport_failure_does_not_fail_over() -> None:
         _generate(provider)
 
     assert transport.calls == 1
-    assert "gemini-3.8-flash" in transport.urls[0]
     assert sleep.delays == []
 
 
-def test_all_configured_models_exhaust_transient_failures() -> None:
+def test_retryable_failure_stops_at_attempt_limit() -> None:
     transient = GeminiTransportError("Gemini HTTP error 503", retryable=True)
-    transport = SequenceTransport(outcomes=(transient, transient, transient, transient))
+    transport = SequenceTransport(outcomes=(transient, transient))
     sleep = RecordingSleep()
     provider = GoogleGeminiProvider(
         api_key="test-secret",
@@ -247,12 +210,28 @@ def test_all_configured_models_exhaust_transient_failures() -> None:
     with pytest.raises(GeminiTransportError, match="503"):
         _generate(provider)
 
-    assert transport.calls == 4
-    assert "gemini-3.8-flash" in transport.urls[0]
-    assert "gemini-3.8-flash" in transport.urls[1]
-    assert "gemini-3.7-flash" in transport.urls[2]
-    assert "gemini-3.7-flash" in transport.urls[3]
-    assert sleep.delays == [1.0, 1.0]
+    assert transport.calls == 2
+    assert sleep.delays == [2.0]
+
+
+def test_incomplete_interaction_fails_closed() -> None:
+    transport = RecordingTransport(
+        response={
+            "id": "int_incomplete",
+            "model": "gemini-3.8-flash",
+            "status": "incomplete",
+            "steps": [],
+        }
+    )
+    provider = GoogleGeminiProvider(api_key="test-secret", transport=transport)
+
+    with pytest.raises(ModelProviderError, match="did not complete"):
+        _generate(provider)
+
+
+def test_invalid_service_tier_is_rejected() -> None:
+    with pytest.raises(ValueError, match="service_tier"):
+        GoogleGeminiProvider(api_key="test-secret", service_tier="unknown")
 
 
 def test_missing_api_key_fails_closed() -> None:
