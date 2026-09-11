@@ -35,7 +35,7 @@ def _segment(
     *,
     docket: str | None = None,
 ) -> CandidateSegment:
-    metadata = []
+    metadata: list[CandidateMetadataValue] = []
     if docket is not None:
         metadata.append(
             CandidateMetadataValue(
