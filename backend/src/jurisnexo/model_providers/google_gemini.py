@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -17,6 +17,10 @@ from jurisnexo.model_providers.contracts import (
 )
 
 _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _default_fallback_models() -> tuple[str, ...]:
+    return ("gemini-3.7-flash",)
 
 
 class GeminiTransportError(ModelProviderError):
@@ -77,10 +81,12 @@ class GoogleGeminiProvider:
     model: str = "gemini-3.8-flash"
     timeout_seconds: float = 90.0
     transport: JsonTransport | None = None
-    max_attempts: int = 4
+    max_attempts: int = 2
     retry_base_delay_seconds: float = 1.0
-    retry_max_delay_seconds: float = 8.0
+    retry_max_delay_seconds: float = 4.0
+    fallback_models: tuple[str, ...] = field(default_factory=_default_fallback_models)
     sleep: Callable[[float], None] = time.sleep
+    active_model: str = field(init=False)
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -89,6 +95,11 @@ class GoogleGeminiProvider:
             raise ValueError("retry_base_delay_seconds must not be negative")
         if self.retry_max_delay_seconds < 0:
             raise ValueError("retry_max_delay_seconds must not be negative")
+        if not self.model:
+            raise ValueError("model must not be empty")
+        if any(not model for model in self.fallback_models):
+            raise ValueError("fallback models must not be empty")
+        self.active_model = self.model
 
     @property
     def provider_name(self) -> str:
@@ -96,7 +107,7 @@ class GoogleGeminiProvider:
 
     @property
     def model_name(self) -> str:
-        return self.model
+        return self.active_model
 
     def generate_structured(
         self,
@@ -114,10 +125,6 @@ class GoogleGeminiProvider:
             raise ValueError("thinking_level must be low, medium, or high")
 
         transport = self.transport or UrllibJsonTransport()
-        endpoint = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:generateContent"
-        )
         payload: JsonObject = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
@@ -127,12 +134,34 @@ class GoogleGeminiProvider:
                 "thinkingConfig": {"thinkingLevel": thinking_level},
             },
         }
-        response = self._post_with_retry(
-            transport=transport,
-            endpoint=endpoint,
-            payload=payload,
-        )
-        return self._parse_response(response)
+        last_transient_error: GeminiTransportError | None = None
+        for candidate_model in self._candidate_models():
+            endpoint = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{candidate_model}:generateContent"
+            )
+            try:
+                response = self._post_with_retry(
+                    transport=transport,
+                    endpoint=endpoint,
+                    payload=payload,
+                )
+            except GeminiTransportError as exc:
+                if not exc.retryable:
+                    raise
+                last_transient_error = exc
+                continue
+
+            self.active_model = candidate_model
+            return self._parse_response(response, effective_model=candidate_model)
+
+        if last_transient_error is not None:
+            raise last_transient_error
+        raise AssertionError("Gemini model failover loop exited unexpectedly")
+
+    def _candidate_models(self) -> tuple[str, ...]:
+        ordered = (self.active_model, self.model, *self.fallback_models)
+        return tuple(dict.fromkeys(ordered))
 
     def _post_with_retry(
         self,
@@ -163,7 +192,12 @@ class GoogleGeminiProvider:
 
         raise AssertionError("Gemini retry loop exited unexpectedly")
 
-    def _parse_response(self, response: JsonObject) -> StructuredGenerationResult:
+    def _parse_response(
+        self,
+        response: JsonObject,
+        *,
+        effective_model: str,
+    ) -> StructuredGenerationResult:
         candidates = response.get("candidates")
         if not isinstance(candidates, list) or not candidates:
             prompt_feedback = response.get("promptFeedback")
@@ -198,7 +232,7 @@ class GoogleGeminiProvider:
         return StructuredGenerationResult(
             value=cast(JsonObject, parsed_value),
             provider=self.provider_name,
-            model=self.model,
+            model=effective_model,
             model_version=model_version if isinstance(model_version, str) else None,
             response_id=response_id if isinstance(response_id, str) else None,
             usage=usage,
