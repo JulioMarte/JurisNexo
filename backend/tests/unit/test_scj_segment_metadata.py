@@ -1,5 +1,8 @@
+from collections.abc import Sequence
+
 import pytest
 
+from jurisnexo.ingestion.scj_metadata import MetadataObservation
 from jurisnexo.ingestion.scj_segment_metadata import parse_scj_segment_metadata
 from jurisnexo.ingestion.scj_segmentation import segment_scj_pages
 
@@ -51,7 +54,7 @@ En fecha 22 de enero de 2024, dicta la siguiente sentencia citada en el recurso.
 """
 
 
-def _values(observations, field_name: str) -> list[str]:
+def _values(observations: Sequence[MetadataObservation], field_name: str) -> list[str]:
     return [
         value
         for item in observations
@@ -60,7 +63,7 @@ def _values(observations, field_name: str) -> list[str]:
     ]
 
 
-def _dates(observations) -> list[str]:
+def _dates(observations: Sequence[MetadataObservation]) -> list[str]:
     return [
         item.normalized_date.isoformat()
         for item in observations
