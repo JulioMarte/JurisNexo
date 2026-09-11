@@ -8,12 +8,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from jurisnexo.model_providers.contracts import ModelProvider, StructuredGenerationResult
 
 
+def _empty_strings() -> list[str]:
+    return []
+
+
+def _empty_ints() -> list[int]:
+    return []
+
+
 class SegmentationHypothesis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str
-    evidence: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=_empty_strings)
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+def _empty_segmentation_hypotheses() -> list[SegmentationHypothesis]:
+    return []
 
 
 class MetadataHypothesis(BaseModel):
@@ -22,8 +34,12 @@ class MetadataHypothesis(BaseModel):
     field_name: str
     source_region: str
     extraction_strategy: str
-    evidence: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=_empty_strings)
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+def _empty_metadata_hypotheses() -> list[MetadataHypothesis]:
+    return []
 
 
 class DocumentStructureHypothesis(BaseModel):
@@ -40,11 +56,15 @@ class DocumentStructureHypothesis(BaseModel):
     family_name_candidate: str
     structure_confidence: float = Field(ge=0.0, le=1.0)
     has_index: bool
-    index_page_candidates: list[int] = Field(default_factory=list)
-    segmentation_hypotheses: list[SegmentationHypothesis] = Field(default_factory=list)
-    metadata_hypotheses: list[MetadataHypothesis] = Field(default_factory=list)
-    anomalies: list[str] = Field(default_factory=list)
-    recommended_next_actions: list[str] = Field(default_factory=list)
+    index_page_candidates: list[int] = Field(default_factory=_empty_ints)
+    segmentation_hypotheses: list[SegmentationHypothesis] = Field(
+        default_factory=_empty_segmentation_hypotheses
+    )
+    metadata_hypotheses: list[MetadataHypothesis] = Field(
+        default_factory=_empty_metadata_hypotheses
+    )
+    anomalies: list[str] = Field(default_factory=_empty_strings)
+    recommended_next_actions: list[str] = Field(default_factory=_empty_strings)
     status: Literal[
         "candidate",
         "review_required",
