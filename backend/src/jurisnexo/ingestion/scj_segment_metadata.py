@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jurisnexo.ingestion.scj_layouts import detect_scj_page_layout, SCJLayoutFamily
+from jurisnexo.ingestion.scj_layouts import SCJLayoutFamily, detect_scj_page_layout
 from jurisnexo.ingestion.scj_metadata import MetadataObservation, parse_scj_page_metadata
 from jurisnexo.ingestion.scj_segmentation import CaseSegment
 
