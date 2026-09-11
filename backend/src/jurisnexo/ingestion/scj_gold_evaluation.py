@@ -5,7 +5,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
-
 _FIELD_NAMES = frozenset(
     {"decision_number", "docket_numbers", "decision_date", "court_organ"}
 )
