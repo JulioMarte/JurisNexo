@@ -55,7 +55,6 @@ class DocumentEnvironment:
             raise DocumentEnvironmentError(
                 "source_references must be empty or match the page count"
             )
-
         resolved = [value for value in self.printed_page_numbers if value is not None]
         if len(resolved) != len(set(resolved)):
             raise DocumentEnvironmentError("resolved printed page numbers must be unique")
@@ -85,7 +84,6 @@ class DocumentEnvironment:
             raise DocumentEnvironmentError("printed-page lookup is unavailable in this environment")
         if printed_page_number < 1:
             raise DocumentEnvironmentError("printed_page_number must be positive")
-
         for page_number, resolved in enumerate(self.printed_page_numbers, start=1):
             if resolved == printed_page_number:
                 return self.get_page(page_number)
@@ -94,11 +92,7 @@ class DocumentEnvironment:
         )
 
     def get_printed_pages(
-        self,
-        start_printed_page: int,
-        end_printed_page: int,
-        *,
-        max_pages: int = 7,
+        self, start_printed_page: int, end_printed_page: int
     ) -> PrintedPageRangeView:
         if not self.supports_printed_page_lookup:
             raise DocumentEnvironmentError("printed-page lookup is unavailable in this environment")
@@ -106,14 +100,6 @@ class DocumentEnvironment:
             raise DocumentEnvironmentError("printed page range values must be positive")
         if start_printed_page > end_printed_page:
             raise DocumentEnvironmentError("start_printed_page must be <= end_printed_page")
-        if max_pages < 1:
-            raise DocumentEnvironmentError("max_pages must be positive")
-
-        requested = end_printed_page - start_printed_page + 1
-        if requested > max_pages:
-            raise DocumentEnvironmentError(
-                f"requested {requested} printed pages; tool limit is {max_pages} pages per call"
-            )
 
         by_printed_page = {
             printed_page: page_number
@@ -128,7 +114,6 @@ class DocumentEnvironment:
                 unresolved.append(printed_page)
             else:
                 pages.append(self.get_page(page_number))
-
         return PrintedPageRangeView(
             start_printed_page=start_printed_page,
             end_printed_page=end_printed_page,
@@ -136,24 +121,11 @@ class DocumentEnvironment:
             unresolved_printed_pages=tuple(unresolved),
         )
 
-    def get_pages(
-        self,
-        start_page: int,
-        end_page: int,
-        *,
-        max_pages: int = 8,
-    ) -> tuple[PageView, ...]:
+    def get_pages(self, start_page: int, end_page: int) -> tuple[PageView, ...]:
         if start_page > end_page:
             raise DocumentEnvironmentError("start_page must be <= end_page")
         self._validate_page_number(start_page)
         self._validate_page_number(end_page)
-        if max_pages < 1:
-            raise DocumentEnvironmentError("max_pages must be positive")
-        requested = end_page - start_page + 1
-        if requested > max_pages:
-            raise DocumentEnvironmentError(
-                f"requested {requested} pages; tool limit is {max_pages} pages per call"
-            )
         return tuple(self.get_page(page_number) for page_number in range(start_page, end_page + 1))
 
     def search_text(
@@ -196,7 +168,6 @@ class DocumentEnvironment:
         if count < 1:
             raise DocumentEnvironmentError("sample count must be positive")
         count = min(count, self.page_count)
-
         if strategy == "head":
             page_numbers = list(range(1, count + 1))
         elif strategy == "tail":
@@ -205,7 +176,6 @@ class DocumentEnvironment:
             page_numbers = self._even_page_numbers(count)
         else:
             raise DocumentEnvironmentError(f"unsupported sample strategy: {strategy}")
-
         return tuple(self.get_page(page_number) for page_number in page_numbers)
 
     def describe(self) -> str:
@@ -246,7 +216,6 @@ class DocumentEnvironment:
             return [1]
         if count >= self.page_count:
             return list(range(1, self.page_count + 1))
-
         page_numbers = {
             1 + round(index * (self.page_count - 1) / (count - 1)) for index in range(count)
         }
