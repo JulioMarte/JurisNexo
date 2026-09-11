@@ -22,6 +22,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-label", required=True)
     parser.add_argument("--model", default=os.getenv("LLM_MODEL", "gemini-3.8-flash"))
     parser.add_argument(
+        "--service-tier",
+        choices=("flex", "standard", "priority"),
+        default=os.getenv("LLM_SERVICE_TIER", "flex"),
+    )
+    parser.add_argument(
         "--thinking-level",
         choices=("low", "medium", "high"),
         default=os.getenv("LLM_THINKING_LEVEL", "medium"),
@@ -47,7 +52,11 @@ def main() -> None:
     if not page_samples:
         raise SystemExit("Input contains no non-empty page samples")
 
-    provider = GoogleGeminiProvider(api_key=api_key, model=args.model)
+    provider = GoogleGeminiProvider(
+        api_key=api_key,
+        model=args.model,
+        service_tier=args.service_tier,
+    )
     result = discover_document_structure(
         provider=provider,
         request=DiscoveryRequest(
@@ -62,6 +71,7 @@ def main() -> None:
         "provider": result.model_result.provider,
         "model": result.model_result.model,
         "model_version": result.model_result.model_version,
+        "service_tier": args.service_tier,
         "response_id": result.model_result.response_id,
         "usage": asdict(result.model_result.usage),
         "hypothesis": result.hypothesis.model_dump(mode="json"),
