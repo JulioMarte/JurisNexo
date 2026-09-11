@@ -6,7 +6,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-_PRINTED_PAGE_MARKER = re.compile(r"PRINTED PAGE (\d+)")
+_RESOLVED_PAGE_HEADER = re.compile(
+    r"--- VIEW PAGE (?P<view>\d+) \| PRINTED PAGE (?P<printed>\d+) \| SOURCE "
+)
 _CONFIRMED_STATUSES = {"confirmed_at_reference", "confirmed_nearby"}
 
 
@@ -51,13 +53,27 @@ def _gold_pages(gold: dict[str, Any]) -> set[int]:
     return pages
 
 
-def _verified_navigation_pages(result: dict[str, Any]) -> tuple[set[int], set[int]]:
+def _resolved_pages_from_output(tool_output: str) -> dict[int, int]:
+    resolved: dict[int, int] = {}
+    for match in _RESOLVED_PAGE_HEADER.finditer(tool_output):
+        printed_page = int(match.group("printed"))
+        view_page = int(match.group("view"))
+        previous = resolved.get(printed_page)
+        if previous is not None and previous != view_page:
+            raise ValueError(
+                f"printed page {printed_page} resolved to multiple view pages in tool trace"
+            )
+        resolved[printed_page] = view_page
+    return resolved
+
+
+def _navigation_evidence(result: dict[str, Any]) -> tuple[set[int], dict[int, int]]:
     steps = result.get("steps")
     if not isinstance(steps, list):
         raise ValueError("discovery result steps must be a list")
 
     attempted: set[int] = set()
-    verified: set[int] = set()
+    resolved: dict[int, int] = {}
     for step in steps:
         if not isinstance(step, dict):
             continue
@@ -74,29 +90,36 @@ def _verified_navigation_pages(result: dict[str, Any]) -> tuple[set[int], set[in
             if not isinstance(printed_page, int):
                 continue
             attempted.add(printed_page)
-            if (
-                f"PRINTED PAGE {printed_page}" in tool_output
-                and "SOURCE physical_pages=" in tool_output
-            ):
-                verified.add(printed_page)
+        elif tool == "get_printed_pages":
+            start = decision.get("start_printed_page_number")
+            end = decision.get("end_printed_page_number")
+            if not isinstance(start, int) or not isinstance(end, int) or start > end:
+                continue
+            attempted.update(range(start, end + 1))
+        else:
             continue
 
-        if tool != "get_printed_pages":
-            continue
-        start = decision.get("start_printed_page_number")
-        end = decision.get("end_printed_page_number")
-        if not isinstance(start, int) or not isinstance(end, int) or start > end:
-            continue
-        attempted.update(range(start, end + 1))
-        for match in _PRINTED_PAGE_MARKER.finditer(tool_output):
-            printed_page = int(match.group(1))
-            if start <= printed_page <= end and "SOURCE physical_pages=" in tool_output:
-                verified.add(printed_page)
+        for printed_page, view_page in _resolved_pages_from_output(tool_output).items():
+            previous = resolved.get(printed_page)
+            if previous is not None and previous != view_page:
+                raise ValueError(
+                    f"printed page {printed_page} changed view-page resolution during run"
+                )
+            resolved[printed_page] = view_page
 
-    return attempted, verified
+    return attempted, resolved
 
 
-def _semantic_confirmations(result: dict[str, Any]) -> tuple[set[int], set[int], list[dict[str, Any]]]:
+def _int_list(value: object) -> list[int] | None:
+    if not isinstance(value, list) or any(not isinstance(item, int) for item in value):
+        return None
+    return value
+
+
+def _semantic_confirmations(
+    result: dict[str, Any],
+    resolved_pages: dict[int, int],
+) -> tuple[set[int], set[int], list[dict[str, Any]]]:
     hypothesis = result.get("hypothesis")
     if not isinstance(hypothesis, dict):
         return set(), set(), []
@@ -113,19 +136,56 @@ def _semantic_confirmations(result: dict[str, Any]) -> tuple[set[int], set[int],
         reference = investigation.get("reference_as_printed")
         status = investigation.get("resolution_status")
         observed_start = investigation.get("observed_decision_start_printed_page")
+        evidence_printed = _int_list(investigation.get("evidence_printed_pages"))
+        evidence_views = _int_list(investigation.get("evidence_view_pages"))
         if not isinstance(reference, int) or not isinstance(status, str):
             continue
+
+        support_errors: list[str] = []
+        if evidence_printed is None or not evidence_printed:
+            support_errors.append("evidence_printed_pages must contain inspected printed pages")
+            evidence_printed = []
+        if evidence_views is None or not evidence_views:
+            support_errors.append("evidence_view_pages must contain inspected view pages")
+            evidence_views = []
+
+        missing_from_trace = sorted(set(evidence_printed) - set(resolved_pages))
+        if missing_from_trace:
+            support_errors.append(
+                "printed evidence absent from tool trace: "
+                + ",".join(str(value) for value in missing_from_trace)
+            )
+
+        expected_views = {
+            resolved_pages[printed_page]
+            for printed_page in evidence_printed
+            if printed_page in resolved_pages
+        }
+        if set(evidence_views) != expected_views:
+            support_errors.append("evidence_view_pages do not match resolved printed-page trace")
+
         if status in _CONFIRMED_STATUSES:
+            if reference not in evidence_printed:
+                support_errors.append("confirmed reference itself was not cited as inspected evidence")
+            if not isinstance(observed_start, int) or observed_start not in evidence_printed:
+                support_errors.append("confirmed observed start was not cited as inspected evidence")
+
+        trace_supported = not support_errors
+        if status in _CONFIRMED_STATUSES and trace_supported:
             confirmed_references.add(reference)
             if isinstance(observed_start, int):
                 observed_starts.add(observed_start)
+
         normalized.append(
             {
                 "reference_as_printed": reference,
                 "resolution_status": status,
                 "observed_decision_start_printed_page": observed_start,
-                "evidence_printed_pages": investigation.get("evidence_printed_pages", []),
+                "evidence_printed_pages": evidence_printed,
+                "evidence_view_pages": evidence_views,
                 "confidence": investigation.get("confidence"),
+                "trace_supported": trace_supported,
+                "trace_support_errors": support_errors,
             }
         )
     return confirmed_references, observed_starts, normalized
@@ -146,10 +206,14 @@ def main() -> None:
         )
 
     gold_pages = _gold_pages(gold)
-    attempted_pages, verified_pages = _verified_navigation_pages(result)
+    attempted_pages, resolved_pages = _navigation_evidence(result)
+    verified_pages = set(resolved_pages)
     verified_gold_pages = verified_pages & gold_pages
     unexpected_attempts = attempted_pages - gold_pages
-    confirmed_references, observed_starts, investigations = _semantic_confirmations(result)
+    confirmed_references, observed_starts, investigations = _semantic_confirmations(
+        result,
+        resolved_pages,
+    )
     confirmed_gold_references = confirmed_references & gold_pages
 
     hypothesis = result.get("hypothesis")
@@ -167,7 +231,8 @@ def main() -> None:
         has_index or not require_index_detected
     )
     semantic_available = bool(investigations)
-    semantic_passed = semantic_available and len(confirmed_gold_references) >= minimum_verified and (
+    enough_semantic_confirmations = len(confirmed_gold_references) >= minimum_verified
+    semantic_passed = semantic_available and enough_semantic_confirmations and (
         has_index or not require_index_detected
     )
 
@@ -201,7 +266,7 @@ def main() -> None:
             "require_index_detected": require_index_detected,
             "note": (
                 "status preserves the frozen v1 navigation acceptance rule; semantic_status "
-                "separately measures model-supported reference confirmation without rewriting gold"
+                "requires confirmation evidence to be present in the inspected tool trace"
             ),
         },
     }
