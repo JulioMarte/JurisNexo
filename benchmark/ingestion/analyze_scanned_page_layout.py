@@ -8,6 +8,7 @@ from pathlib import Path
 from jurisnexo.ingestion.scanned_page_materialization import (
     detect_adjacent_duplicate_scans,
     parse_bbox_layout,
+    sanitize_bbox_layout_xml,
 )
 
 
@@ -21,7 +22,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    layouts = parse_bbox_layout(args.bbox.read_text(encoding="utf-8", errors="replace"))
+    raw_xml = args.bbox.read_text(encoding="utf-8", errors="replace")
+    sanitized_xml, forbidden_control_count = sanitize_bbox_layout_xml(raw_xml)
+    layouts = parse_bbox_layout(sanitized_xml)
     duplicates = detect_adjacent_duplicate_scans(
         layouts,
         minimum_token_jaccard=args.duplicate_threshold,
@@ -39,6 +42,7 @@ def main() -> None:
     payload = {
         "physical_page_count": len(layouts),
         "logical_region_count": sum(len(page.regions) for page in layouts),
+        "xml_forbidden_control_character_count": forbidden_control_count,
         "regions_with_printed_page_candidates": printed_region_count,
         "physical_pages_with_two_or_more_printed_page_candidates": pages_with_two_printed_candidates,
         "adjacent_duplicate_scan_count": len(duplicates),
@@ -68,7 +72,8 @@ def main() -> None:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(json.dumps({key: value for key, value in payload.items() if key != "pages"}, indent=2))
+    summary = {key: value for key, value in payload.items() if key != "pages"}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
