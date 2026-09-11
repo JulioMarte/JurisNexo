@@ -288,17 +288,17 @@ def _tool_key(decision: DiscoveryToolDecision) -> tuple[object, ...]:
     )
 
 
-def _aggregate_usage(results: list[StructuredGenerationResult]) -> ModelUsage:
-    def total(attribute: str) -> int | None:
-        values = [getattr(result.usage, attribute) for result in results]
-        present = [value for value in values if isinstance(value, int)]
-        return sum(present) if present else None
+def _sum_known(values: list[int | None]) -> int | None:
+    present = [value for value in values if value is not None]
+    return sum(present) if present else None
 
+
+def _aggregate_usage(results: list[StructuredGenerationResult]) -> ModelUsage:
     return ModelUsage(
-        input_tokens=total("input_tokens"),
-        output_tokens=total("output_tokens"),
-        thinking_tokens=total("thinking_tokens"),
-        total_tokens=total("total_tokens"),
+        input_tokens=_sum_known([result.usage.input_tokens for result in results]),
+        output_tokens=_sum_known([result.usage.output_tokens for result in results]),
+        thinking_tokens=_sum_known([result.usage.thinking_tokens for result in results]),
+        total_tokens=_sum_known([result.usage.total_tokens for result in results]),
     )
 
 
