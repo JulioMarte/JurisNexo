@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject = dict[str, JsonValue]
@@ -44,3 +44,10 @@ class ModelProvider(Protocol):
         max_output_tokens: int,
         thinking_level: str,
     ) -> StructuredGenerationResult: ...
+
+
+@runtime_checkable
+class InputTokenCountingProvider(Protocol):
+    """Optional provider capability for exact preflight input-token counting."""
+
+    def count_input_tokens(self, text: str) -> int: ...
