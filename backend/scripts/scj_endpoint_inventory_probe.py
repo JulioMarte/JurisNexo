@@ -134,6 +134,11 @@ def main() -> None:
             session.bootstrap()
             span.set_attribute("scj.session.cookie_count", len(session.cookies))
 
+        with tracer.start_as_current_span("scj.endpoint.prime") as span:
+            prime = session.query(document_type="", length=10, year="-1")
+            span.set_attribute("scj.prime.records.filtered", int(prime.get("recordsFiltered", 0)))
+            span.set_attribute("scj.session.cookie_count", len(session.cookies))
+
         total_across_types = 0
         for document_type, label in DOCUMENT_TYPES.items():
             with tracer.start_as_current_span("scj.endpoint.count") as span:
