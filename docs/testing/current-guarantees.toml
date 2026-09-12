@@ -101,3 +101,11 @@ severity = "critical"
 classification = "CONTROLLED"
 required_evidence = ["fitness"]
 risk = ["architecture"]
+
+[[guarantees]]
+id = "FIT-BRANCH-WORKFLOW-001"
+statement = "main remains the canonical integration branch; normal work enters through short-lived PR branches, current-head CI is the merge gate, and same-repository branches are deleted only after successful merge."
+severity = "critical"
+classification = "CONTROLLED"
+required_evidence = ["fitness"]
+risk = ["architecture", "operations"]
