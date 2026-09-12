@@ -1,6 +1,6 @@
 """Make source observations idempotent when no artifact URL exists.
 
-Revision ID: 0016_source_observation_idempotency
+Revision ID: 0016_source_obs_idempotency
 Revises: 0015_source_inventory
 Create Date: 2026-09-12
 
@@ -12,7 +12,7 @@ only distinct source states, so NULL document URLs must compare as equal here.
 
 from alembic import op
 
-revision = "0016_source_observation_idempotency"
+revision = "0016_source_obs_idempotency"
 down_revision = "0015_source_inventory"
 branch_labels = None
 depends_on = None
