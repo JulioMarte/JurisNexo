@@ -42,7 +42,9 @@ The first commercial unit of value is a **Precedent & Adverse Authority Report**
 
 ## Agent runtime direction
 
-For the MVP, JurisNexo will use **OpenAI Agents SDK** as the default agent runtime instead of continuing to expand a custom general-purpose agent harness. The SDK is infrastructure, not the product architecture and not a commitment to use only OpenAI models; model/provider choice remains task- and benchmark-driven.
+For the MVP, JurisNexo will use **OpenAI Agents SDK** as the default agent runtime instead of continuing to expand a custom general-purpose agent harness. The SDK is infrastructure, not the product architecture and not a commitment to use only OpenAI models.
+
+Model/provider choice is **capability- and benchmark-driven**. Third-party provider adapters are not assumed to be feature-equivalent: structured outputs, multimodal input, tool behavior, usage accounting, tracing, and nested-agent behavior must be tested for the exact SDK/adapter/provider/model combination before a role is assigned to it.
 
 JurisNexo continues to own source preservation, provenance, evidence records, document/case tools, mandatory ingestion/research stage orchestration, Corpus API contracts, authorization, persistence, and benchmarks.
 
@@ -70,6 +72,7 @@ Key documents for the current agent architecture:
 - `docs/14-agent-runtime-decision-record.md` — ADR selecting OpenAI Agents SDK for the MVP;
 - `docs/15-ingestion-agent-pipeline.md` — structure/audit/extraction/audit ingestion pipeline;
 - `docs/16-corpus-api-agent-contract.md` — stable API boundary between agents and the system of record;
-- `docs/17-agent-methodology-and-benchmark-map.md` — mapping of RLM, generator-verifier, retrieval, Legal Elements, and graph methods to specific layers and metrics;
+- `docs/17-agent-methodology-and-benchmark-map.md` — complete mapping of the documented research methodologies to specific layers and metrics;
 - `docs/18-migration-plan-custom-harness-to-agents-sdk.md` — comparative migration and retirement criteria;
-- `docs/19-documentation-crosswalk.md` — precedence rules between existing architecture documents and the new runtime decision.
+- `docs/19-documentation-crosswalk.md` — precedence rules between existing architecture documents and the new runtime decision;
+- `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, guardrail, tracing, and SDK-upgrade constraints.
