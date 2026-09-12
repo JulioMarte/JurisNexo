@@ -15,7 +15,6 @@ from playwright.sync_api import Response, sync_playwright
 TARGET = "https://consultasentenciascj.poderjudicial.gob.do/"
 ENDPOINT = urljoin(TARGET, "/Home/GetExpedientes")
 OUT = Path(os.environ.get("SCJ_PROBE_OUTPUT", "scj-probe-output"))
-DOCUMENT_TYPES = {"1": "Decisiones", "3": "Boletín", "4": "Sentencias Históricas", "5": "Expedientes Incompletos", "6": "Revisión constitucional incompleto"}
 
 
 def configure_telemetry() -> None:
@@ -32,7 +31,7 @@ def configure_telemetry() -> None:
     trace.set_tracer_provider(provider)
 
 
-def datatables_form(*, start: int, length: int, document_type: str) -> dict[str, str]:
+def datatables_form(*, start: int, length: int, document_type: str = "1") -> dict[str, str]:
     fields: dict[str, str] = {"draw": "1"}
     for column in range(4):
         prefix = f"columns[{column}]"
@@ -63,10 +62,10 @@ def datatables_form(*, start: int, length: int, document_type: str) -> dict[str,
     return fields
 
 
-def request_page(context: Any, *, document_type: str, start: int, length: int) -> dict[str, Any]:
+def post_json(context: Any, path: str, form: dict[str, str]) -> dict[str, Any]:
     response = context.request.post(
-        ENDPOINT,
-        form=datatables_form(start=start, length=length, document_type=document_type),
+        urljoin(TARGET, path),
+        form=form,
         headers={
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "X-Requested-With": "XMLHttpRequest",
@@ -74,18 +73,69 @@ def request_page(context: Any, *, document_type: str, start: int, length: int) -
         },
         timeout=90_000,
     )
+    if response.status != 200:
+        raise RuntimeError(f"SCJ {path} returned HTTP {response.status}")
     payload = response.json()
     if not isinstance(payload, dict):
-        raise TypeError("SCJ context request returned non-object JSON")
+        raise TypeError(f"SCJ {path} returned non-object JSON")
+    return payload
+
+
+def request_decisions(context: Any, *, start: int, length: int) -> dict[str, Any]:
+    payload = post_json(context, "/Home/GetExpedientes", datatables_form(start=start, length=length))
     rows = payload.get("data", [])
     if not isinstance(rows, list):
-        raise TypeError("SCJ context request data is not a list")
+        raise TypeError("SCJ decisions data is not a list")
     return {
-        "status": response.status,
         "recordsTotal": int(payload.get("recordsTotal", 0)),
         "recordsFiltered": int(payload.get("recordsFiltered", 0)),
         "row_count": len(rows),
-        "rows": rows,
+        "sample": rows[0] if rows else None,
+    }
+
+
+def surface_probe(context: Any) -> dict[str, Any]:
+    decisions = request_decisions(context, start=0, length=10)
+    bulletins = post_json(context, "/Home/GetBoletines", {"Ano": "", "Mes": ""})
+    historical = post_json(
+        context,
+        "/Home/GetBoletinesHistorico",
+        {
+            **datatables_form(start=0, length=10, document_type=""),
+            "Ano": "",
+            "Mes": "",
+            "Contenido": "",
+        },
+    )
+    incomplete = post_json(
+        context,
+        "/Home/GetExpedienteIncompleto",
+        {"Sala": "", "Materia": "", "Ano": "", "Mes": "", "Contenido": ""},
+    )
+    incomplete_constitutional = post_json(
+        context,
+        "/Home/GetExpedienteIncompletoConstitucional",
+        {"Materia": "", "Contenido": ""},
+    )
+
+    def describe(payload: dict[str, Any]) -> dict[str, Any]:
+        rows = payload.get("data", [])
+        if not isinstance(rows, list):
+            raise TypeError("SCJ surface data is not a list")
+        return {
+            "recordsTotal": int(payload.get("recordsTotal", len(rows)) or 0),
+            "recordsFiltered": int(payload.get("recordsFiltered", len(rows)) or 0),
+            "row_count": len(rows),
+            "sample": rows[0] if rows else None,
+            "sample_keys": sorted(rows[0].keys()) if rows and isinstance(rows[0], dict) else [],
+        }
+
+    return {
+        "decisions": decisions,
+        "bulletins": describe(bulletins),
+        "historical_sentences": describe(historical),
+        "incomplete_cases": describe(incomplete),
+        "incomplete_constitutional_cases": describe(incomplete_constitutional),
     }
 
 
@@ -131,9 +181,8 @@ def main() -> None:
 
             page.on("response", on_response)
             response = page.goto(TARGET, wait_until="networkidle", timeout=120_000)
-            if response is None:
-                raise RuntimeError("SCJ portal navigation produced no response")
-            root.set_attribute("http.response.status_code", response.status)
+            if response is None or response.status != 200:
+                raise RuntimeError("SCJ portal navigation failed")
             page.wait_for_timeout(2_000)
 
             script_src = page.locator('script[src*="JsConsulta.js"]').get_attribute("src")
@@ -141,91 +190,41 @@ def main() -> None:
                 script_response = context.request.get(urljoin(TARGET, script_src), timeout=60_000)
                 (OUT / "JsConsulta.js").write_text(script_response.text(), encoding="utf-8")
 
-            # The site only begins returning records after its own UI has initialized a filtered query.
-            with tracer.start_as_current_span("scj.browser.filtered_query") as filtered_span:
-                page.select_option("#cbTipoDocumento", "1")
-                page.wait_for_timeout(3_000)
-                filtered_span.set_attribute("scj.filter.document_type", "1")
+            page.select_option("#cbTipoDocumento", "1")
+            page.wait_for_timeout(3_000)
 
-            type_counts: dict[str, Any] = {}
-            for document_type, label in DOCUMENT_TYPES.items():
-                with tracer.start_as_current_span("scj.context_request.type_count") as span:
-                    result = request_page(context, document_type=document_type, start=0, length=10)
-                    type_counts[document_type] = {
-                        "label": label,
-                        "recordsTotal": result["recordsTotal"],
-                        "recordsFiltered": result["recordsFiltered"],
-                        "row_count": result["row_count"],
-                        "sample": result["rows"][0] if result["rows"] else None,
-                    }
-                    span.set_attribute("scj.document_type.id", document_type)
-                    span.set_attribute("scj.records.filtered", result["recordsFiltered"])
-                    span.set_attribute("scj.page.row_count", result["row_count"])
+            surfaces = surface_probe(context)
+            (OUT / "surface-probe.json").write_text(
+                json.dumps(surfaces, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            root.set_attribute("scj.decisions.count", surfaces["decisions"]["recordsFiltered"])
+            root.set_attribute("scj.bulletins.count", surfaces["bulletins"]["row_count"])
+            root.set_attribute(
+                "scj.historical.count", surfaces["historical_sentences"]["recordsFiltered"]
+            )
 
             page_size_probes: dict[str, Any] = {}
-            for requested_length in (10, 25, 100, 500, 1000):
-                result = request_page(
-                    context, document_type="1", start=10, length=requested_length
-                )
-                page_size_probes[str(requested_length)] = {
-                    "recordsFiltered": result["recordsFiltered"],
-                    "row_count": result["row_count"],
-                }
-
-            context_probe = {
-                "type_counts": type_counts,
-                "page_size_probes": page_size_probes,
-            }
-            (OUT / "context-request-probe.json").write_text(
-                json.dumps(context_probe, indent=2, ensure_ascii=False), encoding="utf-8"
+            for start in (0, 10, 40, 80, 90, 100):
+                result = request_decisions(context, start=start, length=10)
+                page_size_probes[str(start)] = result
+            (OUT / "pagination-probe.json").write_text(
+                json.dumps(page_size_probes, indent=2, ensure_ascii=False), encoding="utf-8"
             )
-            if type_counts["1"]["recordsFiltered"] <= 0:
-                raise RuntimeError("SCJ BrowserContext inventory unexpectedly returned zero decisions")
 
             selects = page.locator("select").evaluate_all(
-                """els => els.map((el, index) => ({index,name: el.getAttribute('name'),id: el.id,ariaLabel: el.getAttribute('aria-label'),options: Array.from(el.options).map(o => ({value:o.value,text:o.textContent}))}))"""
+                """els => els.map((el, index) => ({index,name: el.getAttribute('name'),id: el.id,options: Array.from(el.options).map(o => ({value:o.value,text:o.textContent}))}))"""
             )
-            anchors = page.locator("a[href]").evaluate_all(
-                "els => els.map(a => ({text: a.textContent, href: a.href}))"
-            )
-            inputs = page.locator("input").evaluate_all(
-                """els => els.map((el, index) => ({index,name:el.getAttribute('name'),id:el.id,type:el.type,placeholder:el.getAttribute('placeholder')}))"""
-            )
-
             (OUT / "page.html").write_text(page.content(), encoding="utf-8")
             page.screenshot(path=str(OUT / "page.png"), full_page=True)
-            (OUT / "network.json").write_text(json.dumps(network, indent=2, ensure_ascii=False), encoding="utf-8")
-            (OUT / "json-responses.json").write_text(json.dumps(json_payloads, indent=2, ensure_ascii=False), encoding="utf-8")
-            (OUT / "selects.json").write_text(json.dumps(selects, indent=2, ensure_ascii=False), encoding="utf-8")
-            (OUT / "inputs.json").write_text(json.dumps(inputs, indent=2, ensure_ascii=False), encoding="utf-8")
-            (OUT / "anchors.json").write_text(json.dumps(anchors, indent=2, ensure_ascii=False), encoding="utf-8")
-
-            candidate_requests = [
-                item
-                for item in network
-                if item["resource_type"] in {"xhr", "fetch"}
-                or "json" in item["content_type"].casefold()
-                or "api" in item["url"].casefold()
-            ]
-            summary = {
-                "target": TARGET,
-                "navigation_status": response.status,
-                "title": page.title(),
-                "network_request_count": len(network),
-                "candidate_data_request_count": len(candidate_requests),
-                "candidate_data_requests": candidate_requests,
-                "select_count": len(selects),
-                "selects": selects,
-                "input_count": len(inputs),
-                "json_response_count": len(json_payloads),
-                "context_request_probe": context_probe,
-            }
-            (OUT / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-            root.set_attribute("scj.network.request_count", len(network))
-            root.set_attribute("scj.network.candidate_data_request_count", len(candidate_requests))
-            root.set_attribute("scj.form.select_count", len(selects))
-            root.set_attribute("scj.json.response_count", len(json_payloads))
-            root.set_attribute("scj.decisions.count", type_counts["1"]["recordsFiltered"])
+            (OUT / "network.json").write_text(
+                json.dumps(network, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            (OUT / "json-responses.json").write_text(
+                json.dumps(json_payloads, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            (OUT / "selects.json").write_text(
+                json.dumps(selects, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
             browser.close()
 
     provider = trace.get_tracer_provider()
