@@ -34,6 +34,8 @@ def main() -> None:
 
     records_by_surface: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for path in row_files:
+        if path.name.endswith("-rejected.jsonl"):
+            continue
         with path.open(encoding="utf-8") as source:
             for line in source:
                 if not line.strip():
@@ -51,6 +53,8 @@ def main() -> None:
     global_pdf_urls: set[str] = set()
     global_keys: set[str] = set()
     host_counts: Counter[str] = Counter()
+    metadata_only_count = 0
+    normalized_url_count = 0
 
     for surface in SURFACES:
         summaries = summaries_by_surface.get(surface, [])
@@ -63,14 +67,15 @@ def main() -> None:
         shard_count = shard_counts.pop()
         if shard_indexes != set(range(shard_count)):
             raise RuntimeError(
-                f"SCJ {surface} missing shards: expected={list(range(shard_count))}, "
-                f"observed={sorted(shard_indexes)}"
+                f"SCJ {surface} missing shards: expected={list(range(shard_count))}, observed={sorted(shard_indexes)}"
             )
 
         records = records_by_surface.get(surface, [])
         unique: dict[str, dict[str, Any]] = {}
         duplicate_observations = 0
         pdf_urls: set[str] = set()
+        surface_metadata_only = 0
+        surface_normalized = 0
         for record in records:
             key = str(record.get("_stable_key") or "")
             if not key:
@@ -79,17 +84,22 @@ def main() -> None:
                 duplicate_observations += 1
             else:
                 unique[key] = record
-            row = record["row"]
-            if surface == "decisions":
-                url = str(row.get("urlBlob") or "").strip()
-            elif surface == "historical":
-                url = str(row.get("rutaDoc") or "").strip()
+            availability = str(record.get("_artifact_availability") or "available")
+            document_url = record.get("_document_url")
+            if availability == "available":
+                if not isinstance(document_url, str) or not document_url.startswith("https://"):
+                    raise ValueError(f"SCJ {surface} available record lacks HTTPS PDF URL")
+                pdf_urls.add(document_url)
+                host_counts[urlparse(document_url).hostname or ""] += 1
+            elif availability == "not_published":
+                if document_url is not None:
+                    raise ValueError(f"SCJ {surface} metadata-only record unexpectedly has document URL")
+                surface_metadata_only += 1
             else:
-                url = str(row.get("urlCuerpo") or "").strip()
-            if not url.startswith("https://"):
-                raise ValueError(f"SCJ {surface} record lacks HTTPS PDF URL")
-            pdf_urls.add(url)
-            host_counts[urlparse(url).hostname or ""] += 1
+                raise ValueError(f"SCJ {surface} unsupported artifact availability: {availability!r}")
+            notes = record.get("_normalization_notes")
+            if isinstance(notes, dict) and notes.get("document_url_normalization"):
+                surface_normalized += 1
 
         if surface in {"decisions", "historical"}:
             expected_totals = {
@@ -98,32 +108,22 @@ def main() -> None:
                 if item.get("expected_total_rows") is not None
             }
             if len(expected_totals) != 1:
-                raise RuntimeError(
-                    f"SCJ {surface} shards disagree on official recordsFiltered"
-                )
+                raise RuntimeError(f"SCJ {surface} shards disagree on official recordsFiltered")
             expected_total = expected_totals.pop()
             if len(unique) != expected_total:
                 raise RuntimeError(
-                    f"SCJ {surface} incomplete: official={expected_total}, "
-                    f"unique={len(unique)}, raw={len(records)}"
+                    f"SCJ {surface} incomplete: official={expected_total}, unique={len(unique)}, raw={len(records)}"
                 )
             enumeration_basis = (
-                "SCJ live server-side DataTables endpoint; every start offset in increments of "
-                "10 was requested; overlapping/oversized responses deduplicated by stable row key; "
-                "unique key cardinality equals constant recordsFiltered"
+                "SCJ live server-side DataTables endpoint; every start offset in increments of 10 was requested; "
+                "overlapping/oversized responses deduplicated by stable row key; unique key cardinality equals constant recordsFiltered"
             )
         else:
-            year_sets = {
-                tuple(int(year) for year in item.get("all_years", [])) for item in summaries
-            }
+            year_sets = {tuple(int(year) for year in item.get("all_years", [])) for item in summaries}
             if len(year_sets) != 1:
                 raise RuntimeError("SCJ bulletin shards disagree on official year selector")
             official_years = set(year_sets.pop())
-            processed_years = {
-                int(year)
-                for item in summaries
-                for year in item.get("processed_years", [])
-            }
+            processed_years = {int(year) for item in summaries for year in item.get("processed_years", [])}
             if processed_years != official_years:
                 raise RuntimeError(
                     "SCJ bulletin enumeration did not cover every official year option: "
@@ -131,8 +131,8 @@ def main() -> None:
                 )
             expected_total = len(unique)
             enumeration_basis = (
-                "SCJ live GetBoletines endpoint queried once for every year exposed by the official "
-                "year selector; all returned bulletin rows deduplicated by stable key"
+                "SCJ live GetBoletines endpoint queried once for every year exposed by the official year selector; "
+                "all returned source records are preserved even when the source has not published a PDF"
             )
 
         for key in unique:
@@ -142,6 +142,8 @@ def main() -> None:
         global_pdf_urls.update(pdf_urls)
         canonical = sorted(unique.values(), key=lambda item: str(item["_stable_key"]))
         combined_records.extend(canonical)
+        metadata_only_count += surface_metadata_only
+        normalized_url_count += surface_normalized
 
         surface_reports[surface] = {
             "official_record_count": expected_total,
@@ -149,6 +151,8 @@ def main() -> None:
             "unique_stable_row_count": len(unique),
             "duplicate_observation_count": duplicate_observations,
             "unique_pdf_url_count": len(pdf_urls),
+            "metadata_only_record_count": surface_metadata_only,
+            "normalized_document_url_count": surface_normalized,
             "shard_count": shard_count,
             "enumeration_basis": enumeration_basis,
         }
@@ -156,23 +160,21 @@ def main() -> None:
     inventory_digest = hashlib.sha256()
     output_path = OUTPUT_DIR / "scj-documents.inventory.jsonl"
     with output_path.open("w", encoding="utf-8") as output:
-        for record in sorted(
-            combined_records,
-            key=lambda item: (str(item["surface"]), str(item["_stable_key"])),
-        ):
+        for record in sorted(combined_records, key=lambda item: (str(item["surface"]), str(item["_stable_key"]))):
             line = json.dumps(record, ensure_ascii=False, sort_keys=True)
             inventory_digest.update(line.encode("utf-8"))
             inventory_digest.update(b"\n")
-            output.write(line)
-            output.write("\n")
+            output.write(line + "\n")
 
     summary = {
         "status": "COMPLETE",
         "source": "supreme_court",
         "document_bearing_surfaces": list(SURFACES),
         "surface_reports": surface_reports,
-        "unique_document_record_count": len(global_keys),
+        "unique_source_record_count": len(global_keys),
         "unique_pdf_url_count": len(global_pdf_urls),
+        "metadata_only_record_count": metadata_only_count,
+        "normalized_document_url_count": normalized_url_count,
         "pdf_host_counts": dict(sorted(host_counts.items())),
         "inventory_sha256": inventory_digest.hexdigest(),
         "excluded_non_document_surfaces": {
