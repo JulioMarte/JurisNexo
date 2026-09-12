@@ -22,6 +22,7 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE corpus.source_artifact_locations "
         "ADD COLUMN source_registry_id uuid REFERENCES corpus.source_registries(id), "
+        "ADD COLUMN source_identifier text, "
         "ADD COLUMN discovered_via text"
     )
     op.execute(
@@ -57,11 +58,22 @@ def upgrade() -> None:
         "ON corpus.source_artifact_locations (source_registry_id) "
         "WHERE source_registry_id IS NOT NULL"
     )
+    op.execute(
+        "CREATE INDEX source_artifact_locations_source_identifier_idx "
+        "ON corpus.source_artifact_locations (source_registry_id, source_identifier) "
+        "WHERE source_identifier IS NOT NULL"
+    )
 
     op.execute(
         """
         COMMENT ON COLUMN corpus.source_artifact_locations.source_registry_id IS
         'Source registry that exposed this locator. Location-level source identity allows identical bytes to be observed by multiple official registries.'
+        """
+    )
+    op.execute(
+        """
+        COMMENT ON COLUMN corpus.source_artifact_locations.source_identifier IS
+        'Identifier exposed by the source for this document, such as a TC sentence number or SCJ source-specific id.'
         """
     )
     op.execute(
@@ -80,6 +92,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP INDEX IF EXISTS corpus.source_artifact_locations_source_identifier_idx"
+    )
     op.execute("DROP INDEX IF EXISTS corpus.source_artifact_locations_registry_idx")
     op.execute(
         "DROP INDEX IF EXISTS corpus.source_artifact_locations_locator_history_idx"
@@ -113,5 +128,6 @@ def downgrade() -> None:
     op.execute(
         "ALTER TABLE corpus.source_artifact_locations "
         "DROP COLUMN discovered_via, "
+        "DROP COLUMN source_identifier, "
         "DROP COLUMN source_registry_id"
     )
