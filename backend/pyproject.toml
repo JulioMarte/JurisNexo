@@ -7,6 +7,7 @@ dependencies = [
     "alembic>=1.16,<2",
     "fastapi>=0.116,<1",
     "openai-agents>=0.22.2,<0.23",
+    "opentelemetry-api>=1.44,<2",
     "psycopg[binary]>=3.2,<4",
     "pydantic-settings>=2.10,<3",
     "sqlalchemy[asyncio]>=2.0,<2.1",
