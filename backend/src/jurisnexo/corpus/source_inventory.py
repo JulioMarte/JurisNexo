@@ -115,7 +115,9 @@ def scj_source_observation_from_record(
         source_identifier = f"bulletin:{header_id}:{body_id}"
         collection = "bulletins"
         document_kind = "official_bulletin"
-        document_url, availability, notes = normalize_scj_bulletin_pdf_url(row.get("urlCuerpo"))
+        document_url, availability, notes = normalize_scj_bulletin_pdf_url(
+            row.get("urlCuerpo")
+        )
     else:
         raise ValueError(f"unsupported SCJ inventory surface: {surface!r}")
     return SourceDocumentObservation(
@@ -151,7 +153,12 @@ class PostgresSourceDocumentInventory:
                     updated_at = now()
                 RETURNING id
                 """,
-                (source, definition["name"], definition["institution"], definition["base_locator"]),
+                (
+                    source,
+                    definition["name"],
+                    definition["institution"],
+                    definition["base_locator"],
+                ),
             )
             row = cursor.fetchone()
         if row is None:
@@ -161,80 +168,97 @@ class PostgresSourceDocumentInventory:
     def observe(self, observation: SourceDocumentObservation) -> str:
         registry_id = self._ensure_registry(observation.source)
         payload_sha256 = observation.payload_sha256
-        with self.connection.transaction():
-            with self.connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO corpus.source_documents (
-                        source_registry_id, source_identifier, source_collection,
-                        document_kind, discovery_url, current_document_url,
-                        artifact_availability, latest_source_metadata, latest_payload_sha256
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
-                    ON CONFLICT (source_registry_id, source_collection, source_identifier)
-                    DO UPDATE SET
-                        document_kind = EXCLUDED.document_kind,
-                        discovery_url = EXCLUDED.discovery_url,
-                        current_document_url = EXCLUDED.current_document_url,
-                        artifact_availability = EXCLUDED.artifact_availability,
-                        latest_source_metadata = EXCLUDED.latest_source_metadata,
-                        latest_payload_sha256 = EXCLUDED.latest_payload_sha256,
-                        last_seen_at = clock_timestamp(),
-                        updated_at = now()
-                    RETURNING id
-                    """,
-                    (
-                        registry_id,
-                        observation.source_identifier,
-                        observation.source_collection,
-                        observation.document_kind,
-                        observation.discovery_url,
-                        observation.document_url,
-                        observation.artifact_availability,
-                        json.dumps(observation.source_payload, ensure_ascii=False, sort_keys=True),
-                        payload_sha256,
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO corpus.source_documents (
+                    source_registry_id, source_identifier, source_collection,
+                    document_kind, discovery_url, current_document_url,
+                    artifact_availability, latest_source_metadata, latest_payload_sha256
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                ON CONFLICT (source_registry_id, source_collection, source_identifier)
+                DO UPDATE SET
+                    document_kind = EXCLUDED.document_kind,
+                    discovery_url = EXCLUDED.discovery_url,
+                    current_document_url = EXCLUDED.current_document_url,
+                    artifact_availability = EXCLUDED.artifact_availability,
+                    latest_source_metadata = EXCLUDED.latest_source_metadata,
+                    latest_payload_sha256 = EXCLUDED.latest_payload_sha256,
+                    last_seen_at = clock_timestamp(),
+                    updated_at = now()
+                RETURNING id
+                """,
+                (
+                    registry_id,
+                    observation.source_identifier,
+                    observation.source_collection,
+                    observation.document_kind,
+                    observation.discovery_url,
+                    observation.document_url,
+                    observation.artifact_availability,
+                    json.dumps(
+                        observation.source_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
                     ),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    raise RuntimeError("failed to persist source document")
-                source_document_id = str(row[0])
-                cursor.execute(
-                    """
-                    INSERT INTO corpus.source_document_observations (
-                        source_document_id, discovery_url, document_url,
-                        artifact_availability, source_payload, payload_sha256,
-                        normalization_notes
-                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (
-                        source_document_id,
-                        observation.discovery_url,
-                        observation.document_url,
-                        observation.artifact_availability,
-                        json.dumps(observation.source_payload, ensure_ascii=False, sort_keys=True),
-                        payload_sha256,
-                        json.dumps(observation.normalization_notes, ensure_ascii=False, sort_keys=True),
+                    payload_sha256,
+                ),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("failed to persist source document")
+            source_document_id = str(row[0])
+            cursor.execute(
+                """
+                INSERT INTO corpus.source_document_observations (
+                    source_document_id, discovery_url, document_url,
+                    artifact_availability, source_payload, payload_sha256,
+                    normalization_notes
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    source_document_id,
+                    observation.discovery_url,
+                    observation.document_url,
+                    observation.artifact_availability,
+                    json.dumps(
+                        observation.source_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
                     ),
-                )
+                    payload_sha256,
+                    json.dumps(
+                        observation.normalization_notes,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                ),
+            )
         return source_document_id
 
     def link_artifact_sha256(
-        self, *, source_document_id: str, sha256: str, relationship_type: str = "primary"
+        self,
+        *,
+        source_document_id: str,
+        sha256: str,
+        relationship_type: str = "primary",
     ) -> None:
-        with self.connection.transaction():
-            with self.connection.cursor() as cursor:
-                cursor.execute("SELECT id FROM corpus.source_artifacts WHERE sha256 = %s", (sha256,))
-                row = cursor.fetchone()
-                if row is None:
-                    raise LookupError(f"artifact not registered for sha256={sha256}")
-                cursor.execute(
-                    """
-                    INSERT INTO corpus.source_document_artifacts (
-                        source_document_id, artifact_id, relationship_type
-                    ) VALUES (%s, %s, %s)
-                    ON CONFLICT (source_document_id, artifact_id, relationship_type)
-                    DO UPDATE SET last_seen_at = clock_timestamp()
-                    """,
-                    (source_document_id, str(row[0]), relationship_type),
-                )
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM corpus.source_artifacts WHERE sha256 = %s",
+                (sha256,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError(f"artifact not registered for sha256={sha256}")
+            cursor.execute(
+                """
+                INSERT INTO corpus.source_document_artifacts (
+                    source_document_id, artifact_id, relationship_type
+                ) VALUES (%s, %s, %s)
+                ON CONFLICT (source_document_id, artifact_id, relationship_type)
+                DO UPDATE SET last_seen_at = clock_timestamp()
+                """,
+                (source_document_id, str(row[0]), relationship_type),
+            )
