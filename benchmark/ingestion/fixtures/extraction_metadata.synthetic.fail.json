@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "benchmark": "extraction_metadata",
+  "metadata": [
+    {"field": "court_chamber", "value": "Corte Suprema", "evidence_valid": true},
+    {"field": "decision_number", "value": "99-2099", "evidence_valid": true},
+    {"field": "party", "value": "Juan Pérez", "evidence_valid": true},
+    {"field": "party", "value": "ACME", "evidence_valid": false}
+  ]
+}

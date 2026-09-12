@@ -1,0 +1,56 @@
+name: Extraction metadata benchmark
+
+on:
+  pull_request:
+    paths:
+      - "benchmark/ingestion/evaluate_extraction_metadata.py"
+      - "benchmark/ingestion/gold/extraction_metadata.synthetic.v1.json"
+      - "benchmark/ingestion/fixtures/extraction_metadata.synthetic.*.json"
+      - ".github/workflows/extraction-metadata-benchmark.yml"
+  push:
+    branches: [main]
+    paths:
+      - "benchmark/ingestion/evaluate_extraction_metadata.py"
+      - "benchmark/ingestion/gold/extraction_metadata.synthetic.v1.json"
+      - "benchmark/ingestion/fixtures/extraction_metadata.synthetic.*.json"
+      - ".github/workflows/extraction-metadata-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scorer-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Passing fixture
+        run: |
+          python benchmark/ingestion/evaluate_extraction_metadata.py \
+            --result benchmark/ingestion/fixtures/extraction_metadata.synthetic.pass.json \
+            --gold benchmark/ingestion/gold/extraction_metadata.synthetic.v1.json \
+            --output /tmp/extraction-metadata-pass.json
+          python - <<'PY'
+          import json
+          p = json.load(open('/tmp/extraction-metadata-pass.json'))
+          assert p['status'] == 'PASS'
+          assert p['evidence_class'] == 'controlled_fixture_measurement'
+          assert p['metrics']['precision'] == 1.0
+          assert p['metrics']['recall'] == 1.0
+          PY
+      - name: Failing fixture
+        run: |
+          python benchmark/ingestion/evaluate_extraction_metadata.py \
+            --result benchmark/ingestion/fixtures/extraction_metadata.synthetic.fail.json \
+            --gold benchmark/ingestion/gold/extraction_metadata.synthetic.v1.json \
+            --output /tmp/extraction-metadata-fail.json
+          python - <<'PY'
+          import json
+          p = json.load(open('/tmp/extraction-metadata-fail.json'))
+          assert p['status'] == 'FAIL'
+          assert p['metrics']['false_positive'] == 1
+          assert p['metrics']['false_negative'] == 2
+          assert p['metrics']['precision'] < 1.0
+          assert p['metrics']['recall'] < 1.0
+          PY
