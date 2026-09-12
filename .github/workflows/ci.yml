@@ -72,6 +72,24 @@ jobs:
                 --output /tmp/historical-agent-score-delegated.json
               python -c "import json; p=json.load(open(\"/tmp/historical-agent-score-delegated.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"PASS\"; assert p[\"semantic_metrics\"][\"confirmed_gold_reference_count\"] == 3; assert p[\"metrics\"][\"delegated_printed_page_attempts\"] == [192,193,194]; assert p[\"metrics\"][\"verified_printed_pages\"] == [183,189,193]"
             '
+      - name: Targeted boundary discrepancy scorer smoke test
+        run: |
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD/benchmark:/benchmark:ro" \
+            test sh -ec '
+              python /benchmark/ingestion/evaluate_targeted_boundary_discrepancy.py \
+                --result /benchmark/ingestion/discrepancy/result_353.pass.json \
+                --target /benchmark/ingestion/discrepancy/target_353.v1.json \
+                --gold /benchmark/ingestion/discrepancy/gold_353.v1.json \
+                --output /tmp/discrepancy-pass.json
+              python -c "import json; p=json.load(open(\"/tmp/discrepancy-pass.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"metrics\"][\"claimed_destination_read\"] is True; assert p[\"metrics\"][\"mismatch_recognized\"] is True; assert p[\"metrics\"][\"resolution_matches_gold\"] is True; assert p[\"metrics\"][\"trace_supported\"] is True"
+              python /benchmark/ingestion/evaluate_targeted_boundary_discrepancy.py \
+                --result /benchmark/ingestion/discrepancy/result_353.fail_direct_acceptance.json \
+                --target /benchmark/ingestion/discrepancy/target_353.v1.json \
+                --gold /benchmark/ingestion/discrepancy/gold_353.v1.json \
+                --output /tmp/discrepancy-fail.json
+              python -c "import json; p=json.load(open(\"/tmp/discrepancy-fail.json\")); assert p[\"status\"] == \"FAIL\"; assert p[\"metrics\"][\"claimed_destination_read\"] is True; assert p[\"metrics\"][\"neighbors_investigated\"] is False; assert p[\"metrics\"][\"mismatch_recognized\"] is False; assert p[\"metrics\"][\"resolution_matches_gold\"] is False"
+            '
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
 
