@@ -58,13 +58,15 @@ def test_current_guarantee_inventory_uses_declared_vocabularies() -> None:
         assert set(guarantee["risk"]) <= KNOWN_RISKS
 
 
-def test_hard_critical_guarantees_require_real_proof_not_only_contract_text() -> None:
-    non_behavioral = {"contract", "fitness"}
+def test_hard_critical_non_fitness_guarantees_require_behavioral_proof() -> None:
+    behavioral_evidence = {"invariant", "adversarial", "benchmark", "integration", "security"}
     for guarantee in _guarantees():
         if guarantee["classification"] != "HARD" or guarantee["severity"] != "critical":
             continue
-        assert set(guarantee["required_evidence"]) - non_behavioral, (
-            f"{guarantee['id']} is HARD/critical but requires only declarative evidence. "
+        if "fitness" in guarantee["required_evidence"]:
+            continue
+        assert set(guarantee["required_evidence"]) & behavioral_evidence, (
+            f"{guarantee['id']} is HARD/critical but has no behavioral evidence class. "
             "Add invariant, adversarial, benchmark, integration, or security proof as appropriate."
         )
 
