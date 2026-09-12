@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -40,17 +41,19 @@ def main() -> None:
         root.set_attribute("url.full", TARGET)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 1440, "height": 1200})
+            context = browser.new_context(viewport={"width": 1440, "height": 1200})
+            page = context.new_page()
 
             def on_response(response: Response) -> None:
                 request = response.request
                 content_type = response.headers.get("content-type", "")
-                item = {
+                item: dict[str, Any] = {
                     "method": request.method,
                     "resource_type": request.resource_type,
                     "url": response.url,
                     "status": response.status,
                     "content_type": content_type,
+                    "post_data": request.post_data,
                 }
                 network.append(item)
                 if "json" in content_type.casefold():
@@ -58,7 +61,13 @@ def main() -> None:
                         body = response.body()
                         if len(body) <= 1_000_000:
                             decoded = json.loads(body.decode("utf-8"))
-                            json_payloads.append({"url": response.url, "body": decoded})
+                            json_payloads.append(
+                                {
+                                    "url": response.url,
+                                    "request_post_data": request.post_data,
+                                    "body": decoded,
+                                }
+                            )
                     except Exception as exc:  # diagnostic probe must retain partial evidence
                         item["json_capture_error"] = repr(exc)
 
@@ -67,7 +76,20 @@ def main() -> None:
             if response is None:
                 raise RuntimeError("SCJ portal navigation produced no response")
             root.set_attribute("http.response.status_code", response.status)
-            page.wait_for_timeout(5_000)
+            page.wait_for_timeout(2_000)
+
+            script_src = page.locator('script[src*="JsConsulta.js"]').get_attribute("src")
+            if script_src:
+                script_response = context.request.get(urljoin(TARGET, script_src), timeout=60_000)
+                (OUT / "JsConsulta.js").write_text(script_response.text(), encoding="utf-8")
+
+            with tracer.start_as_current_span("scj.browser.filtered_query") as filtered_span:
+                page.select_option("#cbTipoDocumento", "1")
+                page.wait_for_timeout(750)
+                page.select_option("#cbAno", "2026")
+                page.wait_for_timeout(4_000)
+                filtered_span.set_attribute("scj.filter.document_type", "1")
+                filtered_span.set_attribute("scj.filter.year", 2026)
 
             selects = page.locator("select").evaluate_all(
                 """els => els.map((el, index) => ({
