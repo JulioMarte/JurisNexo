@@ -13,7 +13,7 @@ CONCRETE_PROVIDER_PREFIXES = (
     "google.generativeai",
     "google.genai",
 )
-AGENT_ROLE_DIRECTORIES = {"agents", "agent_runtime", "research"}
+AGENT_ROLE_DIRECTORIES = {"agents", "agent_runtime"}
 AGENT_ROLE_SUFFIXES = ("_agent", "_auditor")
 
 
