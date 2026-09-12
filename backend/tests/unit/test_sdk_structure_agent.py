@@ -7,9 +7,9 @@ from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
-    _bounded_output,
-    _range_text,
+    bound_tool_output,
     build_structure_agent,
+    render_printed_page_range,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
@@ -45,7 +45,7 @@ def test_structure_agent_uses_structured_output_and_document_tools() -> None:
 def test_printed_range_rendering_preserves_page_identity_and_provenance() -> None:
     page_range = _environment().get_printed_pages(353, 354)
 
-    rendered = _range_text(page_range)
+    rendered = render_printed_page_range(page_range)
 
     assert "view_page=1 | printed_page=353" in rendered
     assert "physical_pages=173,174; side=right" in rendered
@@ -57,7 +57,7 @@ def test_tool_output_budget_rejects_oversized_evidence() -> None:
     context = StructureAgentContext(environment=_environment(), max_tool_output_chars=1_000)
 
     with pytest.raises(DocumentEnvironmentError, match="narrow the range or search first"):
-        _bounded_output(context, "x" * 1_001)
+        bound_tool_output(context, "x" * 1_001)
 
 
 def test_structure_agent_context_rejects_invalid_budget() -> None:
