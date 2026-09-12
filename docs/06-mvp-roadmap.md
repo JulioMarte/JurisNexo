@@ -6,6 +6,8 @@ The roadmap should optimize for evidence of product value, not architectural com
 
 The MVP should reach a point where real lawyers can submit real research questions, receive a verifiable report, and tell us whether it materially reduced their work.
 
+The selected agent runtime is infrastructure. Roadmap milestones are defined by domain capabilities and measurable quality, not by framework adoption alone.
+
 ## 2. Phase 0 — repository and contracts
 
 Deliverables:
@@ -14,6 +16,9 @@ Deliverables:
 - architecture contract;
 - corpus/data model;
 - research-agent contract;
+- agent-runtime ADR and migration plan;
+- ingestion agent/auditor pipeline contract;
+- Corpus API contract;
 - evaluation plan;
 - security/privacy baseline;
 - explicit open decisions;
@@ -39,35 +44,58 @@ Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
 
 This is a compilation and must not be modeled as one judicial case merely because it is one PDF.
 
-The primary Phase 1 risk is therefore not bulk downloading. It is correctly transforming a compilation into individually identifiable, page-traceable decisions.
+The primary Phase 1 risk is therefore not bulk downloading. It is correctly transforming a compilation into individually identifiable, page-traceable decisions despite messy OCR/layout and uncertain document boundaries.
+
+The default Phase 1 pipeline is:
+
+```text
+source artifact
+    -> source preservation / Document Workspace
+    -> Structure Agent
+    -> Structure Auditor
+    -> Extraction Agent
+    -> Extraction Auditor
+    -> Corpus API commit
+```
+
+OpenAI Agents SDK is the default runtime for the agent stages. JurisNexo application/worker code owns the mandatory stage order, state transitions, provenance, evidence, and commit gates.
 
 Deliverables:
 
 - artifact registration from existing Storage;
 - cryptographic content hashing;
 - immutable artifact provenance;
+- Document Workspace with page/text/image capabilities;
 - text extraction with page boundaries;
 - extraction-quality assessment;
-- OCR fallback where required;
-- decision-boundary detection;
+- OCR/image fallback where required;
+- Structure Agent baseline;
+- Structure Auditor baseline;
+- decision-boundary detection with typed evidence;
+- Extraction Agent for bounded full-decision reconstruction;
+- Extraction Auditor for source/evidence verification;
 - normalized/canonical case identity;
 - artifact-page-to-case linkage;
 - baseline citation extraction;
+- Corpus API approved-commit path;
 - baseline quality checks;
 - ingestion idempotency;
-- exact-content duplicate detection.
+- exact-content duplicate detection;
+- layered structure/extraction/audit benchmarks.
 
-Manual validation must inspect a representative sample of segmented decisions rather than trusting parser output automatically.
+Manual validation must inspect a representative sample of segmented and extracted decisions rather than trusting parser or agent output automatically.
 
 Exit condition:
 
-The selected compilation can be re-ingested without duplicate logical records, individual decisions are separated with acceptable accuracy, every normalized passage can be traced to an original artifact page, uncertain boundaries/identities are represented explicitly, and duplicate source artifacts do not become duplicate canonical cases.
+The selected compilation can be re-ingested without duplicate logical records; individual decisions are separated with acceptable benchmarked accuracy; extracted content is traceable to original source pages; mandatory structure/extraction audits cannot be bypassed; uncertain boundaries/identities remain explicit; and duplicate source artifacts do not become duplicate canonical cases.
 
 Volume is not the Phase 1 exit condition.
 
 ## 4. Phase 2 — searchable pilot corpus
 
-Goal: establish a strong, measurable retrieval baseline before adding complex agents.
+Goal: establish a strong, measurable retrieval baseline over the verified corpus before building a complex research-agent workflow.
+
+Agent-assisted ingestion is already present in Phase 1. “Before complex agents” here means before broad multi-agent legal research orchestration, not before any LLM is used.
 
 Initial corpus should remain deliberately constrained. After the early-2025 compilation is validated, expand first to recent 2024 and 2023 SCJ compilations rather than immediately processing the entire historical archive.
 
@@ -91,7 +119,7 @@ Deliverables:
 - semantic retrieval;
 - RRF fusion baseline;
 - reranker experiment;
-- stable Search API;
+- stable Search/Corpus API;
 - corpus browser for internal testing;
 - versioned retrieval profiles;
 - initial 10-20 question manually reviewed legal benchmark.
@@ -130,9 +158,10 @@ Deliverables:
 - `get_citations`;
 - `get_citing_cases`;
 - within-case search;
-- bounded case-analysis subagent;
+- bounded Case Analyst agent;
 - structured evidence records;
-- exact page provenance.
+- exact page provenance;
+- role-aware case structure where benchmarked useful.
 
 Exit condition:
 
@@ -142,6 +171,8 @@ Given a known case, JurisNexo can extract a relevant holding/reasoning segment a
 
 Goal: demonstrate iterative research rather than one-shot RAG.
 
+OpenAI Agents SDK is the default runtime. The root agent consumes stable Corpus API tools; it does not receive direct production database access.
+
 Root agent tools:
 
 - `search_cases`;
@@ -149,15 +180,17 @@ Root agent tools:
 - `search_within_case`;
 - `get_citations`;
 - `get_citing_cases`;
-- `spawn_case_analysis`;
+- bounded Case Analyst as tool/specialist;
 - deterministic aggregation tools;
 - `verify_claim`.
+
+Dynamic handoffs/agents-as-tools may be used for bounded specialists such as citation tracing, later-treatment review, or adverse-authority research. Mandatory research completion/verification requirements remain application/domain contracts rather than optional handoff behavior.
 
 A general-purpose Python sandbox is not required for the first agent version if bounded deterministic tools cover the needed operations.
 
 Required behavior:
 
-- decompose question;
+- decompose question, including KELLER/LegalSearchLM-style multi-query strategies when benchmarked useful;
 - run several retrieval strategies;
 - review candidate cases;
 - perform adverse search;
@@ -176,7 +209,7 @@ Goal: make outputs professionally inspectable.
 
 Deliverables:
 
-- claim/evidence verifier;
+- independent claim/evidence verifier;
 - report generator using only accepted evidence;
 - supporting authority section;
 - adverse authority section;
@@ -291,13 +324,16 @@ Consider:
 - dedicated BM25/search engine;
 - domain fine-tuning.
 
+### Query decomposition bottleneck
+
+Consider deeper KELLER/LegalSearchLM-style decomposition only if simpler multiple-query prompting fails to recover critical/adverse authorities reliably.
+
 ### Legal-comparison bottleneck
 
 Consider:
 
 - Legal Elements;
-- factor/dimension modeling;
-- KELLER/LegalSearchLM-inspired query representation;
+- HYPO/CATO-style factor/dimension modeling;
 - CaseGNN-like structural representations.
 
 ### Precedent-network bottleneck
@@ -305,7 +341,7 @@ Consider:
 Consider:
 
 - proposition-level graph;
-- CaseLink-like graph learning;
+- CaseLink-like graph learning/ranking;
 - graph database if relational traversal becomes painful;
 - temporal treatment model.
 
@@ -313,7 +349,7 @@ Consider:
 
 Consider:
 
-- GraphRAG/DRIFT-like global analysis;
+- GraphRAG/LegalGraphRAG/DRIFT-like global analysis;
 - hierarchical summaries;
 - dedicated doctrine/community indexes.
 
@@ -321,13 +357,18 @@ Consider:
 
 Consider:
 
+- RAPTOR-style hierarchy for within-case navigation;
 - DocETL-style pipelines;
 - LOTUS-style semantic operators;
 - improved hierarchical document navigation.
 
 ### Workflow-durability bottleneck
 
-If queue-based execution becomes difficult to reason about because of retries, branching, cancellation, fan-out, or long-lived research jobs, evaluate a durable workflow engine such as Temporal or Hatchet against the existing worker abstraction.
+If queue-based execution becomes difficult to reason about because of retries, branching, cancellation, fan-out, or long-lived research jobs, evaluate a durable workflow engine such as Temporal or Hatchet against the existing worker abstraction. OpenAI Agents SDK does not replace this durable workflow concern.
+
+### Agent-runtime bottleneck
+
+The selected runtime remains replaceable. Consider alternatives only when benchmarks/operations show a concrete limitation in quality, provider compatibility, tracing, portability, or maintainability.
 
 ## 13. Explicit non-goals before validation
 
@@ -342,18 +383,22 @@ Do not prioritize:
 - custom model training without labels;
 - elaborate graph infrastructure without proven need;
 - mobile apps;
-- international expansion.
+- international expansion;
+- building another general-purpose agent harness inside JurisNexo.
 
 ## 14. First build slice
 
-The smallest credible vertical slice is now concrete:
+The smallest credible vertical slice is now:
 
 ```text
 SCJ Jan-Apr 2025 compilation
         -> immutable artifact + checksum
-        -> page-preserving extraction
-        -> individual decision segmentation
-        -> canonical case records
+        -> Document Workspace
+        -> Structure Agent
+        -> Structure Auditor
+        -> bounded full-decision Extraction Agent
+        -> Extraction Auditor
+        -> canonical case commit through Corpus API
         -> searchable passages
         -> lexical + semantic retrieval baseline
         -> one benchmark legal question
@@ -364,11 +409,13 @@ SCJ Jan-Apr 2025 compilation
         -> generate one auditable report
 ```
 
+The February 1980 historical bulletin remains an important adversarial/regression fixture for messy structure and discrepancy handling, but it must not become the architecture or the only ingestion benchmark.
+
 This slice should be completed before aggressively expanding corpus volume or product features.
 
 ## 15. Definition of MVP done
 
-The MVP is not done when the UI looks polished, when 34 PDFs have been embedded, or when a chatbot can quote a chunk.
+The MVP is not done when the UI looks polished, when many PDFs have been embedded, when an agent framework is integrated, or when a chatbot can quote a chunk.
 
 It is done when:
 
@@ -376,9 +423,10 @@ It is done when:
 - a real question can complete end to end;
 - primary sources are preserved;
 - compilations become correctly segmented canonical decisions;
+- extracted decisions survive independent audit;
 - supporting and adverse research occur;
 - important report claims are verified;
-- sources are auditable by page;
+- sources are auditable by page/evidence ID;
 - quotas/costs are controlled;
 - private data is tenant isolated;
 - benchmark and product metrics are captured;
@@ -397,4 +445,4 @@ one artifact correct
     -> then expand coverage
 ```
 
-If one compilation cannot be transformed reliably into canonical, page-traceable legal evidence, processing thirty-four compilations only creates a larger unreliable corpus.
+If one compilation cannot be transformed reliably into canonical, page-traceable legal evidence, processing many compilations only creates a larger unreliable corpus.
