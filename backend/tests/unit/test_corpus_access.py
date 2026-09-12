@@ -20,7 +20,7 @@ ORG_A = UUID("00000000-0000-0000-0000-00000000000a")
 ORG_B = UUID("00000000-0000-0000-0000-00000000000b")
 SUBJECT = UUID("00000000-0000-0000-0000-000000000001")
 ARTIFACT = UUID("00000000-0000-0000-0000-000000000010")
-PAGE = UUID("00000000-0000-0000-0000-000000000020")
+ARTIFACT_PAGE = UUID("00000000-0000-0000-0000-000000000020")
 
 
 def _principal(*, public_commit: bool = False) -> CorpusPrincipal:
@@ -38,7 +38,7 @@ def _request(
         scope=scope,
         extraction_audit_state=audit_state,
         source_artifact_id=ARTIFACT,
-        approved_case_page_ids=(PAGE,),
+        approved_artifact_page_ids=(ARTIFACT_PAGE,),
     )
 
 
@@ -109,11 +109,11 @@ def test_canonical_commit_allows_verified_audit_for_member(
     authorize_canonical_commit(principal=_principal(), request=request)
 
 
-def test_canonical_commit_requires_at_least_one_approved_page() -> None:
+def test_canonical_commit_requires_precommit_artifact_page_evidence() -> None:
     with pytest.raises(ValidationError):
         CanonicalCommitAuthorization(
             scope=CorpusScope(visibility="private", organization_id=ORG_A),
             extraction_audit_state="VERIFIED",
             source_artifact_id=ARTIFACT,
-            approved_case_page_ids=(),
+            approved_artifact_page_ids=(),
         )
