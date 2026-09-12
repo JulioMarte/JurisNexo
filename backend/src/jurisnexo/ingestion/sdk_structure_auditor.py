@@ -147,8 +147,8 @@ Approval must say what was actually checked. Unknown is preferable to unsupporte
 """
 
 
-def build_structure_auditor(*, model: str = "gpt-5.6-luna") -> Agent[StructureAgentContext]:
-    """Build an independent Structure Auditor over the same read-only document capabilities."""
+def build_structure_auditor(*, model: str) -> Agent[StructureAgentContext]:
+    """Build an independent auditor with an explicitly selected provider model."""
 
     return Agent[StructureAgentContext](
         name="JurisNexo Structure Auditor",
@@ -199,7 +199,7 @@ async def run_structure_auditor(
     environment: DocumentEnvironment,
     hypothesis: DocumentStructureHypothesis,
     artifact_label: str,
-    model: str = "gpt-5.6-luna",
+    model: str,
     max_turns: int = 12,
     max_tool_output_chars: int = 60_000,
     search_max_hits: int = 20,
