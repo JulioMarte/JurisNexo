@@ -1,0 +1,50 @@
+name: SCJ bulletin contract probe
+
+on:
+  push:
+    branches:
+      - ops/scj-bulletin-contract-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Bulletin shard ${{ matrix.shard }}/4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      PYTHONUNBUFFERED: '1'
+      JURISNEXO_OTEL_CONSOLE: 'false'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: >-
+          python -m pip install
+          'playwright==1.62.0'
+          'opentelemetry-api==1.44.0'
+          'opentelemetry-sdk==1.44.0'
+      - run: python -m playwright install --with-deps chromium
+      - name: Probe bulletin payloads
+        env:
+          SCJ_SURFACE: bulletins
+          SCJ_SHARD_INDEX: ${{ matrix.shard }}
+          SCJ_SHARD_COUNT: '4'
+          SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-bulletin-probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python backend/scripts/scj_inventory_shard.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-contract-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/scj-bulletin-probe/**
