@@ -16,10 +16,18 @@ from jurisnexo.acquisition.official_corpus import (
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
 
 
+def _empty_calls() -> list[str]:
+    return []
+
+
+def _empty_objects() -> dict[str, bytes]:
+    return {}
+
+
 @dataclass(slots=True)
 class FakeFetcher:
     payloads: dict[str, bytes]
-    calls: list[str] = field(default_factory=list)
+    calls: list[str] = field(default_factory=_empty_calls)
 
     def get_bytes(self, url: str) -> bytes:
         self.calls.append(url)
@@ -28,7 +36,7 @@ class FakeFetcher:
 
 @dataclass(slots=True)
 class MemoryObjectStore:
-    objects: dict[str, bytes] = field(default_factory=dict)
+    objects: dict[str, bytes] = field(default_factory=_empty_objects)
     puts: int = 0
 
     def exists(self, key: str) -> bool:
