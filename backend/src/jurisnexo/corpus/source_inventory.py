@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from psycopg import Connection
 
@@ -11,6 +11,11 @@ from jurisnexo.corpus.artifact_catalog import SOURCE_REGISTRIES
 
 ArtifactAvailability = Literal["available", "not_published", "unavailable", "unknown"]
 SourceCode = Literal["supreme_court", "constitutional_court"]
+JsonObject = dict[str, Any]
+
+
+def _empty_json_object() -> JsonObject:
+    return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,8 +27,8 @@ class SourceDocumentObservation:
     discovery_url: str
     document_url: str | None
     artifact_availability: ArtifactAvailability
-    source_payload: dict[str, Any]
-    normalization_notes: dict[str, Any] = field(default_factory=dict)
+    source_payload: JsonObject
+    normalization_notes: JsonObject = field(default_factory=_empty_json_object)
 
     def __post_init__(self) -> None:
         if not self.source_identifier.strip():
@@ -52,7 +57,7 @@ class SourceDocumentObservation:
 
 def normalize_scj_bulletin_pdf_url(
     raw_value: object,
-) -> tuple[str | None, ArtifactAvailability, dict[str, Any]]:
+) -> tuple[str | None, ArtifactAvailability, JsonObject]:
     """Normalize only SCJ bulletin URL defects proven by live source evidence."""
     if raw_value is None:
         return None, "not_published", {"document_url_state": "source_null"}
@@ -73,13 +78,14 @@ def normalize_scj_bulletin_pdf_url(
 
 
 def scj_source_observation_from_record(
-    *, record: dict[str, Any], discovery_url: str
+    *, record: JsonObject, discovery_url: str
 ) -> SourceDocumentObservation:
-    row = record.get("row")
-    if not isinstance(row, dict):
+    row_value = record.get("row")
+    if not isinstance(row_value, dict):
         raise TypeError("SCJ inventory record is missing its row object")
+    row = cast(JsonObject, row_value)
     surface = str(record.get("surface") or "").strip()
-    notes: dict[str, Any] = {}
+    notes: JsonObject = {}
     if surface == "decisions":
         expediente_id = str(row.get("idExpediente") or "").strip()
         guid_blob = str(row.get("guidBlob") or "").strip()
@@ -155,9 +161,9 @@ class PostgresSourceDocumentInventory:
                 """,
                 (
                     source,
-                    definition["name"],
-                    definition["institution"],
-                    definition["base_locator"],
+                    definition.name,
+                    definition.institution,
+                    definition.base_locator,
                 ),
             )
             row = cursor.fetchone()
