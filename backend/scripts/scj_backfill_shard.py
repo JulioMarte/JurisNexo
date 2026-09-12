@@ -192,6 +192,7 @@ def main() -> None:
     skipped_verified = 0
     repaired_storage = 0
     bytes_acquired = 0
+    failures: list[dict[str, str]] = []
     collection_counts: dict[str, int] = {}
     with tracer.start_as_current_span("scj.backfill.shard") as root:
         root.set_attribute("scj.shard.index", shard_index)
@@ -210,39 +211,53 @@ def main() -> None:
             }
             for index, candidate in enumerate(candidates):
                 collection_counts[candidate.collection] = collection_counts.get(candidate.collection, 0) + 1
-                with tracer.start_as_current_span("scj.backfill.item") as span:
-                    span.set_attribute("scj.shard.item_index", index)
-                    span.set_attribute("source_identifier", candidate.source_identifier)
-                    span.set_attribute("source.collection", candidate.collection)
-                    existing_digest = current.get(
-                        (candidate.source_identifier, candidate.document_url)
-                    )
-                    if existing_digest is not None:
-                        key = object_key_for(
-                            source="supreme_court",
-                            collection=candidate.collection,
-                            sha256=existing_digest,
+                try:
+                    with tracer.start_as_current_span("scj.backfill.item") as span:
+                        span.set_attribute("scj.shard.item_index", index)
+                        span.set_attribute("source_identifier", candidate.source_identifier)
+                        span.set_attribute("source.collection", candidate.collection)
+                        existing_digest = current.get(
+                            (candidate.source_identifier, candidate.document_url)
                         )
-                        if object_store.exists(key):
-                            skipped_verified += 1
-                            span.set_attribute("artifact.already_verified", True)
-                            continue
-                        repaired_storage += 1
-                        span.set_attribute("artifact.storage_repair", True)
+                        if existing_digest is not None:
+                            key = object_key_for(
+                                source="supreme_court",
+                                collection=candidate.collection,
+                                sha256=existing_digest,
+                            )
+                            if object_store.exists(key):
+                                skipped_verified += 1
+                                span.set_attribute("artifact.already_verified", True)
+                                continue
+                            repaired_storage += 1
+                            span.set_attribute("artifact.storage_repair", True)
 
-                    artifacts = acquire_candidates(
-                        candidates=(candidate,),
-                        fetcher=fetcher,
-                        object_store=object_store,
-                        artifact_catalog=catalog,
+                        artifacts = acquire_candidates(
+                            candidates=(candidate,),
+                            fetcher=fetcher,
+                            object_store=object_store,
+                            artifact_catalog=catalog,
+                        )
+                        if len(artifacts) != 1:
+                            raise RuntimeError("SCJ backfill item did not produce exactly one artifact")
+                        artifact = artifacts[0]
+                        current[(candidate.source_identifier, candidate.document_url)] = artifact.sha256
+                        acquired += 1
+                        bytes_acquired += artifact.byte_count
+                        span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
+                except Exception as exc:
+                    failure = {
+                        "source_identifier": candidate.source_identifier,
+                        "collection": candidate.collection,
+                        "document_url": candidate.document_url,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:2000],
+                    }
+                    failures.append(failure)
+                    print(
+                        json.dumps({"event": "scj_backfill_item_failed", **failure}, ensure_ascii=False),
+                        flush=True,
                     )
-                    if len(artifacts) != 1:
-                        raise RuntimeError("SCJ backfill item did not produce exactly one artifact")
-                    artifact = artifacts[0]
-                    current[(candidate.source_identifier, candidate.document_url)] = artifact.sha256
-                    acquired += 1
-                    bytes_acquired += artifact.byte_count
-                    span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
 
                 if (index + 1) % 100 == 0 or index + 1 == len(candidates):
                     print(
@@ -255,6 +270,7 @@ def main() -> None:
                                 "acquired": acquired,
                                 "skipped_verified": skipped_verified,
                                 "storage_repairs": repaired_storage,
+                                "failures": len(failures),
                             },
                             sort_keys=True,
                         ),
@@ -262,7 +278,7 @@ def main() -> None:
                     )
 
         summary = {
-            "status": "PASS",
+            "status": "PASS" if not failures else "INCOMPLETE",
             "shard_index": shard_index,
             "shard_count": shard_count,
             "candidate_count": len(candidates),
@@ -270,18 +286,27 @@ def main() -> None:
             "acquired_or_repaired_count": acquired,
             "skipped_verified_count": skipped_verified,
             "storage_repair_count": repaired_storage,
+            "failure_count": len(failures),
             "bytes_acquired": bytes_acquired,
         }
         (output_dir / f"backfill-{shard_index:02d}-summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
         )
+        with (output_dir / f"backfill-{shard_index:02d}-failures.jsonl").open(
+            "w", encoding="utf-8"
+        ) as handle:
+            for failure in failures:
+                handle.write(json.dumps(failure, ensure_ascii=False, sort_keys=True) + "\n")
         root.set_attribute("scj.shard.acquired_count", acquired)
         root.set_attribute("scj.shard.skipped_verified_count", skipped_verified)
+        root.set_attribute("scj.shard.failure_count", len(failures))
         root.set_attribute("scj.shard.bytes_acquired", bytes_acquired)
 
     provider = trace.get_tracer_provider()
     if hasattr(provider, "force_flush"):
         provider.force_flush()  # type: ignore[attr-defined]
+    if failures:
+        raise RuntimeError(f"SCJ shard {shard_index} completed with {len(failures)} failed documents")
 
 
 if __name__ == "__main__":
