@@ -86,7 +86,9 @@ def scj_source_observation_from_record(
     row = cast(JsonObject, row_value)
     surface = str(record.get("surface") or "").strip()
     record_notes = record.get("_normalization_notes")
-    notes: JsonObject = dict(cast(JsonObject, record_notes)) if isinstance(record_notes, dict) else {}
+    notes: JsonObject = (
+        dict(cast(JsonObject, record_notes)) if isinstance(record_notes, dict) else {}
+    )
     if surface == "decisions":
         expediente_id = str(row.get("idExpediente") or "").strip()
         guid_blob = str(row.get("guidBlob") or "").strip()
