@@ -104,6 +104,22 @@ jobs:
                 --output /tmp/discrepancy-fail.json
               python -c "import json; p=json.load(open(\"/tmp/discrepancy-fail.json\")); assert p[\"status\"] == \"FAIL\"; assert p[\"metrics\"][\"claimed_destination_read\"] is True; assert p[\"metrics\"][\"neighbors_investigated\"] is False; assert p[\"metrics\"][\"mismatch_recognized\"] is False; assert p[\"metrics\"][\"resolution_matches_gold\"] is False"
             '
+      - name: Structure Auditor scorer smoke test
+        run: |
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD/benchmark:/benchmark:ro" \
+            test sh -ec '
+              python /benchmark/ingestion/evaluate_structure_auditor.py \
+                --result /benchmark/ingestion/fixtures/structure_auditor.synthetic.pass.json \
+                --gold /benchmark/ingestion/gold/structure_auditor.synthetic.v1.json \
+                --output /tmp/structure-auditor-pass.json
+              python -c "import json; p=json.load(open(\"/tmp/structure-auditor-pass.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"metrics\"][\"error_detection_recall\"] == 1.0; assert p[\"metrics\"][\"false_rejection_rate\"] == 0.0; assert p[\"metrics\"][\"total_auditor_tokens\"] > 0; assert p[\"metrics\"][\"total_auditor_latency_ms\"] > 0"
+              python /benchmark/ingestion/evaluate_structure_auditor.py \
+                --result /benchmark/ingestion/fixtures/structure_auditor.synthetic.fail_false_rejection.json \
+                --gold /benchmark/ingestion/gold/structure_auditor.synthetic.v1.json \
+                --output /tmp/structure-auditor-fail.json
+              python -c "import json; p=json.load(open(\"/tmp/structure-auditor-fail.json\")); assert p[\"status\"] == \"FAIL\"; assert p[\"metrics\"][\"error_detection_recall\"] == 1.0; assert p[\"metrics\"][\"false_rejection_rate\"] == 0.5"
+            '
       - name: Pyright
         run: docker compose --profile test run --rm --no-deps test pyright
 
