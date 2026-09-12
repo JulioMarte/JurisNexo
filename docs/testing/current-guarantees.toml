@@ -1,0 +1,111 @@
+schema_version = 1
+status = "normative-current-guarantee-inventory"
+policy = "docs/22-architecture-fitness-functions.md"
+
+# This inventory names durable guarantees, not exact test filenames or incidental
+# repository shape. Tests may move or be replaced as long as the protected
+# guarantee keeps equivalent or stronger evidence.
+
+[[guarantees]]
+id = "INV-SOURCE-PROVENANCE-001"
+statement = "Primary legal source artifacts remain identifiable by immutable/versioned provenance, including stable artifact identity and checksum, and model interpretation cannot silently rewrite source truth."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-EVIDENCE-TRACE-001"
+statement = "Material extracted or researched legal claims remain traceable to typed evidence that identifies the source artifact and observed page/passage; source-reference evidence and observed-content evidence remain distinguishable."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "contract", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-CANONICAL-COMMIT-001"
+statement = "Model outputs are candidate observations or analyses until the required deterministic and audit gates approve canonical persistence; agent output alone cannot become canonical legal truth."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-INGESTION-GATES-001"
+statement = "Canonical agent-assisted ingestion preserves the mandatory Structure -> Structure Audit -> Extraction -> Extraction Audit -> commit ordering, and dynamic handoffs cannot bypass those business gates."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["contract", "integration", "adversarial"]
+risk = ["architecture", "provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-AGENT-DATA-ACCESS-001"
+statement = "Agents and model runtimes do not receive unrestricted SQL or production database credentials; legal corpus access crosses explicit Document Workspace or Corpus API capabilities with deterministic authorization and validation."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["fitness", "security", "adversarial"]
+risk = ["security", "architecture"]
+
+[[guarantees]]
+id = "INV-TENANT-001"
+statement = "Private tenant-scoped corpus, uploads, jobs, evidence and reports cannot be observed or mutated across organization boundaries through supported runtime surfaces."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "security", "adversarial"]
+risk = ["security"]
+
+[[guarantees]]
+id = "INV-RUNTIME-REPLACEABILITY-001"
+statement = "The agent runtime and provider SDKs remain infrastructure adapters rather than the legal system of record; durable corpus/evidence contracts do not persist framework-specific runtime objects as authoritative data."
+severity = "critical"
+classification = "CONTROLLED"
+required_evidence = ["fitness", "contract"]
+risk = ["architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-RESEARCH-VERIFICATION-001"
+statement = "Material legal research requires supporting and adverse-authority investigation and claim/evidence verification before a result is represented as a verified report; runtime success alone is insufficient."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["benchmark", "contract", "adversarial"]
+risk = ["legal_quality"]
+
+[[guarantees]]
+id = "INV-REPRODUCIBILITY-001"
+statement = "Completed ingestion and research outputs retain enough source, corpus, model/provider, prompt/configuration, evidence and job-state metadata to diagnose and materially reproduce the run without requiring hidden chain-of-thought."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "contract"]
+risk = ["provenance", "operations"]
+
+[[guarantees]]
+id = "INV-BENCHMARK-INDEPENDENCE-001"
+statement = "Benchmarks preserve independent frozen inputs/gold where applicable, do not leak answers into agent prompts/tools, distinguish runtime/navigation/semantic status, and do not weaken scorers merely to make a candidate implementation pass."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["benchmark", "fitness", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "FIT-ARCH-BOUNDARY-001"
+statement = "Agent/runtime, provider, persistence and HTTP concerns cross explicit supported boundaries; agent-like modules do not gain direct database authority and provider contracts remain independent from concrete provider implementations."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["fitness"]
+risk = ["architecture", "security"]
+
+[[guarantees]]
+id = "FIT-REPO-GOVERNANCE-001"
+statement = "Repository documentation, AGENTS instructions, architecture guarantee inventory, fitness functions and CI preserve one discoverable source-of-truth hierarchy without freezing incidental file layout as permanent architecture."
+severity = "critical"
+classification = "CONTROLLED"
+required_evidence = ["fitness"]
+risk = ["architecture"]
+
+[[guarantees]]
+id = "FIT-BRANCH-WORKFLOW-001"
+statement = "main remains the canonical integration branch; normal work enters through short-lived PR branches, current-head CI is the merge gate, and same-repository branches are deleted only after successful merge."
+severity = "critical"
+classification = "CONTROLLED"
+required_evidence = ["fitness"]
+risk = ["architecture", "operations"]

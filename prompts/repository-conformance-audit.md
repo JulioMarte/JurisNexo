@@ -6,18 +6,19 @@ You are auditing the current JurisNexo repository against its accepted documenta
 
 1. Read the repository root `AGENTS.md` first and obey it.
 2. Read `docs/19-documentation-crosswalk.md` before interpreting older documents.
-3. Treat repository documentation as the source of truth for intended architecture, but do **not** assume documented features exist in code.
-4. Treat code, migrations, tests, workflows, benchmark artifacts, and runtime configuration as evidence of current implementation.
-5. Distinguish clearly between:
+3. Read `docs/22-architecture-fitness-functions.md` and `docs/testing/current-guarantees.toml` before judging architecture/test compliance.
+4. Treat repository documentation as the source of truth for intended architecture, but do **not** assume documented features exist in code.
+5. Treat code, migrations, tests, workflows, benchmark artifacts, runtime configuration, the guarantee inventory, and architecture fitness tests as evidence of current implementation.
+6. Distinguish clearly between:
    - `IMPLEMENTED_AND_VERIFIED`;
    - `IMPLEMENTED_PARTIALLY`;
    - `DOCUMENTED_NOT_IMPLEMENTED`;
    - `IMPLEMENTED_BUT_CONTRADICTS_DOCS`;
    - `LEGACY_BASELINE_ONLY`;
    - `UNKNOWN / INSUFFICIENT_EVIDENCE`.
-6. Do not mark something implemented merely because a class/file name resembles the documented concept.
-7. Do not mark a requirement verified unless you can point to concrete code/tests/CI/benchmark evidence.
-8. Do not change files during this audit unless explicitly asked in a later task.
+7. Do not mark something implemented merely because a class/file name resembles the documented concept.
+8. Do not mark a requirement verified unless you can point to concrete code/tests/CI/benchmark evidence of the required evidence class.
+9. Do not change files during this audit unless explicitly asked in a later task.
 
 ## Read first
 
@@ -41,16 +42,30 @@ At minimum inspect:
 - `docs/17-agent-methodology-and-benchmark-map.md`;
 - `docs/18-migration-plan-custom-harness-to-agents-sdk.md`;
 - `docs/20-agents-sdk-provider-and-guardrail-compatibility.md`;
-- `docs/21-implementation-governance-and-agent-execution.md`.
+- `docs/21-implementation-governance-and-agent-execution.md`;
+- `docs/22-architecture-fitness-functions.md`;
+- `docs/testing/current-guarantees.toml`.
 
 Then inspect relevant implementation under:
 
 - `backend/src/jurisnexo/**`;
 - `backend/migrations/**`;
-- `backend/tests/**`;
+- `backend/tests/**` including `backend/tests/architecture/**`;
 - `benchmark/**`;
 - `.github/workflows/**`;
 - `compose.yaml` and runtime/deployment files.
+
+## Guarantee-first audit rule
+
+For each guarantee in `docs/testing/current-guarantees.toml`:
+
+1. identify its classification (`HARD`, `CONTROLLED`, `FLEXIBLE`, `HISTORICAL`);
+2. identify the evidence classes it requires;
+3. find concrete repository evidence for each required class;
+4. distinguish structural fitness evidence from runtime/invariant/security/benchmark evidence;
+5. report missing evidence explicitly instead of treating a green architecture test as complete verification.
+
+Do not expect the guarantee inventory to name exact test files. Discover the actual evidence from current tests, benchmarks, workflows, migrations, and implementation.
 
 ## Audit domains
 
@@ -130,6 +145,8 @@ Check:
 - role-scoped writes;
 - authorization and tenant checks;
 - runtime-independent persisted schemas.
+
+Also inspect architecture fitness tests for whether agent/runtime code is prevented from acquiring direct database-driver dependencies. A static fitness pass is structural evidence only; runtime credential/authorization guarantees still require security/invariant evidence.
 
 ### E. Database and canonical corpus
 
@@ -214,7 +231,7 @@ Verify deterministic enforcement of:
 - production credential boundaries;
 - role/tool permissions.
 
-Do not treat LLM guardrails as substitutes for these controls.
+Do not treat LLM guardrails or static architecture tests as substitutes for real security controls.
 
 ### J. Benchmarks and research methodology
 
@@ -239,20 +256,23 @@ For each research influence in `docs/17`, classify it as:
 
 Do not penalize JurisNexo for not implementing optional methods that the docs explicitly defer.
 
-### K. CI and repository governance
+### K. Architecture fitness and repository governance
 
 Verify:
 
-- short-lived branch policy;
-- `main` as integration branch;
-- PR/CI aggregate gate;
-- branch cleanup behavior;
-- Ruff;
-- Pyright;
-- PostgreSQL-backed tests;
-- Docker runtime smoke test;
-- benchmark scorer smoke tests;
-- whether architecture-critical docs/contracts have automated protection or only prose.
+- `docs/testing/current-guarantees.toml` parses and has unique semantic IDs;
+- classifications/evidence/risk vocabulary is coherent;
+- architecture tests protect stable boundaries rather than arbitrary snapshots;
+- provider-neutral contracts do not depend on concrete provider SDKs;
+- agent/runtime surfaces do not gain direct database-driver authority;
+- `AGENTS.md` routes agents to the executable architecture policy;
+- `pytest tests/architecture` runs explicitly in the blocking backend-quality CI lane;
+- `main` remains the documented integration branch;
+- PR/CI aggregate gate remains present;
+- merged-branch cleanup retains merged/same-repo/default-branch safety guards;
+- Ruff, Pyright, PostgreSQL-backed tests, Docker runtime smoke tests, and benchmark scorer smoke tests remain present.
+
+When a fitness function is missing for a documented HARD structural boundary, report that as missing automated protection. Do not invent a fitness test for stochastic model quality or a PostgreSQL runtime property that cannot be proven statically.
 
 ## Required output
 
@@ -274,7 +294,16 @@ Use one of:
 
 Explain why in plain language.
 
-### 2. Contract-to-code matrix
+### 2. Guarantee coverage matrix
+
+Provide a table:
+
+| Guarantee ID | Classification | Required evidence | Evidence found | Missing evidence | Status |
+|---|---|---|---|---|---|
+
+Do not mark a guarantee fully verified merely because one required evidence class exists.
+
+### 3. Contract-to-code matrix
 
 Provide a table:
 
@@ -283,7 +312,7 @@ Provide a table:
 
 Use repository file paths, symbols, migrations, tests, workflow names, and benchmark artifacts as evidence.
 
-### 3. Highest-risk gaps
+### 4. Highest-risk gaps
 
 Rank only real gaps, not cosmetic differences.
 
@@ -297,33 +326,36 @@ Prioritize gaps that could create:
 - non-reproducible benchmarks;
 - runtime migration regressions.
 
-### 4. Legacy versus target architecture
+### 5. Legacy versus target architecture
 
 Identify current code that is intentionally a migration baseline rather than target architecture.
 
 Do not call baseline code a defect solely because it has not yet been retired.
 
-### 5. Documentation problems discovered
+### 6. Documentation or fitness-policy problems discovered
 
-If code exposes ambiguity or contradiction in the docs, list it separately. Do not silently resolve it in favor of code.
+If code exposes ambiguity or contradiction in docs, guarantee inventory, or fitness tests, list it separately. Do not silently resolve it in favor of code or mechanically weaken a failing fitness function.
 
-### 6. Recommended implementation sequence
+### 7. Recommended implementation sequence
 
-Propose the smallest ordered set of workstreams needed to close the gaps. Respect `docs/21-implementation-governance-and-agent-execution.md`.
+Propose the smallest ordered set of workstreams needed to close the gaps. Respect `docs/21-implementation-governance-and-agent-execution.md` and `docs/22-architecture-fitness-functions.md`.
 
 Do not propose a single giant rewrite.
 
-### 7. Evidence quality
+### 8. Evidence quality
 
 State which findings are:
 
 - directly proven by code/tests;
+- structurally proven by fitness functions;
+- proven by real invariant/security/integration tests;
+- proven by benchmark/gold;
 - inferred from structure;
 - unverified because execution was unavailable.
 
-### 8. Validation performed
+### 9. Validation performed
 
-List every command, test suite, CI run, benchmark, or static inspection actually performed. If you did not run something, say so.
+List every command, architecture test, test suite, CI run, benchmark, or static inspection actually performed. If you did not run something, say so.
 
 ## Final discipline
 

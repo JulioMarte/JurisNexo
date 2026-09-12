@@ -2,7 +2,7 @@
 
 These instructions apply repository-wide. A nearer `AGENTS.md` may add path-specific rules but must not contradict current repository policy.
 
-`AGENTS.md` is an operational map, not the architecture manual. The repository documentation under `docs/` is the source of truth for product, data, agent, evidence, security, benchmark, and migration contracts.
+`AGENTS.md` is an operational map, not the architecture manual. The repository documentation under `docs/` is the source of truth for product, data, agent, evidence, security, benchmark, migration, and executable architecture contracts.
 
 ## Reporting discipline — mandatory
 
@@ -57,12 +57,13 @@ Recommended order:
 6. `docs/16-corpus-api-agent-contract.md` — stable agent/data boundary;
 7. `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider/SDK capability constraints;
 8. `docs/21-implementation-governance-and-agent-execution.md` — implementation sequencing and migration discipline;
-9. `docs/02-legal-corpus-and-data-model.md` when changing persisted legal/corpus data;
-10. `docs/03-research-agent-and-report-contract.md` when changing legal research behavior;
-11. `docs/10-job-state-machines-and-reproducibility.md` when changing long-running jobs or durable execution;
-12. `docs/11-benchmark-annotation-and-evaluation-protocol.md` and `docs/17-agent-methodology-and-benchmark-map.md` when changing benchmarks, retrieval, agent behavior, or research methods;
-13. `docs/05-security-privacy-and-trust.md` and `docs/09-tenancy-authentication-and-access-control.md` for trust/tenant-sensitive changes;
-14. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work.
+9. `docs/22-architecture-fitness-functions.md` and `docs/testing/current-guarantees.toml` — executable architecture policy and normative guarantee inventory;
+10. `docs/02-legal-corpus-and-data-model.md` when changing persisted legal/corpus data;
+11. `docs/03-research-agent-and-report-contract.md` when changing legal research behavior;
+12. `docs/10-job-state-machines-and-reproducibility.md` when changing long-running jobs or durable execution;
+13. `docs/11-benchmark-annotation-and-evaluation-protocol.md` and `docs/17-agent-methodology-and-benchmark-map.md` when changing benchmarks, retrieval, agent behavior, or research methods;
+14. `docs/05-security-privacy-and-trust.md` and `docs/09-tenancy-authentication-and-access-control.md` for trust/tenant-sensitive changes;
+15. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work.
 
 Do not treat historical benchmark behavior or the current implementation as authoritative when it conflicts with accepted current docs. Conversely, do not assume documented architecture has already been implemented: verify the code.
 
@@ -82,6 +83,29 @@ Do not treat historical benchmark behavior or the current implementation as auth
 - Model-generated interpretation must never silently overwrite primary-source facts.
 - Supporting and adverse authority are both required in material legal research.
 - Do not expose or depend on hidden chain-of-thought; persist actions, structured outputs, evidence, configuration, and factual execution traces instead.
+
+## Architecture fitness discipline
+
+JurisNexo uses executable architecture constraints modeled after the Request Engine approach.
+
+`docs/testing/current-guarantees.toml` is the durable semantic guarantee inventory. It names guarantees and required evidence classes, not exact test files.
+
+`docs/22-architecture-fitness-functions.md` defines which structural rules belong in blocking deterministic fitness functions. Current fitness tests live under `backend/tests/architecture/` and must remain explicitly gated in CI.
+
+Classify rules before changing them:
+
+```text
+HARD        security/provenance/legal-quality invariant; fail closed by default
+CONTROLLED  accepted architecture/product shape; evolve explicitly with docs + proof
+FLEXIBLE    private implementation detail; do not freeze gratuitously
+HISTORICAL  prior implementation/benchmark evidence; not automatically current authority
+```
+
+When an architecture fitness test fails, do not mechanically weaken the test, widen an allowlist, move code into a generic shared bucket, or hide a dependency. First identify the protected guarantee and decide whether the implementation drifted or the accepted architecture intentionally changed.
+
+For intentional architecture evolution, update the normative docs, guarantee inventory when semantics change, and the executable fitness function coherently in the same change. Preserve or strengthen the protected evidence.
+
+Architecture tests are structural evidence only. They do not replace real PostgreSQL/security invariants or semantic legal benchmarks.
 
 ## Ingestion design gate
 
@@ -240,9 +264,11 @@ Run the narrowest relevant checks first, then the repository's canonical CI-equi
 Current backend quality/database/runtime checks are defined in `.github/workflows/ci.yml` and include:
 
 - Ruff for backend and benchmark runners;
+- blocking `pytest tests/architecture` architecture fitness functions;
 - Pyright strict checking;
 - backend tests against PostgreSQL through Docker Compose;
 - historical benchmark scorer smoke tests;
+- targeted boundary discrepancy scorer smoke tests;
 - API/Docker runtime health smoke test;
 - final `CI aggregate` gate.
 
