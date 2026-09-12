@@ -124,17 +124,18 @@ def _require_artifact_in_scope(
         raise CanonicalCommitError("source artifact does not belong to the authorized scope")
 
 
-def _artifact_page_numbers(
+def _validate_artifact_pages(
     cursor: psycopg.Cursor[Any],
     *,
     artifact_id: UUID,
+    decision: SourceFaithfulDecision,
     bindings: tuple[CanonicalSourcePageBinding, ...],
 ) -> list[int]:
     page_numbers: list[int] = []
-    for binding in bindings:
+    for source_page, binding in zip(decision.pages, bindings, strict=True):
         cursor.execute(
             """
-            select page_number
+            select page_number, extracted_text
             from corpus.artifact_pages
             where id = %s and artifact_id = %s
             """,
@@ -145,7 +146,12 @@ def _artifact_page_numbers(
             raise CanonicalCommitError(
                 "approved artifact page does not belong to the source artifact"
             )
-        page_numbers.append(row[0])
+        page_number, extracted_text = row
+        if extracted_text != source_page.text:
+            raise CanonicalCommitError(
+                "source-faithful decision text does not match durable artifact page text"
+            )
+        page_numbers.append(page_number)
 
     if any(right <= left for left, right in zip(page_numbers, page_numbers[1:])):
         raise CanonicalCommitError(
@@ -274,9 +280,10 @@ def commit_canonical_case(
             artifact_id=request.authorization.source_artifact_id,
             scope_id=scope_id,
         )
-        page_numbers = _artifact_page_numbers(
+        page_numbers = _validate_artifact_pages(
             cursor,
             artifact_id=request.authorization.source_artifact_id,
+            decision=request.decision,
             bindings=request.page_bindings,
         )
         case_id = _insert_case(cursor, court_id=request.court_id, scope_id=scope_id)
