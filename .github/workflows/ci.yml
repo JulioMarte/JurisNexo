@@ -29,6 +29,8 @@ jobs:
           docker compose --profile test run --rm
           -v "$PWD:/repo:ro"
           -e JURISNEXO_REPO_ROOT=/repo
+          -e GITHUB_BASE_REF
+          -e GITHUB_HEAD_REF
           test pytest -q
       - name: Show service state on failure
         if: failure()
@@ -52,6 +54,8 @@ jobs:
           docker compose --profile test run --rm --no-deps
           -v "$PWD:/repo:ro"
           -e JURISNEXO_REPO_ROOT=/repo
+          -e GITHUB_BASE_REF
+          -e GITHUB_HEAD_REF
           test pytest tests/architecture
       - name: Ruff ingestion benchmark runners
         run: >-
