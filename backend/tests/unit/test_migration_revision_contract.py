@@ -1,8 +1,5 @@
-from __future__ import annotations
-
 import ast
 from pathlib import Path
-
 
 VERSIONS = Path(__file__).resolve().parents[2] / "migrations" / "versions"
 
@@ -15,7 +12,11 @@ def test_alembic_revision_ids_fit_version_table() -> None:
         for node in tree.body:
             if not isinstance(node, ast.Assign):
                 continue
-            if not any(isinstance(target, ast.Name) and target.id == "revision" for target in node.targets):
+            has_revision_target = any(
+                isinstance(target, ast.Name) and target.id == "revision"
+                for target in node.targets
+            )
+            if not has_revision_target:
                 continue
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 revision = node.value.value
