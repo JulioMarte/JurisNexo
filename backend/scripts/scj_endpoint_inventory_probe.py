@@ -36,21 +36,40 @@ def configure_telemetry() -> None:
     trace.set_tracer_provider(provider)
 
 
+def datatables_form(*, document_type: str, start: int, length: int, year: str) -> list[tuple[str, str]]:
+    fields: list[tuple[str, str]] = [("draw", "1")]
+    for column in range(4):
+        prefix = f"columns[{column}]"
+        fields.extend(
+            [
+                (f"{prefix}[data]", ""),
+                (f"{prefix}[name]", ""),
+                (f"{prefix}[searchable]", "true"),
+                (f"{prefix}[orderable]", "false"),
+                (f"{prefix}[search][value]", ""),
+                (f"{prefix}[search][regex]", "false"),
+            ]
+        )
+    fields.extend(
+        [
+            ("start", str(start)),
+            ("length", str(length)),
+            ("search[value]", ""),
+            ("search[regex]", "false"),
+            ("IdTribunal", ""),
+            ("Materia", ""),
+            ("Ano", year),
+            ("Mes", ""),
+            ("IdTipoDocumento", document_type),
+            ("Contenido", ""),
+        ]
+    )
+    return fields
+
+
 def query(*, document_type: str, start: int = 0, length: int = 1, year: str = "") -> dict[str, object]:
     payload = urlencode(
-        {
-            "draw": "1",
-            "start": str(start),
-            "length": str(length),
-            "search[value]": "",
-            "search[regex]": "false",
-            "IdTribunal": "",
-            "Materia": "",
-            "Ano": year,
-            "Mes": "",
-            "IdTipoDocumento": document_type,
-            "Contenido": "",
-        }
+        datatables_form(document_type=document_type, start=start, length=length, year=year)
     ).encode("utf-8")
     request = Request(
         ENDPOINT,
@@ -105,9 +124,12 @@ def main() -> None:
         checks: dict[str, object] = {}
         for year in ("1910", "1980", "2006", "2025", "2026"):
             response = query(document_type="1", year=year)
+            rows = response.get("data", [])
+            if not isinstance(rows, list):
+                raise TypeError("SCJ endpoint data is not a list")
             checks[year] = {
                 "recordsFiltered": int(response.get("recordsFiltered", 0)),
-                "sample": (response.get("data") or [None])[0],
+                "sample": rows[0] if rows else None,
             }
         results["decision_year_checks"] = checks
         results["total_across_types"] = total_across_types
