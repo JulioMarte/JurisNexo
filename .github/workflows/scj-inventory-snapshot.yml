@@ -1,0 +1,98 @@
+name: SCJ exhaustive inventory snapshot
+
+on:
+  push:
+    branches:
+      - acquisition/scj-live-backfill-observability
+    paths:
+      - '.github/workflows/scj-inventory-snapshot.yml'
+      - 'backend/scripts/scj_inventory_shard.py'
+      - 'backend/scripts/merge_scj_inventory.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  inventory-shard:
+    name: ${{ matrix.surface }} shard ${{ matrix.shard }} of 4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        surface: [decisions, historical, bulletins]
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned inventory runtime
+        run: >-
+          python -m pip install
+          'playwright==1.62.0'
+          'opentelemetry-api==1.44.0'
+          'opentelemetry-sdk==1.44.0'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Crawl assigned SCJ surface
+        shell: bash
+        env:
+          SCJ_SURFACE: ${{ matrix.surface }}
+          SCJ_SHARD_INDEX: ${{ matrix.shard }}
+          SCJ_SHARD_COUNT: '4'
+          SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-inventory-shard
+        run: |
+          set -euo pipefail
+          python backend/scripts/scj_inventory_shard.py \
+            2>&1 | tee scj-${{ matrix.surface }}-shard-${{ matrix.shard }}-otel.log
+      - name: Upload shard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-${{ matrix.surface }}-shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/scj-inventory-shard/**
+            scj-${{ matrix.surface }}-shard-${{ matrix.shard }}-otel.log
+
+  merge-inventory:
+    name: Certify exhaustive SCJ PDF inventory
+    needs: inventory-shard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Download all inventory shards
+        uses: actions/download-artifact@v5
+        with:
+          pattern: scj-*-shard-*
+          path: ${{ runner.temp }}/scj-inventory-shards
+          merge-multiple: true
+      - name: Merge and certify row-level completeness
+        shell: bash
+        env:
+          SCJ_INVENTORY_INPUT: ${{ runner.temp }}/scj-inventory-shards
+          SCJ_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-inventory-complete
+        run: |
+          set -euo pipefail
+          python backend/scripts/merge_scj_inventory.py | tee scj-inventory-summary.log
+      - name: Upload certified inventory snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-certified-inventory-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/scj-inventory-complete/**
+            scj-inventory-summary.log

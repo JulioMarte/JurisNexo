@@ -8,6 +8,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from jurisnexo.observability import acquisition_span, span_event
+
 _DEFAULT_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 _DEFAULT_USER_AGENT = "JurisNexo-OfficialSourceAcquisition/0.1"
 
@@ -55,7 +57,7 @@ def _sleep(seconds: float) -> None:
 
 @dataclass(slots=True)
 class BoundedHttpFetcher:
-    """Fetch official-source bytes with host, size, timeout, and retry limits."""
+    """Fetch official-source bytes with host, size, timeout, retry, and OTel visibility."""
 
     allowed_hosts: frozenset[str]
     transport: HttpTransport = field(default_factory=UrllibHttpTransport)
@@ -89,32 +91,50 @@ class BoundedHttpFetcher:
 
     def get_bytes(self, url: str) -> bytes:
         self._require_allowed_url(url)
-        for attempt in range(1, self.max_attempts + 1):
-            try:
-                payload = self.transport.fetch(
-                    url=url,
-                    timeout_seconds=self.timeout_seconds,
-                    user_agent=self.user_agent,
-                )
-                self._require_allowed_url(payload.final_url)
-                if payload.status >= 400:
-                    raise HttpStatusError(url=payload.final_url, status=payload.status)
-                if len(payload.content) > self.max_bytes:
-                    raise ValueError(
-                        f"official-source response exceeds max_bytes={self.max_bytes}"
+        host = urlparse(url).hostname or ""
+        with acquisition_span(
+            "acquisition.http.get",
+            **{
+                "server.address": host,
+                "url.full": url,
+                "jurisnexo.http.max_attempts": self.max_attempts,
+            },
+        ) as span:
+            for attempt in range(1, self.max_attempts + 1):
+                span_event("http.attempt", attempt=attempt)
+                try:
+                    payload = self.transport.fetch(
+                        url=url,
+                        timeout_seconds=self.timeout_seconds,
+                        user_agent=self.user_agent,
                     )
-                return payload.content
-            except HTTPError as exc:
-                if exc.code not in self.retryable_status or attempt >= self.max_attempts:
-                    raise
-            except HttpStatusError as exc:
-                if exc.status not in self.retryable_status or attempt >= self.max_attempts:
-                    raise
-            except URLError:
-                if attempt >= self.max_attempts:
-                    raise
+                    self._require_allowed_url(payload.final_url)
+                    span.set_attribute("http.response.status_code", payload.status)
+                    span.set_attribute("http.response.body.size", len(payload.content))
+                    span.set_attribute("url.final", payload.final_url)
+                    if payload.status >= 400:
+                        raise HttpStatusError(url=payload.final_url, status=payload.status)
+                    if len(payload.content) > self.max_bytes:
+                        raise ValueError(
+                            f"official-source response exceeds max_bytes={self.max_bytes}"
+                        )
+                    return payload.content
+                except HTTPError as exc:
+                    span_event("http.error", attempt=attempt, status=exc.code)
+                    if exc.code not in self.retryable_status or attempt >= self.max_attempts:
+                        raise
+                except HttpStatusError as exc:
+                    span_event("http.error", attempt=attempt, status=exc.status)
+                    if exc.status not in self.retryable_status or attempt >= self.max_attempts:
+                        raise
+                except URLError as exc:
+                    span_event("http.error", attempt=attempt, error=str(exc.reason))
+                    if attempt >= self.max_attempts:
+                        raise
 
-            self.sleep(self.retry_base_delay_seconds * (2 ** (attempt - 1)))
+                delay = self.retry_base_delay_seconds * (2 ** (attempt - 1))
+                span_event("http.retry", attempt=attempt, delay_seconds=delay)
+                self.sleep(delay)
 
         raise RuntimeError("unreachable acquisition retry state")
 
@@ -124,5 +144,7 @@ OFFICIAL_SOURCE_HOSTS = frozenset(
         "www.tribunalconstitucional.gob.do",
         "tribunalsitestorage.blob.core.windows.net",
         "transparencia.poderjudicial.gob.do",
+        "consultasentenciascj.poderjudicial.gob.do",
+        "consultaglobal.blob.core.windows.net",
     }
 )

@@ -111,8 +111,8 @@ def test_object_keys_are_partitioned_by_official_source() -> None:
     tc_key = object_key_for(source="constitutional_court", sha256=digest)
     scj_key = object_key_for(source="supreme_court", sha256=digest)
 
-    assert tc_key == f"official/constitutional_court/aa/{digest}.pdf"
-    assert scj_key == f"official/supreme_court/aa/{digest}.pdf"
+    assert tc_key == f"jurisdictions/do/tc/decisions/aa/{digest}.pdf"
+    assert scj_key == f"jurisdictions/do/scj/decisions/aa/{digest}.pdf"
     assert tc_key != scj_key
 
 
