@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "benchmark": "extraction_metadata",
+  "dataset_kind": "controlled_synthetic",
+  "thresholds": {
+    "min_precision": 1.0,
+    "min_recall": 1.0
+  },
+  "metadata": [
+    {"field": "court_chamber", "value": "Corte Suprema"},
+    {"field": "decision_number", "value": "12-2026"},
+    {"field": "party", "value": "Juan Pérez"},
+    {"field": "party", "value": "ACME"}
+  ]
+}
