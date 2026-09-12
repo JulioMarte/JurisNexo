@@ -80,10 +80,16 @@ Making CI green by weakening the assertion without resolving the protected risk 
 
 ## Current CI
 
-`backend/tests/architecture/` contains blocking deterministic fitness functions and is run explicitly by the backend-quality job as:
+`backend/tests/architecture/` contains blocking deterministic fitness functions.
+
+The backend-quality job runs them explicitly as:
 
 ```text
 pytest tests/architecture
 ```
+
+The full PostgreSQL-backed backend test job also executes them with the repository root mounted read-only. This redundancy is intentional: the explicit architecture step keeps the gate visible, while the broader backend suite makes accidental removal of that one CI line easier to detect through the governance fitness test itself.
+
+Tests that inspect root-level governance/docs receive `JURISNEXO_REPO_ROOT` from CI instead of assuming the backend container contains the entire repository checkout.
 
 Other guarantees are proven through integration/PostgreSQL tests and benchmark/scorer lanes. A green architecture suite means the tested structural boundaries remain intact; it does **not** mean every semantic guarantee in the inventory is fully implemented or verified.
