@@ -201,10 +201,10 @@ async def run_structure_agent(
             trace_include_sensitive_data=False,
         ),
     )
-    hypothesis = result.final_output
-    if not isinstance(hypothesis, DocumentStructureHypothesis):
-        raise TypeError("Structure Agent returned an unexpected output type")
-
+    hypothesis = result.final_output_as(
+        DocumentStructureHypothesis,
+        raise_if_incorrect_type=True,
+    )
     validate_index_reference_evidence(
         hypothesis=hypothesis,
         environment=environment,
