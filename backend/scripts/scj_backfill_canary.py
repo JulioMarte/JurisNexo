@@ -143,6 +143,7 @@ def candidates_from_live_portal(*, limit: int) -> tuple[OfficialDocumentCandidat
                         source_identifier=source_identifier,
                         discovery_url=TARGET,
                         document_url=document_url,
+                        collection="decisions",
                     )
                 )
             browser.close()
@@ -224,10 +225,16 @@ def main() -> None:
                 for artifact in artifacts
                 if not object_store.exists(artifact.object_key)
             ]
-            if missing_catalog or missing_objects:
+            wrong_prefix = [
+                artifact.object_key
+                for artifact in artifacts
+                if not artifact.object_key.startswith("jurisdictions/do/scj/decisions/")
+            ]
+            if missing_catalog or missing_objects or wrong_prefix:
                 raise RuntimeError(
                     "SCJ canary verification failed: "
-                    f"missing_catalog={missing_catalog}, missing_objects={missing_objects}"
+                    f"missing_catalog={missing_catalog}, missing_objects={missing_objects}, "
+                    f"wrong_prefix={wrong_prefix}"
                 )
 
         summary = {
@@ -237,7 +244,7 @@ def main() -> None:
             "already_present_count": sum(item.already_present for item in artifacts),
             "verified_catalog_count": len(candidates) - len(missing_catalog),
             "verified_storage_count": len(artifacts) - len(missing_objects),
-            "object_prefix": "official/supreme_court/",
+            "object_prefix": "jurisdictions/do/scj/decisions/",
         }
         (OUT / "summary.json").write_text(
             json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
