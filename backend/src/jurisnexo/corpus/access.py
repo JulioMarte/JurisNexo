@@ -54,7 +54,7 @@ class CanonicalCommitAuthorization(BaseModel):
     scope: CorpusScope
     extraction_audit_state: CanonicalAuditState
     source_artifact_id: UUID
-    approved_case_page_ids: tuple[UUID, ...] = Field(min_length=1)
+    approved_artifact_page_ids: tuple[UUID, ...] = Field(min_length=1)
 
 
 _ALLOW_CANONICAL_COMMIT_STATES = {"VERIFIED", "VERIFIED_WITH_AMENDMENTS"}
