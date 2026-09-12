@@ -62,6 +62,17 @@ source artifact
 
 Dynamic handoffs or agents-as-tools are reserved for bounded specialist work such as difficult OCR, citation resolution, boundary investigation, case analysis, later-treatment research, or adverse-authority search. They must not bypass mandatory business gates.
 
+## Agent entry point
+
+Coding and implementation agents should read [`AGENTS.md`](./AGENTS.md) first. It is the repository-wide operational map and points to the canonical architecture, branch/CI rules, evidence discipline, and implementation gates.
+
+Reusable task prompts:
+
+- `prompts/repository-conformance-audit.md` — audit current implementation against accepted repository contracts without modifying code;
+- `prompts/implement-documented-architecture.md` — implement the accepted architecture incrementally, beginning from the audit and advancing through independently benchmarkable workstreams.
+
+The prompts are execution aids. Accepted repository documentation remains authoritative.
+
 ## Documentation
 
 See [`docs/`](./docs/) for product scope, architecture, research runtime, data model, validation strategy, security, and roadmap.
@@ -75,4 +86,5 @@ Key documents for the current agent architecture:
 - `docs/17-agent-methodology-and-benchmark-map.md` — complete mapping of the documented research methodologies to specific layers and metrics;
 - `docs/18-migration-plan-custom-harness-to-agents-sdk.md` — comparative migration and retirement criteria;
 - `docs/19-documentation-crosswalk.md` — precedence rules between existing architecture documents and the new runtime decision;
-- `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, guardrail, tracing, and SDK-upgrade constraints.
+- `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, guardrail, tracing, and SDK-upgrade constraints;
+- `docs/21-implementation-governance-and-agent-execution.md` — workstream sequencing, parity requirements, and implementation definition-of-done rules.
