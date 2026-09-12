@@ -8,7 +8,9 @@ from pathlib import Path
 
 from agents import RunConfig, Runner, set_tracing_disabled
 
+from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import DocumentEnvironment
+from jurisnexo.ingestion.evidence_validation import validate_index_reference_evidence
 from jurisnexo.ingestion.logical_document_view import (
     build_document_environment_from_logical_view,
     materialize_logical_document_view,
@@ -22,7 +24,6 @@ from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
     build_structure_agent,
 )
-from jurisnexo.ingestion.evidence_validation import validate_index_reference_evidence
 from jurisnexo.model_providers.agents_sdk_compatible import (
     CompatibleProviderName,
     build_compatible_model_provider,
@@ -116,7 +117,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
         ),
     )
     hypothesis = result.final_output_as(
-        agent.output_type,
+        DocumentStructureHypothesis,
         raise_if_incorrect_type=True,
     )
     validate_index_reference_evidence(hypothesis=hypothesis, environment=environment)
