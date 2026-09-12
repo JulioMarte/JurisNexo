@@ -150,15 +150,18 @@ def main() -> None:
                 if not isinstance(rows, list):
                     raise TypeError("SCJ endpoint data is not a list")
                 sample = rows[0] if rows else None
+                sample_keys = sorted(str(key) for key in sample) if isinstance(sample, dict) else []
                 results[document_type] = {
                     "label": label,
                     "recordsTotal": int(response.get("recordsTotal", 0)),
                     "recordsFiltered": total,
                     "sample": sample,
+                    "sampleKeys": sample_keys,
                 }
                 total_across_types += total
                 span.set_attribute("scj.records.filtered", total)
                 span.set_attribute("scj.sample.present", sample is not None)
+                span.set_attribute("scj.sample.key_count", len(sample_keys))
 
         checks: dict[str, object] = {}
         for year in ("1910", "1980", "2006", "2025", "2026"):
