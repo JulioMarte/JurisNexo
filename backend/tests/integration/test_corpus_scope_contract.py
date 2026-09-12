@@ -35,13 +35,20 @@ def test_public_scope_singleton_exists(connection: psycopg.Connection[Any]) -> N
     assert rows == [(PUBLIC_SCOPE_ID, "public", None)]
 
 
-def test_scope_ownership_shape_is_enforced(connection: psycopg.Connection[Any]) -> None:
+def test_private_scope_requires_organization(
+    connection: psycopg.Connection[Any],
+) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         with pytest.raises(psycopg.errors.CheckViolation):
             cursor.execute(
                 "insert into corpus.scopes (visibility) values ('private')"
             )
 
+
+def test_public_scope_rejects_organization(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         with pytest.raises(psycopg.errors.CheckViolation):
             cursor.execute(
                 """
@@ -50,6 +57,12 @@ def test_scope_ownership_shape_is_enforced(connection: psycopg.Connection[Any]) 
                 """,
                 (ORG_A,),
             )
+
+
+def test_public_scope_is_singleton(connection: psycopg.Connection[Any]) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            cursor.execute("insert into corpus.scopes (visibility) values ('public')")
 
 
 def test_only_one_private_scope_per_organization(
