@@ -28,7 +28,9 @@ def _document(connection: psycopg.Connection[Any], *, document_type: str, title:
     with connection.cursor() as cursor:
         cursor.execute(
             """
-            insert into corpus.legal_documents (document_type, title, country_code, jurisdiction_code)
+            insert into corpus.legal_documents (
+                document_type, title, country_code, jurisdiction_code
+            )
             values (%s, %s, 'DO', 'do')
             returning id
             """,
