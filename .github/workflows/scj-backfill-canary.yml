@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: scj-live-backfill-canary
+  cancel-in-progress: false
+
 env:
   PYTHONUNBUFFERED: '1'
 
@@ -67,14 +71,23 @@ jobs:
           'playwright==1.62.0'
           'opentelemetry-sdk==1.44.0'
           'opentelemetry-exporter-otlp-proto-http==1.44.0'
-      - name: Upgrade live corpus schema
+      - name: Verify live corpus schema without mutating it
         working-directory: backend
         shell: bash
         run: |
           set -euo pipefail
-          alembic current
-          alembic upgrade head
-          alembic current
+          expected="$(alembic heads | awk 'NR == 1 {print $1}')"
+          current="$(alembic current | awk 'NR == 1 {print $1}')"
+          if [[ -z "$expected" || -z "$current" ]]; then
+            echo 'Could not determine Alembic head/current revision.' >&2
+            exit 2
+          fi
+          if [[ "$current" != "$expected" ]]; then
+            printf 'Live corpus schema is not at repository head: current=%s expected=%s\n' "$current" "$expected" >&2
+            echo 'Deploy migrations through the gated schema-deploy workflow before running this canary.' >&2
+            exit 2
+          fi
+          printf 'Live corpus schema is current at %s.\n' "$current"
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Acquire and verify three live SCJ PDFs
