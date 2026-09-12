@@ -53,15 +53,7 @@ class SourceDocumentObservation:
 def normalize_scj_bulletin_pdf_url(
     raw_value: object,
 ) -> tuple[str | None, ArtifactAvailability, dict[str, Any]]:
-    """Normalize only SCJ bulletin URL defects proven by live source evidence.
-
-    The SCJ currently contains historical rows whose `urlCuerpo` is prefixed by
-    the literal string `NULL` immediately before an otherwise valid HTTPS URL.
-    We repair exactly that source defect and preserve the raw value in notes.
-    Missing URLs remain explicit metadata-only source records rather than being
-    invented or silently dropped.
-    """
-
+    """Normalize only SCJ bulletin URL defects proven by live source evidence."""
     if raw_value is None:
         return None, "not_published", {"document_url_state": "source_null"}
     raw = str(raw_value).strip()
@@ -73,12 +65,70 @@ def normalize_scj_bulletin_pdf_url(
     if raw.startswith("https://"):
         return raw, "available", {}
     if raw.startswith("NULLhttps://"):
-        normalized = raw[4:]
-        return normalized, "available", {
+        return raw[4:], "available", {
             "document_url_normalization": "stripped_literal_NULL_prefix",
             "raw_document_url": raw,
         }
     raise ValueError(f"unsupported SCJ bulletin document URL shape: {raw!r}")
+
+
+def scj_source_observation_from_record(
+    *, record: dict[str, Any], discovery_url: str
+) -> SourceDocumentObservation:
+    row = record.get("row")
+    if not isinstance(row, dict):
+        raise TypeError("SCJ inventory record is missing its row object")
+    surface = str(record.get("surface") or "").strip()
+    notes: dict[str, Any] = {}
+    if surface == "decisions":
+        expediente_id = str(row.get("idExpediente") or "").strip()
+        guid_blob = str(row.get("guidBlob") or "").strip()
+        if not expediente_id:
+            raise ValueError("SCJ decision lacks idExpediente")
+        source_identifier = f"expediente:{expediente_id}"
+        if guid_blob:
+            source_identifier += f":{guid_blob}"
+        collection = "decisions"
+        document_kind = "judicial_decision"
+        document_url = str(row.get("urlBlob") or "").strip()
+        if not document_url.startswith("https://"):
+            raise ValueError("SCJ decision lacks HTTPS document URL")
+        availability: ArtifactAvailability = "available"
+    elif surface == "historical":
+        year = str(row.get("ano") or "").strip()
+        month = str(row.get("mes") or "").strip()
+        parties = " ".join(str(row.get("partes") or "").split())
+        if not (year or month or parties):
+            raise ValueError("SCJ historical decision lacks stable source identity")
+        source_identifier = f"historical:{year}:{month}:{parties}"
+        collection = "historical-decisions"
+        document_kind = "judicial_decision"
+        document_url = str(row.get("rutaDoc") or "").strip()
+        if not document_url.startswith("https://"):
+            raise ValueError("SCJ historical decision lacks HTTPS document URL")
+        availability = "available"
+    elif surface == "bulletins":
+        body_id = str(row.get("idCuerpo") or "").strip()
+        header_id = str(row.get("idCabecera") or "").strip()
+        if not body_id:
+            raise ValueError("SCJ bulletin lacks idCuerpo")
+        source_identifier = f"bulletin:{header_id}:{body_id}"
+        collection = "bulletins"
+        document_kind = "official_bulletin"
+        document_url, availability, notes = normalize_scj_bulletin_pdf_url(row.get("urlCuerpo"))
+    else:
+        raise ValueError(f"unsupported SCJ inventory surface: {surface!r}")
+    return SourceDocumentObservation(
+        source="supreme_court",
+        source_identifier=source_identifier,
+        source_collection=collection,
+        document_kind=document_kind,
+        discovery_url=discovery_url,
+        document_url=document_url,
+        artifact_availability=availability,
+        source_payload=row,
+        normalization_notes=notes,
+    )
 
 
 @dataclass(slots=True)
@@ -92,8 +142,7 @@ class PostgresSourceDocumentInventory:
                 """
                 INSERT INTO corpus.source_registries (
                     code, name, institution, authority_class, base_locator
-                )
-                VALUES (%s, %s, %s, 'official_primary', %s)
+                ) VALUES (%s, %s, %s, 'official_primary', %s)
                 ON CONFLICT (code) DO UPDATE SET
                     name = EXCLUDED.name,
                     institution = EXCLUDED.institution,
@@ -102,12 +151,7 @@ class PostgresSourceDocumentInventory:
                     updated_at = now()
                 RETURNING id
                 """,
-                (
-                    source,
-                    definition["name"],
-                    definition["institution"],
-                    definition["base_locator"],
-                ),
+                (source, definition["name"], definition["institution"], definition["base_locator"]),
             )
             row = cursor.fetchone()
         if row is None:
@@ -122,20 +166,12 @@ class PostgresSourceDocumentInventory:
                 cursor.execute(
                     """
                     INSERT INTO corpus.source_documents (
-                        source_registry_id,
-                        source_identifier,
-                        source_collection,
-                        document_kind,
-                        discovery_url,
-                        current_document_url,
-                        artifact_availability,
-                        latest_source_metadata,
-                        latest_payload_sha256
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
-                    ON CONFLICT (
-                        source_registry_id, source_collection, source_identifier
-                    ) DO UPDATE SET
+                        source_registry_id, source_identifier, source_collection,
+                        document_kind, discovery_url, current_document_url,
+                        artifact_availability, latest_source_metadata, latest_payload_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    ON CONFLICT (source_registry_id, source_collection, source_identifier)
+                    DO UPDATE SET
                         document_kind = EXCLUDED.document_kind,
                         discovery_url = EXCLUDED.discovery_url,
                         current_document_url = EXCLUDED.current_document_url,
@@ -165,15 +201,10 @@ class PostgresSourceDocumentInventory:
                 cursor.execute(
                     """
                     INSERT INTO corpus.source_document_observations (
-                        source_document_id,
-                        discovery_url,
-                        document_url,
-                        artifact_availability,
-                        source_payload,
-                        payload_sha256,
+                        source_document_id, discovery_url, document_url,
+                        artifact_availability, source_payload, payload_sha256,
                         normalization_notes
-                    )
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
+                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
                     ON CONFLICT DO NOTHING
                     """,
                     (
@@ -187,3 +218,23 @@ class PostgresSourceDocumentInventory:
                     ),
                 )
         return source_document_id
+
+    def link_artifact_sha256(
+        self, *, source_document_id: str, sha256: str, relationship_type: str = "primary"
+    ) -> None:
+        with self.connection.transaction():
+            with self.connection.cursor() as cursor:
+                cursor.execute("SELECT id FROM corpus.source_artifacts WHERE sha256 = %s", (sha256,))
+                row = cursor.fetchone()
+                if row is None:
+                    raise LookupError(f"artifact not registered for sha256={sha256}")
+                cursor.execute(
+                    """
+                    INSERT INTO corpus.source_document_artifacts (
+                        source_document_id, artifact_id, relationship_type
+                    ) VALUES (%s, %s, %s)
+                    ON CONFLICT (source_document_id, artifact_id, relationship_type)
+                    DO UPDATE SET last_seen_at = clock_timestamp()
+                    """,
+                    (source_document_id, str(row[0]), relationship_type),
+                )
