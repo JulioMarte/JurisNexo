@@ -1,0 +1,32 @@
+name: Scheduled official corpus reconciliation
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly exhaustive reconciliation. The full workflow is idempotent and only
+    # acquires artifacts that are absent or need storage repair.
+    - cron: '23 6 * * 1'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: scheduled-official-corpus-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  dispatch-full-reconciliation:
+    name: Dispatch exhaustive official corpus reconciliation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start full official corpus reconciliation on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run full-official-corpus-backfill.yml --ref main
+          echo 'Dispatched full official corpus reconciliation on main.'
