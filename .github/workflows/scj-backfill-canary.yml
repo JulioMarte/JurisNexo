@@ -34,7 +34,6 @@ jobs:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
       SCJ_CANARY_LIMIT: '3'
-      SCJ_CANARY_OUTPUT: ${{ runner.temp }}/scj-canary-output
     steps:
       - uses: actions/checkout@v6
       - name: Validate live configuration without exposing secrets
@@ -66,6 +65,8 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Acquire and verify three live SCJ PDFs
+        env:
+          SCJ_CANARY_OUTPUT: ${{ runner.temp }}/scj-canary-output
         run: python backend/scripts/scj_backfill_canary.py 2>&1 | tee scj-canary-otel.log
       - name: Upload canary evidence and OpenTelemetry output
         if: always()
