@@ -81,8 +81,8 @@ def test_scj_parser_keeps_only_same_host_consultas_pdf_links() -> None:
     )
 
     assert [candidate.source_identifier for candidate in results] == [
-        "129120049",
         "reporte001",
+        "129120049",
     ]
     assert all(candidate.source == "supreme_court" for candidate in results)
 
