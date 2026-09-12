@@ -5,22 +5,22 @@ from agents import FunctionTool
 
 from jurisnexo.ingestion.decision_reconstruction import (
     DecisionBoundary,
+    SourceFaithfulDecision,
     reconstruct_source_faithful_decision,
 )
 from jurisnexo.ingestion.document_environment import DocumentEnvironment
 from jurisnexo.ingestion.sdk_extraction_agent import (
     ExtractionAnnotations,
-    ExtractionAgentContext,
     build_extraction_agent,
-    get_decision_page,
-    search_decision_text,
+    render_decision_page,
+    search_bounded_decision,
     validate_extraction_annotations,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
 
 
-def _decision():
+def _decision() -> SourceFaithfulDecision:
     environment = DocumentEnvironment(
         (
             "PREVIOUS DECISION",
@@ -50,30 +50,28 @@ def test_evidence_spans_must_match_exact_source_text() -> None:
     page_text = decision.pages[0].text
     exact = "SENTENCIA 12-2026"
     start = page_text.index(exact)
-    annotations = ExtractionAnnotations.model_validate(
-        {
-            "metadata": [
-                {
-                    "field": "decision_number",
-                    "value": "12-2026",
-                    "confidence": 0.99,
-                    "evidence": [
-                        {
-                            "view_page": 2,
-                            "char_start": start,
-                            "char_end": start + len(exact),
-                            "exact_text": exact,
-                        }
-                    ],
-                }
-            ]
-        }
-    )
-
+    payload = {
+        "metadata": [
+            {
+                "field": "decision_number",
+                "value": "12-2026",
+                "confidence": 0.99,
+                "evidence": [
+                    {
+                        "view_page": 2,
+                        "char_start": start,
+                        "char_end": start + len(exact),
+                        "exact_text": exact,
+                    }
+                ],
+            }
+        ]
+    }
+    annotations = ExtractionAnnotations.model_validate(payload)
     validate_extraction_annotations(annotations=annotations, decision=decision)
 
-    bad = annotations.model_copy(deep=True)
-    bad.metadata[0].evidence[0].exact_text = "invented"
+    payload["metadata"][0]["evidence"][0]["exact_text"] = "invented"
+    bad = ExtractionAnnotations.model_validate(payload)
     with pytest.raises(ValueError, match="does not match source"):
         validate_extraction_annotations(annotations=bad, decision=decision)
 
@@ -104,28 +102,16 @@ def test_evidence_outside_bounded_decision_is_rejected() -> None:
         validate_extraction_annotations(annotations=annotations, decision=decision)
 
 
-@pytest.mark.asyncio
-async def test_get_decision_page_rejects_neighbor_page() -> None:
-    context = ExtractionAgentContext(decision=_decision())
-
-    class Wrapper:
-        def __init__(self, value: ExtractionAgentContext) -> None:
-            self.context = value
-
+def test_decision_page_helper_rejects_neighbor_page() -> None:
     with pytest.raises(ValueError, match="outside the bounded decision"):
-        await get_decision_page.on_invoke_tool(Wrapper(context), '{"view_page": 1}')
+        render_decision_page(_decision(), 1)
 
 
-@pytest.mark.asyncio
-async def test_search_is_confined_to_bounded_decision() -> None:
-    context = ExtractionAgentContext(decision=_decision())
+def test_search_is_confined_to_bounded_decision() -> None:
+    decision = _decision()
 
-    class Wrapper:
-        def __init__(self, value: ExtractionAgentContext) -> None:
-            self.context = value
-
-    previous = await search_decision_text.on_invoke_tool(Wrapper(context), '{"query": "PREVIOUS"}')
-    target = await search_decision_text.on_invoke_tool(Wrapper(context), '{"query": "Artículo 12"}')
+    previous = search_bounded_decision(decision, "PREVIOUS")
+    target = search_bounded_decision(decision, "Artículo 12")
 
     assert previous == "No literal hits."
     assert "view_page=3" in target
