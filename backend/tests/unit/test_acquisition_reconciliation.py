@@ -10,6 +10,7 @@ from jurisnexo.acquisition.completeness import (
 )
 from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
+    SourceName,
     StoredOfficialArtifact,
     object_key_for,
     sha256_hex,
@@ -17,10 +18,6 @@ from jurisnexo.acquisition.official_corpus import (
 from jurisnexo.acquisition.reconciliation import reconcile_source
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
-
-
-def _empty_bytes() -> dict[str, bytes]:
-    return {}
 
 
 def _empty_keys() -> set[str]:
@@ -31,10 +28,14 @@ def _empty_observations() -> list[RegisteredArtifactObservation]:
     return []
 
 
+def _empty_requests() -> list[str]:
+    return []
+
+
 @dataclass(slots=True)
 class MemoryFetcher:
     documents: dict[str, bytes]
-    requested: list[str] = field(default_factory=list)
+    requested: list[str] = field(default_factory=_empty_requests)
 
     def get_bytes(self, url: str) -> bytes:
         self.requested.append(url)
@@ -68,7 +69,7 @@ class MemoryCatalog:
         default_factory=_empty_observations
     )
 
-    def observations_for(self, source: str) -> tuple[RegisteredArtifactObservation, ...]:
+    def observations_for(self, source: SourceName) -> tuple[RegisteredArtifactObservation, ...]:
         return tuple(item for item in self.observations if item.source == source)
 
     def register(self, artifact: StoredOfficialArtifact) -> object:
@@ -95,16 +96,10 @@ def _candidate(
     identifier: str,
     url: str,
     *,
-    source: str = "constitutional_court",
+    source: SourceName = "constitutional_court",
 ) -> OfficialDocumentCandidate:
-    if source == "constitutional_court":
-        source_name = "constitutional_court"
-    elif source == "supreme_court":
-        source_name = "supreme_court"
-    else:
-        raise ValueError(source)
     return OfficialDocumentCandidate(
-        source=source_name,
+        source=source,
         source_identifier=identifier,
         discovery_url=f"https://official.example/details/{identifier}",
         document_url=url,
