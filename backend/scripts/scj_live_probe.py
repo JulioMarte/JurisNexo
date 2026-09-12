@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from playwright.sync_api import Response, sync_playwright
 
 TARGET = "https://consultasentenciascj.poderjudicial.gob.do/"
+ENDPOINT = urljoin(TARGET, "/Home/GetExpedientes")
 OUT = Path(os.environ.get("SCJ_PROBE_OUTPUT", "scj-probe-output"))
 
 
@@ -28,6 +29,37 @@ def configure_telemetry() -> None:
     )
     provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
     trace.set_tracer_provider(provider)
+
+
+def datatables_form(*, start: int, length: int, document_type: str = "1") -> dict[str, str]:
+    fields: dict[str, str] = {"draw": "1"}
+    for column in range(4):
+        prefix = f"columns[{column}]"
+        fields.update(
+            {
+                f"{prefix}[data]": "",
+                f"{prefix}[name]": "",
+                f"{prefix}[searchable]": "true",
+                f"{prefix}[orderable]": "false",
+                f"{prefix}[search][value]": "",
+                f"{prefix}[search][regex]": "false",
+            }
+        )
+    fields.update(
+        {
+            "start": str(start),
+            "length": str(length),
+            "search[value]": "",
+            "search[regex]": "false",
+            "IdTribunal": "",
+            "Materia": "",
+            "Ano": "",
+            "Mes": "",
+            "IdTipoDocumento": document_type,
+            "Contenido": "",
+        }
+    )
+    return fields
 
 
 def main() -> None:
@@ -68,7 +100,7 @@ def main() -> None:
                                     "body": decoded,
                                 }
                             )
-                    except Exception as exc:  # diagnostic probe must retain partial evidence
+                    except Exception as exc:
                         item["json_capture_error"] = repr(exc)
 
             page.on("response", on_response)
@@ -85,11 +117,44 @@ def main() -> None:
 
             with tracer.start_as_current_span("scj.browser.filtered_query") as filtered_span:
                 page.select_option("#cbTipoDocumento", "1")
-                page.wait_for_timeout(750)
-                page.select_option("#cbAno", "2026")
-                page.wait_for_timeout(4_000)
+                page.wait_for_timeout(3_000)
                 filtered_span.set_attribute("scj.filter.document_type", "1")
-                filtered_span.set_attribute("scj.filter.year", 2026)
+
+            with tracer.start_as_current_span("scj.context_request.pagination_probe") as span:
+                api_response = context.request.post(
+                    ENDPOINT,
+                    form=datatables_form(start=10, length=100),
+                    headers={
+                        "Accept": "application/json, text/javascript, */*; q=0.01",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": TARGET,
+                    },
+                    timeout=90_000,
+                )
+                payload = api_response.json()
+                if not isinstance(payload, dict):
+                    raise TypeError("SCJ context request returned non-object JSON")
+                rows = payload.get("data", [])
+                if not isinstance(rows, list):
+                    raise TypeError("SCJ context request data is not a list")
+                context_probe = {
+                    "status": api_response.status,
+                    "recordsTotal": int(payload.get("recordsTotal", 0)),
+                    "recordsFiltered": int(payload.get("recordsFiltered", 0)),
+                    "row_count": len(rows),
+                    "first_row": rows[0] if rows else None,
+                    "last_row": rows[-1] if rows else None,
+                }
+                (OUT / "context-request-probe.json").write_text(
+                    json.dumps(context_probe, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+                span.set_attribute("http.response.status_code", api_response.status)
+                span.set_attribute("scj.records.filtered", context_probe["recordsFiltered"])
+                span.set_attribute("scj.page.row_count", len(rows))
+                if context_probe["recordsFiltered"] <= 0 or not rows:
+                    raise RuntimeError(
+                        "SCJ BrowserContext request did not reproduce the successful inventory query"
+                    )
 
             selects = page.locator("select").evaluate_all(
                 """els => els.map((el, index) => ({
@@ -149,6 +214,7 @@ def main() -> None:
                 "selects": selects,
                 "input_count": len(inputs),
                 "json_response_count": len(json_payloads),
+                "context_request_probe": context_probe,
             }
             (OUT / "summary.json").write_text(
                 json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
