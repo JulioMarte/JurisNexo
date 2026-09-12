@@ -10,7 +10,10 @@ from jurisnexo.ingestion.document_discovery import (
     DocumentStructureHypothesis,
     InvestigationPageEvidence,
 )
-from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
+from jurisnexo.ingestion.document_environment import (
+    DocumentEnvironment,
+    DocumentEnvironmentError,
+)
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
     get_page,
@@ -90,7 +93,9 @@ class StructureAuditResult(BaseModel):
             raise ValueError("approval requires at least one independently checked claim")
         if self.state == "APPROVED":
             material_failures = [
-                check for check in self.checks if check.status in {"contradicted", "unresolved"}
+                check
+                for check in self.checks
+                if check.status in {"contradicted", "unresolved"}
             ]
             if material_failures:
                 raise ValueError("APPROVED cannot contain contradicted or unresolved checks")
@@ -180,8 +185,13 @@ def validate_structure_audit_evidence(
                     f"{label}: view page {evidence.view_page} resolves to printed page "
                     f"{page.printed_page_number}, not {evidence.printed_page}"
                 )
-            if evidence.source_reference is not None and page.source_reference != evidence.source_reference:
-                raise DocumentEnvironmentError(f"{label}: source_reference does not match source view")
+            if (
+                evidence.source_reference is not None
+                and page.source_reference != evidence.source_reference
+            ):
+                raise DocumentEnvironmentError(
+                    f"{label}: source_reference does not match source view"
+                )
 
 
 async def run_structure_auditor(
