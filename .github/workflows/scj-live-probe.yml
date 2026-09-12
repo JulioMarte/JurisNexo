@@ -1,0 +1,48 @@
+name: SCJ live contract probe
+
+on:
+  push:
+    branches:
+      - acquisition/scj-live-backfill-observability
+    paths:
+      - '.github/workflows/scj-live-probe.yml'
+      - 'backend/scripts/scj_live_probe.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned probe runtime
+        run: >-
+          python -m pip install
+          'playwright>=1.55,<2'
+          'opentelemetry-api>=1.36,<2'
+          'opentelemetry-sdk>=1.36,<2'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Probe live SCJ portal with OpenTelemetry spans
+        env:
+          SCJ_PROBE_OUTPUT: ${{ runner.temp }}/scj-probe-output
+        run: python backend/scripts/scj_live_probe.py 2>&1 | tee scj-probe-otel.log
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-live-probe-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/scj-probe-output/**
+            scj-probe-otel.log
