@@ -20,6 +20,10 @@ from jurisnexo.corpus.artifact_inventory import PostgresRegisteredArtifactInvent
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.provenance]
 
 
+def _empty_keys() -> set[str]:
+    return set()
+
+
 @pytest.fixture(scope="module")
 def connection() -> Iterator[psycopg.Connection[Any]]:
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
@@ -28,7 +32,7 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
 
 @dataclass(slots=True)
 class MemoryObjectStore:
-    keys: set[str] = field(default_factory=set)
+    keys: set[str] = field(default_factory=_empty_keys)
 
     def exists(self, key: str) -> bool:
         return key in self.keys
