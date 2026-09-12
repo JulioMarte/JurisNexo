@@ -25,7 +25,9 @@ jobs:
       - name: Start database and apply migrations
         run: docker compose up -d db && docker compose run --rm migrate
       - name: Run backend schema contract tests
-        run: docker compose --profile test run --rm test
+        run: >-
+          docker compose --profile test run --rm
+          test pytest -q --ignore=tests/architecture
       - name: Show service state on failure
         if: failure()
         run: docker compose ps && docker compose logs --no-color db migrate
@@ -44,7 +46,11 @@ jobs:
       - name: Ruff
         run: docker compose --profile test run --rm --no-deps test ruff check src tests migrations
       - name: Architecture fitness functions
-        run: docker compose --profile test run --rm --no-deps test pytest tests/architecture
+        run: >-
+          docker compose --profile test run --rm --no-deps
+          -v "$PWD:/repo:ro"
+          -e JURISNEXO_REPO_ROOT=/repo
+          test pytest tests/architecture
       - name: Ruff ingestion benchmark runners
         run: >-
           docker compose --profile test run --rm --no-deps
