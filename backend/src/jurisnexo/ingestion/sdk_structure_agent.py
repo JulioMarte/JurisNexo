@@ -176,7 +176,7 @@ async def run_structure_agent(
     max_tool_output_chars: int = 60_000,
     search_max_hits: int = 20,
 ) -> StructureAgentRunResult:
-    """Run structure discovery and reject any model-produced page identity that is not source-backed."""
+    """Run structure discovery and reject source-unsupported page identities."""
 
     context = StructureAgentContext(
         environment=environment,
