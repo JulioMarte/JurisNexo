@@ -1,14 +1,10 @@
-from jurisnexo.corpus.source_inventory import (
-    normalize_scj_bulletin_pdf_url,
-    scj_source_observation_from_record,
-)
-
+from jurisnexo.corpus import source_inventory
 
 PORTAL = "https://consultasentenciascj.poderjudicial.gob.do/"
 
 
 def test_normalizes_proven_live_null_prefix() -> None:
-    url, availability, notes = normalize_scj_bulletin_pdf_url(
+    url, availability, notes = source_inventory.normalize_scj_bulletin_pdf_url(
         "NULLhttps://consultaglobal.blob.core.windows.net/boletines/Boletines/1989/Junio.pdf"
     )
     assert url == "https://consultaglobal.blob.core.windows.net/boletines/Boletines/1989/Junio.pdf"
@@ -18,7 +14,7 @@ def test_normalizes_proven_live_null_prefix() -> None:
 
 
 def test_preserves_bulletin_without_artifact_as_source_record() -> None:
-    observation = scj_source_observation_from_record(
+    observation = source_inventory.scj_source_observation_from_record(
         discovery_url=PORTAL,
         record={
             "surface": "bulletins",
@@ -42,7 +38,9 @@ def test_preserves_bulletin_without_artifact_as_source_record() -> None:
 
 def test_rejects_unknown_bulletin_url_corruption() -> None:
     try:
-        normalize_scj_bulletin_pdf_url("BROKENhttp://example.invalid/file.pdf")
+        source_inventory.normalize_scj_bulletin_pdf_url(
+            "BROKENhttp://example.invalid/file.pdf"
+        )
     except ValueError as exc:
         assert "unsupported SCJ bulletin document URL shape" in str(exc)
     else:
