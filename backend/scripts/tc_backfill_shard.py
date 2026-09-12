@@ -24,6 +24,10 @@ from jurisnexo.acquisition.official_corpus import (
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, S3ObjectStoreConfig
 from jurisnexo.corpus.artifact_catalog import PostgresOfficialArtifactCatalog
 from jurisnexo.corpus.artifact_inventory import PostgresRegisteredArtifactInventory
+from jurisnexo.corpus.source_inventory import (
+    PostgresSourceDocumentInventory,
+    SourceDocumentObservation,
+)
 
 REQUIRED_ENV = (
     "DATABASE_URL",
@@ -100,7 +104,9 @@ def build_object_store() -> S3ObjectStore:
     return S3ObjectStore(client=client, config=config, is_not_found=is_s3_not_found)
 
 
-def assigned_records(*, inventory_path: Path, shard_index: int, shard_count: int) -> list[dict[str, str]]:
+def assigned_records(
+    *, inventory_path: Path, shard_index: int, shard_count: int
+) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
     assigned_index = 0
     with inventory_path.open(encoding="utf-8") as source:
@@ -152,6 +158,7 @@ def main() -> None:
                 connection=connection,
                 storage_bucket=os.environ["JURISNEXO_S3_BUCKET"],
             )
+            source_inventory = PostgresSourceDocumentInventory(connection=connection)
             registered = PostgresRegisteredArtifactInventory(connection=connection).observations_for(
                 "constitutional_court"
             )
@@ -167,11 +174,45 @@ def main() -> None:
                         span.set_attribute("tc.shard.item_index", index)
                         span.set_attribute("source_identifier", sentence_id)
 
-                        detail_html = fetcher.get_bytes(detail_url).decode("utf-8", errors="replace")
+                        source_document_id = source_inventory.observe(
+                            SourceDocumentObservation(
+                                source="constitutional_court",
+                                source_identifier=sentence_id,
+                                source_collection="decisions",
+                                document_kind="judicial_decision",
+                                discovery_url=detail_url,
+                                document_url=None,
+                                artifact_availability="unknown",
+                                source_payload={
+                                    "source_identifier": sentence_id,
+                                    "detail_url": detail_url,
+                                },
+                            )
+                        )
+
+                        detail_html = fetcher.get_bytes(detail_url).decode(
+                            "utf-8", errors="replace"
+                        )
                         document_url = discover_pdf_link(
                             html=detail_html,
                             page_url=detail_url,
                             allowed_host="tribunalsitestorage.blob.core.windows.net",
+                        )
+                        source_document_id = source_inventory.observe(
+                            SourceDocumentObservation(
+                                source="constitutional_court",
+                                source_identifier=sentence_id,
+                                source_collection="decisions",
+                                document_kind="judicial_decision",
+                                discovery_url=detail_url,
+                                document_url=document_url,
+                                artifact_availability="available",
+                                source_payload={
+                                    "source_identifier": sentence_id,
+                                    "detail_url": detail_url,
+                                    "document_url": document_url,
+                                },
+                            )
                         )
                         candidate = OfficialDocumentCandidate(
                             source="constitutional_court",
@@ -189,6 +230,10 @@ def main() -> None:
                                 sha256=existing_digest,
                             )
                             if object_store.exists(key):
+                                source_inventory.link_artifact_sha256(
+                                    source_document_id=source_document_id,
+                                    sha256=existing_digest,
+                                )
                                 skipped_verified += 1
                                 span.set_attribute("artifact.already_verified", True)
                                 continue
@@ -202,8 +247,14 @@ def main() -> None:
                             artifact_catalog=catalog,
                         )
                         if len(artifacts) != 1:
-                            raise RuntimeError("TC backfill item did not produce exactly one artifact")
+                            raise RuntimeError(
+                                "TC backfill item did not produce exactly one artifact"
+                            )
                         artifact = artifacts[0]
+                        source_inventory.link_artifact_sha256(
+                            source_document_id=source_document_id,
+                            sha256=artifact.sha256,
+                        )
                         current[(sentence_id, document_url)] = artifact.sha256
                         acquired += 1
                         bytes_acquired += artifact.byte_count
@@ -217,7 +268,10 @@ def main() -> None:
                     }
                     failures.append(failure)
                     print(
-                        json.dumps({"event": "tc_backfill_item_failed", **failure}, ensure_ascii=False),
+                        json.dumps(
+                            {"event": "tc_backfill_item_failed", **failure},
+                            ensure_ascii=False,
+                        ),
                         flush=True,
                     )
 
@@ -267,7 +321,9 @@ def main() -> None:
     if hasattr(provider, "force_flush"):
         provider.force_flush()  # type: ignore[attr-defined]
     if failures:
-        raise RuntimeError(f"TC shard {shard_index} completed with {len(failures)} failed documents")
+        raise RuntimeError(
+            f"TC shard {shard_index} completed with {len(failures)} failed documents"
+        )
 
 
 if __name__ == "__main__":
