@@ -40,13 +40,15 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Crawl assigned SCJ pages
+        shell: bash
         env:
           SCJ_SHARD_INDEX: ${{ matrix.shard }}
           SCJ_SHARD_COUNT: '4'
           SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-inventory-shard
-        run: >-
-          python backend/scripts/scj_inventory_shard.py
-          2>&1 | tee scj-inventory-shard-${{ matrix.shard }}-otel.log
+        run: |
+          set -euo pipefail
+          python backend/scripts/scj_inventory_shard.py \
+            2>&1 | tee scj-inventory-shard-${{ matrix.shard }}-otel.log
       - name: Upload shard evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -75,15 +77,19 @@ jobs:
           path: ${{ runner.temp }}/scj-inventory-shards
           merge-multiple: true
       - name: Merge and certify row-level completeness
+        shell: bash
         env:
           SCJ_INVENTORY_INPUT: ${{ runner.temp }}/scj-inventory-shards
           SCJ_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-inventory-complete
-        run: python backend/scripts/merge_scj_inventory.py | tee scj-inventory-summary.log
+        run: |
+          set -euo pipefail
+          python backend/scripts/merge_scj_inventory.py | tee scj-inventory-summary.log
       - name: Upload certified inventory snapshot
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scj-certified-inventory-${{ github.run_id }}
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
           path: |
             ${{ runner.temp }}/scj-inventory-complete/**
