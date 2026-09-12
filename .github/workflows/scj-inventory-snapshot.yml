@@ -18,13 +18,14 @@ env:
 
 jobs:
   inventory-shard:
-    name: Inventory shard ${{ matrix.shard }} of 4
+    name: ${{ matrix.surface }} shard ${{ matrix.shard }} of 4
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix:
+        surface: [decisions, historical, bulletins]
         shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v6
@@ -39,29 +40,30 @@ jobs:
           'opentelemetry-sdk==1.44.0'
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Crawl assigned SCJ pages
+      - name: Crawl assigned SCJ surface
         shell: bash
         env:
+          SCJ_SURFACE: ${{ matrix.surface }}
           SCJ_SHARD_INDEX: ${{ matrix.shard }}
           SCJ_SHARD_COUNT: '4'
           SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-inventory-shard
         run: |
           set -euo pipefail
           python backend/scripts/scj_inventory_shard.py \
-            2>&1 | tee scj-inventory-shard-${{ matrix.shard }}-otel.log
+            2>&1 | tee scj-${{ matrix.surface }}-shard-${{ matrix.shard }}-otel.log
       - name: Upload shard evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-inventory-shard-${{ matrix.shard }}
+          name: scj-${{ matrix.surface }}-shard-${{ matrix.shard }}
           if-no-files-found: error
           retention-days: 14
           path: |
             ${{ runner.temp }}/scj-inventory-shard/**
-            scj-inventory-shard-${{ matrix.shard }}-otel.log
+            scj-${{ matrix.surface }}-shard-${{ matrix.shard }}-otel.log
 
   merge-inventory:
-    name: Certify exhaustive SCJ inventory
+    name: Certify exhaustive SCJ PDF inventory
     needs: inventory-shard
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -73,7 +75,7 @@ jobs:
       - name: Download all inventory shards
         uses: actions/download-artifact@v5
         with:
-          pattern: scj-inventory-shard-*
+          pattern: scj-*-shard-*
           path: ${{ runner.temp }}/scj-inventory-shards
           merge-multiple: true
       - name: Merge and certify row-level completeness
