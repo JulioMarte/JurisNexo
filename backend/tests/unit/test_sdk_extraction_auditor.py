@@ -64,7 +64,7 @@ def _annotations() -> ExtractionAnnotations:
 
 
 def test_extraction_auditor_is_separate_agent_with_source_tools() -> None:
-    auditor = build_extraction_auditor(model="gpt-5.6-luna")
+    auditor = build_extraction_auditor(model="gemini/gemini-3.8-flash")
 
     assert auditor.name == "JurisNexo Extraction Auditor"
     assert auditor.output_type == ExtractionAuditResult

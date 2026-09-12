@@ -233,7 +233,7 @@ def validate_extraction_annotations(
             raise ValueError(f"evidence span {index} exact_text does not match source")
 
 
-def build_extraction_agent(*, model: str = "gpt-5.6-luna") -> Agent[ExtractionAgentContext]:
+def build_extraction_agent(*, model: str) -> Agent[ExtractionAgentContext]:
     return Agent[ExtractionAgentContext](
         name="JurisNexo Extraction Agent",
         instructions=_INSTRUCTIONS,
@@ -248,7 +248,7 @@ async def run_extraction_agent(
     *,
     decision: SourceFaithfulDecision,
     artifact_label: str,
-    model: str = "gpt-5.6-luna",
+    model: str,
     max_turns: int = 12,
     max_tool_output_chars: int = 40_000,
 ) -> ExtractionAgentRunResult:

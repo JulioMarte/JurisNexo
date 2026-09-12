@@ -70,7 +70,7 @@ def _hypothesis() -> DocumentStructureHypothesis:
 
 
 def test_structure_auditor_is_independent_agent_with_read_only_document_tools() -> None:
-    auditor = build_structure_auditor(model="gpt-5.6-luna")
+    auditor = build_structure_auditor(model="gemini/gemini-3.8-flash")
 
     assert auditor.name == "JurisNexo Structure Auditor"
     assert auditor.output_type == StructureAuditResult

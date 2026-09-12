@@ -221,9 +221,7 @@ def validate_extraction_audit_evidence(
                 )
 
 
-def build_extraction_auditor(
-    *, model: str = "gpt-5.6-luna"
-) -> Agent[ExtractionAuditorContext]:
+def build_extraction_auditor(*, model: str) -> Agent[ExtractionAuditorContext]:
     return Agent[ExtractionAuditorContext](
         name="JurisNexo Extraction Auditor",
         instructions=_INSTRUCTIONS,
@@ -240,7 +238,7 @@ async def run_extraction_auditor(
     decision: SourceFaithfulDecision,
     annotations: ExtractionAnnotations,
     artifact_label: str,
-    model: str = "gpt-5.6-luna",
+    model: str,
     max_turns: int = 12,
     max_tool_output_chars: int = 40_000,
 ) -> ExtractionAuditorRunResult:

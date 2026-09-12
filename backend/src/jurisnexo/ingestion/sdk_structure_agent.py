@@ -158,8 +158,8 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
     return bound_tool_output(ctx.context, _search_text(query, hits))
 
 
-def build_structure_agent(*, model: str = "gpt-5.6-luna") -> Agent[StructureAgentContext]:
-    """Build the production-target Structure Agent on the OpenAI Agents SDK."""
+def build_structure_agent(*, model: str) -> Agent[StructureAgentContext]:
+    """Build the provider-neutral Structure Agent on the OpenAI Agents SDK runtime."""
 
     return Agent[StructureAgentContext](
         name="JurisNexo Structure Agent",
@@ -175,7 +175,7 @@ async def run_structure_agent(
     *,
     environment: DocumentEnvironment,
     artifact_label: str,
-    model: str = "gpt-5.6-luna",
+    model: str,
     max_turns: int = 12,
     max_tool_output_chars: int = 60_000,
     search_max_hits: int = 20,
