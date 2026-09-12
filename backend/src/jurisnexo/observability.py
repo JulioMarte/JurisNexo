@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -11,7 +11,7 @@ _TRACER = trace.get_tracer("jurisnexo.acquisition")
 
 
 @contextmanager
-def acquisition_span(name: str, **attributes: Any) -> Iterator[Span]:
+def acquisition_span(name: str, **attributes: Any) -> Generator[Span, None, None]:
     """Create an OpenTelemetry acquisition span without choosing an exporter.
 
     JurisNexo's core only depends on the OpenTelemetry API. The runtime (for example the live
