@@ -30,11 +30,23 @@ The following documents define the new runtime direction and override conflictin
 - `16-corpus-api-agent-contract.md` — stable API boundary for agents;
 - `17-agent-methodology-and-benchmark-map.md` — complete mapping of referenced research methodologies to measurable layers;
 - `18-migration-plan-custom-harness-to-agents-sdk.md` — migration and retirement criteria;
-- `20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, structured-output, multimodal, handoff, guardrail, tracing, and upgrade constraints.
+- `20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, structured-output, multimodal, handoff, guardrail, tracing, and upgrade constraints;
+- `21-implementation-governance-and-agent-execution.md` — canonical implementation sequencing, workstream separation, parity requirements, and definition-of-done rules for implementation agents.
+
+## Operational agent instructions and reusable prompts
+
+`AGENTS.md` is the repository-wide operational map for coding agents. It summarizes branch/CI discipline, what to read first, non-negotiable boundaries, benchmark/evidence rules, and validation expectations. It intentionally points back to the canonical docs instead of duplicating architecture rationale.
+
+Reusable task prompts live under `prompts/`:
+
+- `prompts/repository-conformance-audit.md` — read-only audit prompt for measuring current code against accepted docs;
+- `prompts/implement-documented-architecture.md` — staged implementation prompt that begins from the audit and advances through independently testable/benchmarkable workstreams.
+
+Prompts are execution aids, not architecture authority. If a prompt conflicts with accepted docs, the docs win and the prompt must be corrected.
 
 ## Conflict resolution rule
 
-If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–20, the newer runtime documents take precedence.
+If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–21, the newer runtime documents take precedence.
 
 This precedence applies only to generic agent-runtime mechanics. It does **not** relax older requirements concerning:
 
@@ -76,4 +88,5 @@ System of record: PostgreSQL + object storage
 Trust layer: provenance + typed evidence + independent audit
 Research method: iterative root agent + bounded specialists + claim verification
 Evaluation: layered frozen benchmarks + real-user market validation
+Implementation mode: small attributable workstreams with exact-head CI and semantic benchmark evidence
 ```
