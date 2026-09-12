@@ -28,7 +28,12 @@ MetadataField = Literal[
     "party",
     "source_citation",
 ]
-ReferenceKind = Literal["statute_article", "regulation", "cited_decision", "institution_document"]
+ReferenceKind = Literal[
+    "statute_article",
+    "regulation",
+    "cited_decision",
+    "institution_document",
+]
 
 
 def _empty_spans() -> list[EvidenceSpan]:
@@ -152,7 +157,9 @@ proposition graphs, citation treatment, or later-treatment conclusions in this s
 """
 
 
-def _page(decision: SourceFaithfulDecision, view_page: int) -> str:
+def render_decision_page(decision: SourceFaithfulDecision, view_page: int) -> str:
+    """Render one complete page only when it belongs to the bounded decision."""
+
     for page in decision.pages:
         if page.view_page == view_page:
             return (
@@ -162,22 +169,8 @@ def _page(decision: SourceFaithfulDecision, view_page: int) -> str:
     raise ValueError(f"view_page {view_page} is outside the bounded decision")
 
 
-def _bound(context: ExtractionAgentContext, output: str) -> str:
-    if len(output) > context.max_tool_output_chars:
-        raise ValueError("tool output exceeds extraction context budget; narrow the request")
-    return output
-
-
-@tool(failure_error_function=None)
-def get_decision_page(ctx: RunContextWrapper[ExtractionAgentContext], view_page: int) -> str:
-    """Read one complete source page, but only if it belongs to the bounded decision."""
-
-    return _bound(ctx.context, _page(ctx.context.decision, view_page))
-
-
-@tool(failure_error_function=None)
-def search_decision_text(ctx: RunContextWrapper[ExtractionAgentContext], query: str) -> str:
-    """Find literal text only inside the bounded decision and return page-local character spans."""
+def search_bounded_decision(decision: SourceFaithfulDecision, query: str) -> str:
+    """Search literal text only inside the bounded decision."""
 
     needle = query.strip()
     if not needle:
@@ -186,7 +179,7 @@ def search_decision_text(ctx: RunContextWrapper[ExtractionAgentContext], query: 
         raise ValueError("query exceeds 200 characters")
     hits: list[str] = []
     folded_needle = needle.casefold()
-    for page in ctx.context.decision.pages:
+    for page in decision.pages:
         folded = page.text.casefold()
         start = 0
         while len(hits) < 20:
@@ -199,7 +192,27 @@ def search_decision_text(ctx: RunContextWrapper[ExtractionAgentContext], query: 
                 f"{page.text[offset:end]}"
             )
             start = max(end, offset + 1)
-    return _bound(ctx.context, "\n\n".join(hits) if hits else "No literal hits.")
+    return "\n\n".join(hits) if hits else "No literal hits."
+
+
+def _bound(context: ExtractionAgentContext, output: str) -> str:
+    if len(output) > context.max_tool_output_chars:
+        raise ValueError("tool output exceeds extraction context budget; narrow the request")
+    return output
+
+
+@tool(failure_error_function=None)
+def get_decision_page(ctx: RunContextWrapper[ExtractionAgentContext], view_page: int) -> str:
+    """Read one complete source page, but only if it belongs to the bounded decision."""
+
+    return _bound(ctx.context, render_decision_page(ctx.context.decision, view_page))
+
+
+@tool(failure_error_function=None)
+def search_decision_text(ctx: RunContextWrapper[ExtractionAgentContext], query: str) -> str:
+    """Find literal text only inside the bounded decision and return page-local character spans."""
+
+    return _bound(ctx.context, search_bounded_decision(ctx.context.decision, query))
 
 
 def validate_extraction_annotations(
