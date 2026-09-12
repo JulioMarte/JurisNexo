@@ -27,7 +27,9 @@ jobs:
       - name: Run backend schema contract tests
         run: >-
           docker compose --profile test run --rm
-          test pytest -q --ignore=tests/architecture
+          -v "$PWD:/repo:ro"
+          -e JURISNEXO_REPO_ROOT=/repo
+          test pytest -q
       - name: Show service state on failure
         if: failure()
         run: docker compose ps && docker compose logs --no-color db migrate
