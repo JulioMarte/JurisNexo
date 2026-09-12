@@ -37,7 +37,7 @@ def _decision() -> SourceFaithfulDecision:
 
 
 def test_extraction_agent_has_only_bounded_decision_tools() -> None:
-    agent = build_extraction_agent(model="gpt-5.6-luna")
+    agent = build_extraction_agent(model="gemini/gemini-3.8-flash")
 
     assert agent.name == "JurisNexo Extraction Agent"
     assert agent.output_type == ExtractionAnnotations
