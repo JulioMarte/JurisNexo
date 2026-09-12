@@ -66,7 +66,9 @@ def _page_text(page: PageView) -> str:
     return f"{' | '.join(metadata)}\n{page.text}"
 
 
-def _range_text(page_range: PrintedPageRangeView) -> str:
+def render_printed_page_range(page_range: PrintedPageRangeView) -> str:
+    """Render a printed-page range without separating page identity from provenance."""
+
     header = (
         f"requested_printed_range={page_range.start_printed_page}.."
         f"{page_range.end_printed_page}"
@@ -92,7 +94,9 @@ def _search_text(query: str, hits: tuple[TextSearchHit, ...]) -> str:
     return "\n\n".join(rendered)
 
 
-def _bounded_output(context: StructureAgentContext, output: str) -> str:
+def bound_tool_output(context: StructureAgentContext, output: str) -> str:
+    """Enforce the deterministic output budget for document-inspection tools."""
+
     if len(output) > context.max_tool_output_chars:
         raise DocumentEnvironmentError(
             "requested evidence exceeds the tool output budget; narrow the range or search first"
@@ -104,7 +108,7 @@ def _bounded_output(context: StructureAgentContext, output: str) -> str:
 def get_page(ctx: RunContextWrapper[StructureAgentContext], page_number: int) -> str:
     """Read one document-view page by its 1-based view-page number."""
 
-    return _bounded_output(ctx.context, _page_text(ctx.context.environment.get_page(page_number)))
+    return bound_tool_output(ctx.context, _page_text(ctx.context.environment.get_page(page_number)))
 
 
 @tool(failure_error_function=None)
@@ -117,7 +121,7 @@ def get_pages(
 
     pages = ctx.context.environment.get_pages(start_page, end_page)
     rendered = "\n\n".join(_page_text(page) for page in pages)
-    return _bounded_output(ctx.context, rendered)
+    return bound_tool_output(ctx.context, rendered)
 
 
 @tool(failure_error_function=None)
@@ -128,7 +132,7 @@ def get_printed_page(
     """Resolve and read one original printed/editorial page number."""
 
     page = ctx.context.environment.get_printed_page(printed_page_number)
-    return _bounded_output(ctx.context, _page_text(page))
+    return bound_tool_output(ctx.context, _page_text(page))
 
 
 @tool(failure_error_function=None)
@@ -143,7 +147,7 @@ def get_printed_pages(
         start_printed_page,
         end_printed_page,
     )
-    return _bounded_output(ctx.context, _range_text(page_range))
+    return bound_tool_output(ctx.context, render_printed_page_range(page_range))
 
 
 @tool(failure_error_function=None)
@@ -151,7 +155,7 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
     """Search literal text across the document and return provenance-bearing snippets."""
 
     hits = ctx.context.environment.search_text(query, max_hits=ctx.context.search_max_hits)
-    return _bounded_output(ctx.context, _search_text(query, hits))
+    return bound_tool_output(ctx.context, _search_text(query, hits))
 
 
 def build_structure_agent(*, model: str = "gpt-5.6-luna") -> Agent[StructureAgentContext]:
