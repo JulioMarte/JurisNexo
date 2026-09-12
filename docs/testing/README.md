@@ -90,6 +90,14 @@ pytest tests/architecture
 
 The full PostgreSQL-backed backend test job also executes them with the repository root mounted read-only. This redundancy is intentional: the explicit architecture step keeps the gate visible, while the broader backend suite makes accidental removal of that one CI line easier to detect through the governance fitness test itself.
 
-Tests that inspect root-level governance/docs receive `JURISNEXO_REPO_ROOT` from CI instead of assuming the backend container contains the entire repository checkout.
+Tests that inspect root-level governance/docs receive `JURISNEXO_REPO_ROOT` from CI instead of assuming the backend container contains the entire repository checkout. Pull-request topology tests also receive the actual `GITHUB_BASE_REF` and `GITHUB_HEAD_REF` values.
 
 Other guarantees are proven through integration/PostgreSQL tests and benchmark/scorer lanes. A green architecture suite means the tested structural boundaries remain intact; it does **not** mean every semantic guarantee in the inventory is fully implemented or verified.
+
+## External governance controls
+
+Repository tests can validate the committed CI workflow, observed pull-request topology, branch-cleanup logic, documentation policy, and dependency boundaries. They cannot by themselves configure GitHub branch protection/rulesets or prevent a direct push when the hosting platform still allows one.
+
+Controls such as required status checks, pull-request-only merge policy, force-push prohibition, and default-branch deletion protection must therefore be verified/configured at the GitHub repository/ruleset layer in addition to repository tests. Do not claim a pytest proves those remote settings.
+
+If the connected automation cannot mutate those settings, report the external enforcement gap explicitly rather than weakening the repository contract or pretending the control exists.
