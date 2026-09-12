@@ -176,9 +176,11 @@ class PostgresOfficialArtifactCatalog:
                 locator,
                 observed_filename,
                 discovered_via,
-                is_preferred
+                is_preferred,
+                first_seen_at,
+                last_seen_at
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp(), clock_timestamp())
             on conflict (artifact_id, locator_type, locator) do update
             set source_registry_id = excluded.source_registry_id,
                 source_identifier = excluded.source_identifier,
@@ -188,7 +190,7 @@ class PostgresOfficialArtifactCatalog:
                 ),
                 discovered_via = excluded.discovered_via,
                 is_preferred = excluded.is_preferred,
-                last_seen_at = now()
+                last_seen_at = clock_timestamp()
             """,
             (
                 artifact_id,
