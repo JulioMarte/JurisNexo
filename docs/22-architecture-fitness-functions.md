@@ -66,6 +66,7 @@ Good candidates include:
 - architecture tests being removed from required CI;
 - duplicate/conflicting guarantee IDs;
 - repository instruction/source-of-truth drift;
+- unsafe branch/integration workflow drift;
 - future package boundaries once those packages become accepted architecture.
 
 Bad candidates include:
@@ -166,7 +167,7 @@ Protects:
 
 - unique semantic guarantee IDs;
 - declared classifications/severities/evidence/risk vocabularies;
-- HARD guarantees requiring meaningful evidence;
+- HARD non-fitness guarantees requiring meaningful behavioral evidence classes;
 - guarantee inventory not naming exact test files/paths.
 
 ### Agent/runtime connection-surface fitness
@@ -176,8 +177,7 @@ Protects:
 Protects:
 
 - agent-like/runtime packages from importing direct DB drivers;
-- provider contract surfaces from depending on concrete provider modules/SDKs;
-- durable core contracts from importing the OpenAI Agents SDK merely because it is the selected runtime.
+- the provider-neutral model contract from depending on concrete provider/runtime SDKs or database drivers.
 
 The scan is intentionally semantic/path-role based rather than a snapshot of every current module.
 
@@ -190,6 +190,19 @@ Protects:
 - required normative architecture sources remain discoverable;
 - root `AGENTS.md` points agents to the guarantee inventory/fitness-function policy;
 - `.github/workflows/ci.yml` runs `tests/architecture` as an explicit required backend-quality step.
+
+### Branch/integration workflow fitness
+
+`backend/tests/architecture/test_branch_workflow_contract.py`
+
+Protects the current controlled repository workflow:
+
+- `main` is the canonical integration/deployable branch;
+- normal work is represented by short-lived PR branches;
+- CI retains the PR/main integration surface and `CI aggregate` gate;
+- branch cleanup requires an actually merged PR, same-repository head, and protection of the default branch.
+
+This intentionally does **not** copy Request Engine's `development -> main` topology because JurisNexo has no separate staging lifecycle that justifies that branch model today.
 
 ## 6. Fitness functions do not replace other evidence
 
