@@ -1,6 +1,6 @@
 """Persist source collection routing metadata.
 
-Revision ID: 0013_source_collection_provenance
+Revision ID: 0013_source_collection
 Revises: 0012_generic_legal_documents
 Create Date: 2026-09-12
 
@@ -10,7 +10,7 @@ historical-decisions and bulletins while SHA-256 remains artifact identity.
 
 from alembic import op
 
-revision = "0013_source_collection_provenance"
+revision = "0013_source_collection"
 down_revision = "0012_generic_legal_documents"
 branch_labels = None
 depends_on = None
