@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -113,10 +113,10 @@ class IndexReferenceInvestigation(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_parallel_evidence(cls, value: Any) -> Any:
+    def migrate_legacy_parallel_evidence(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
-        data = dict(value)
+        data = dict(cast(dict[str, object], value))
         legacy_printed = data.pop("evidence_printed_pages", None)
         legacy_view = data.pop("evidence_view_pages", None)
         if legacy_printed is None and legacy_view is None:
@@ -125,8 +125,12 @@ class IndexReferenceInvestigation(BaseModel):
             raise ValueError(
                 "cannot combine evidence_pages with legacy parallel evidence arrays"
             )
-        printed = legacy_printed or []
-        view = legacy_view or []
+        if legacy_printed is not None and not isinstance(legacy_printed, list):
+            raise ValueError("legacy evidence_printed_pages must be a list")
+        if legacy_view is not None and not isinstance(legacy_view, list):
+            raise ValueError("legacy evidence_view_pages must be a list")
+        printed = [] if legacy_printed is None else cast(list[object], legacy_printed)
+        view = [] if legacy_view is None else cast(list[object], legacy_view)
         if len(printed) != len(view):
             raise ValueError(
                 "legacy evidence_printed_pages and evidence_view_pages must have equal length"
