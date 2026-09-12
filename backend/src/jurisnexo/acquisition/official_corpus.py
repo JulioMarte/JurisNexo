@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Literal, Protocol
@@ -15,6 +16,11 @@ TC_SENTENCES_URL = (
     "sentencias?order=RelativeTo_desc&searchCriteria=&searchString=&size=999999"
 )
 SCJ_MEGAQUERY_URL = "https://transparencia.poderjudicial.gob.do/consultasSCJ/megaconsulta"
+_SOURCE_STORAGE_CODES: dict[SourceName, str] = {
+    "supreme_court": "scj",
+    "constitutional_court": "tc",
+}
+_COLLECTION_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +29,7 @@ class OfficialDocumentCandidate:
     source_identifier: str
     discovery_url: str
     document_url: str
+    collection: str = "decisions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +161,7 @@ def discover_scj_pdf_candidates_from_html(
             source_identifier=identifier,
             discovery_url=page_url,
             document_url=absolute,
+            collection="decisions",
         )
     return tuple(candidates[url] for url in sorted(candidates))
 
@@ -177,6 +185,7 @@ def crawl_tc_candidates(fetcher: HttpFetcher) -> tuple[OfficialDocumentCandidate
                 source_identifier=sentence_id,
                 discovery_url=detail_url,
                 document_url=document_url,
+                collection="decisions",
             )
         )
     return tuple(candidates)
@@ -186,10 +195,15 @@ def sha256_hex(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def object_key_for(*, source: SourceName, sha256: str) -> str:
-    if len(sha256) != 64:
-        raise ValueError("sha256 must be a 64-character hexadecimal digest")
-    return f"official/{source}/{sha256[:2]}/{sha256}.pdf"
+def object_key_for(*, source: SourceName, sha256: str, collection: str = "decisions") -> str:
+    """Return the stable jurisdiction/source/collection content-addressed object key."""
+
+    if len(sha256) != 64 or any(ch not in "0123456789abcdef" for ch in sha256):
+        raise ValueError("sha256 must be a lowercase 64-character hexadecimal digest")
+    if not _COLLECTION_RE.fullmatch(collection):
+        raise ValueError("collection must be a lowercase kebab-case storage segment")
+    source_code = _SOURCE_STORAGE_CODES[source]
+    return f"jurisdictions/do/{source_code}/{collection}/{sha256[:2]}/{sha256}.pdf"
 
 
 def acquire_candidates(
@@ -218,6 +232,7 @@ def acquire_candidates(
                 "acquisition.artifact",
                 source=candidate.source,
                 source_identifier=candidate.source_identifier,
+                collection=candidate.collection,
                 **{"server.address": host},
             ) as artifact_span:
                 with acquisition_span("acquisition.download"):
@@ -229,7 +244,11 @@ def acquire_candidates(
                     digest = sha256_hex(content)
                     hash_span.set_attribute("artifact.sha256_prefix", digest[:12])
 
-                key = object_key_for(source=candidate.source, sha256=digest)
+                key = object_key_for(
+                    source=candidate.source,
+                    collection=candidate.collection,
+                    sha256=digest,
+                )
                 with acquisition_span("acquisition.object_store.head", object_key=key):
                     already_present = object_store.exists(key)
                 if not already_present:
@@ -244,6 +263,7 @@ def acquire_candidates(
                             content_type="application/pdf",
                             metadata={
                                 "source": candidate.source,
+                                "collection": candidate.collection,
                                 "source_identifier": candidate.source_identifier,
                                 "source_url": candidate.document_url,
                                 "sha256": digest,
