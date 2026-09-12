@@ -1,0 +1,125 @@
+name: SCJ gold annotation packet
+
+on:
+  workflow_dispatch:
+    inputs:
+      per_family:
+        description: Pending review rows to sample per layout family
+        required: false
+        default: "12"
+      hard_fraction:
+        description: Fraction reserved for diagnostic-bearing hard cases
+        required: false
+        default: "0.35"
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: 2023-enero-abril
+            file_path: Suprema Corte PDF/Principales_decisiones_enero-abril_2023.pdf
+          - id: 2023-mayo-agosto
+            file_path: Suprema Corte PDF/Principales_Decisiones_mayo_agosto_2023.pdf
+          - id: 2023-septiembre-diciembre
+            file_path: Suprema Corte PDF/Principales-Decisiones_Septiembre-Diciembre_2023.pdf
+          - id: 2024-enero-abril
+            file_path: Suprema Corte PDF/Principales_Decisiones_enero_abril_2024.pdf
+          - id: 2024-mayo-agosto
+            file_path: Suprema Corte PDF/Principales_Decisiones_mayo_agosto_2024.pdf
+          - id: 2024-septiembre-diciembre
+            file_path: Suprema Corte PDF/Principales-Decisiones-septiembre-diciembre-2024.pdf
+          - id: 2025-enero-abril
+            file_path: Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
+    env:
+      CORPUS_ID: ${{ matrix.id }}
+      FILE_PATH: ${{ matrix.file_path }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PDF text tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.4"
+      - name: Install locked backend environment
+        working-directory: backend
+        run: uv sync --frozen --group dev
+      - name: Download immutable corpus artifact
+        run: |
+          mkdir -p benchmark-output
+          ENCODED_PATH=$(python - <<'PY'
+          import os, urllib.parse
+          print(urllib.parse.quote(os.environ['FILE_PATH'], safe='/'))
+          PY
+          )
+          curl --fail --location --retry 3 \
+            "https://xkmfwfupskqcmeetdwbv.supabase.co/storage/v1/object/public/docs-sentencia/${ENCODED_PATH}" \
+            --output "benchmark-output/${CORPUS_ID}.pdf"
+      - name: Profile production parser
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          backend/.venv/bin/python benchmark/ingestion/run_scj_pilot_profiler.py \
+            "benchmark-output/${CORPUS_ID}.pdf" \
+            --report "benchmark-output/${CORPUS_ID}-profile.json" \
+            --review-sample "benchmark-output/${CORPUS_ID}-legacy-review.jsonl" \
+            --review-limit 1 \
+            --require-declared-count-match
+      - name: Upload profile evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-gold-profile-${{ matrix.id }}
+          path: benchmark-output/${{ matrix.id }}-profile.json
+          if-no-files-found: error
+
+  packet:
+    needs: profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download all profile evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scj-gold-profile-*
+          path: benchmark-output/profiles
+          merge-multiple: true
+      - name: Build pending annotation packet
+        run: |
+          python benchmark/ingestion/build_scj_gold_packet.py \
+            benchmark-output/profiles/*-profile.json \
+            --output benchmark-output/scj-parser-v1-pending.jsonl \
+            --per-family '${{ inputs.per_family }}' \
+            --hard-fraction '${{ inputs.hard_fraction }}'
+      - name: Prove packet cannot masquerade as reviewed gold
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('benchmark-output/scj-parser-v1-pending.jsonl')
+          rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line]
+          if not rows:
+              raise SystemExit('annotation packet is empty')
+          bad = [row for row in rows if row.get('review_status') != 'pending']
+          if bad:
+              raise SystemExit('generated packet contains non-pending review status')
+          print(f'validated {len(rows)} pending rows')
+          PY
+      - name: Upload annotation packet
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-parser-v1-annotation-packet
+          path: |
+            benchmark-output/scj-parser-v1-pending.jsonl
+            benchmark-output/profiles/*-profile.json
+            benchmark/ingestion/gold/scj-parser-v1/manifest.json
+            benchmark/ingestion/gold/scj-parser-v1/README.md
+          if-no-files-found: error
