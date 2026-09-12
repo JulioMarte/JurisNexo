@@ -142,6 +142,7 @@ def main() -> None:
     skipped_verified = 0
     repaired_storage = 0
     bytes_acquired = 0
+    failures: list[dict[str, str]] = []
     with tracer.start_as_current_span("tc.backfill.shard") as root:
         root.set_attribute("tc.shard.index", shard_index)
         root.set_attribute("tc.shard.count", shard_count)
@@ -159,53 +160,66 @@ def main() -> None:
             }
 
             for index, record in enumerate(records):
-                with tracer.start_as_current_span("tc.backfill.item") as span:
-                    sentence_id = record["source_identifier"]
-                    detail_url = record["detail_url"]
-                    span.set_attribute("tc.shard.item_index", index)
-                    span.set_attribute("source_identifier", sentence_id)
+                sentence_id = record["source_identifier"]
+                detail_url = record["detail_url"]
+                try:
+                    with tracer.start_as_current_span("tc.backfill.item") as span:
+                        span.set_attribute("tc.shard.item_index", index)
+                        span.set_attribute("source_identifier", sentence_id)
 
-                    detail_html = fetcher.get_bytes(detail_url).decode("utf-8", errors="replace")
-                    document_url = discover_pdf_link(
-                        html=detail_html,
-                        page_url=detail_url,
-                        allowed_host="tribunalsitestorage.blob.core.windows.net",
-                    )
-                    candidate = OfficialDocumentCandidate(
-                        source="constitutional_court",
-                        source_identifier=sentence_id,
-                        discovery_url=detail_url,
-                        document_url=document_url,
-                        collection="decisions",
-                    )
-
-                    existing_digest = current.get((sentence_id, document_url))
-                    if existing_digest is not None:
-                        key = object_key_for(
-                            source="constitutional_court",
-                            collection="decisions",
-                            sha256=existing_digest,
+                        detail_html = fetcher.get_bytes(detail_url).decode("utf-8", errors="replace")
+                        document_url = discover_pdf_link(
+                            html=detail_html,
+                            page_url=detail_url,
+                            allowed_host="tribunalsitestorage.blob.core.windows.net",
                         )
-                        if object_store.exists(key):
-                            skipped_verified += 1
-                            span.set_attribute("artifact.already_verified", True)
-                            continue
-                        repaired_storage += 1
-                        span.set_attribute("artifact.storage_repair", True)
+                        candidate = OfficialDocumentCandidate(
+                            source="constitutional_court",
+                            source_identifier=sentence_id,
+                            discovery_url=detail_url,
+                            document_url=document_url,
+                            collection="decisions",
+                        )
 
-                    artifacts = acquire_candidates(
-                        candidates=(candidate,),
-                        fetcher=fetcher,
-                        object_store=object_store,
-                        artifact_catalog=catalog,
+                        existing_digest = current.get((sentence_id, document_url))
+                        if existing_digest is not None:
+                            key = object_key_for(
+                                source="constitutional_court",
+                                collection="decisions",
+                                sha256=existing_digest,
+                            )
+                            if object_store.exists(key):
+                                skipped_verified += 1
+                                span.set_attribute("artifact.already_verified", True)
+                                continue
+                            repaired_storage += 1
+                            span.set_attribute("artifact.storage_repair", True)
+
+                        artifacts = acquire_candidates(
+                            candidates=(candidate,),
+                            fetcher=fetcher,
+                            object_store=object_store,
+                            artifact_catalog=catalog,
+                        )
+                        if len(artifacts) != 1:
+                            raise RuntimeError("TC backfill item did not produce exactly one artifact")
+                        artifact = artifacts[0]
+                        current[(sentence_id, document_url)] = artifact.sha256
+                        acquired += 1
+                        bytes_acquired += artifact.byte_count
+                        span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
+                except Exception as exc:
+                    failure = {
+                        "source_identifier": sentence_id,
+                        "detail_url": detail_url,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:2000],
+                    }
+                    failures.append(failure)
+                    print(
+                        json.dumps({"event": "tc_backfill_item_failed", **failure}, ensure_ascii=False),
+                        flush=True,
                     )
-                    if len(artifacts) != 1:
-                        raise RuntimeError("TC backfill item did not produce exactly one artifact")
-                    artifact = artifacts[0]
-                    current[(sentence_id, document_url)] = artifact.sha256
-                    acquired += 1
-                    bytes_acquired += artifact.byte_count
-                    span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
 
                 if (index + 1) % 100 == 0 or index + 1 == len(records):
                     print(
@@ -218,6 +232,7 @@ def main() -> None:
                                 "acquired": acquired,
                                 "skipped_verified": skipped_verified,
                                 "storage_repairs": repaired_storage,
+                                "failures": len(failures),
                             },
                             sort_keys=True,
                         ),
@@ -225,25 +240,34 @@ def main() -> None:
                     )
 
         summary = {
-            "status": "PASS",
+            "status": "PASS" if not failures else "INCOMPLETE",
             "shard_index": shard_index,
             "shard_count": shard_count,
             "candidate_count": len(records),
             "acquired_or_repaired_count": acquired,
             "skipped_verified_count": skipped_verified,
             "storage_repair_count": repaired_storage,
+            "failure_count": len(failures),
             "bytes_acquired": bytes_acquired,
         }
         (output_dir / f"backfill-{shard_index:02d}-summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
         )
+        with (output_dir / f"backfill-{shard_index:02d}-failures.jsonl").open(
+            "w", encoding="utf-8"
+        ) as handle:
+            for failure in failures:
+                handle.write(json.dumps(failure, ensure_ascii=False, sort_keys=True) + "\n")
         root.set_attribute("tc.shard.acquired_count", acquired)
         root.set_attribute("tc.shard.skipped_verified_count", skipped_verified)
+        root.set_attribute("tc.shard.failure_count", len(failures))
         root.set_attribute("tc.shard.bytes_acquired", bytes_acquired)
 
     provider = trace.get_tracer_provider()
     if hasattr(provider, "force_flush"):
         provider.force_flush()  # type: ignore[attr-defined]
+    if failures:
+        raise RuntimeError(f"TC shard {shard_index} completed with {len(failures)} failed documents")
 
 
 if __name__ == "__main__":
