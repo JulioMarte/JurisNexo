@@ -16,6 +16,8 @@ down_revision = "0009_corpus_scopes"
 branch_labels = None
 depends_on = None
 
+PUBLIC_SCOPE_ID = "00000000-0000-0000-0000-000000000001"
+
 
 def upgrade() -> None:
     op.execute(
@@ -28,7 +30,12 @@ def upgrade() -> None:
     )
 
     for table in ("case_artifact_occurrences", "case_pages"):
-        op.execute(f"ALTER TABLE corpus.{table} ADD COLUMN scope_id uuid")
+        op.execute(
+            f"""
+            ALTER TABLE corpus.{table}
+            ADD COLUMN scope_id uuid DEFAULT '{PUBLIC_SCOPE_ID}'::uuid
+            """
+        )
         op.execute(
             f"""
             UPDATE corpus.{table} linked
@@ -63,13 +70,13 @@ def upgrade() -> None:
     op.execute(
         """
         COMMENT ON COLUMN corpus.case_artifact_occurrences.scope_id IS
-        'Scope shared by the canonical case and source artifact; composite foreign keys reject cross-scope provenance.'
+        'Scope shared by the canonical case and source artifact; public links default to the stable public scope while private links must name their private scope explicitly.'
         """
     )
     op.execute(
         """
         COMMENT ON COLUMN corpus.case_pages.scope_id IS
-        'Scope shared by the canonical case and source artifact page; composite foreign keys reject cross-scope provenance.'
+        'Scope shared by the canonical case and source artifact page; public links default to the stable public scope while private links must name their private scope explicitly.'
         """
     )
 
