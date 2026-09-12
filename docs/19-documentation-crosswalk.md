@@ -22,7 +22,7 @@ The following existing documents remain authoritative for their domain contracts
 - `11-benchmark-annotation-and-evaluation-protocol.md` — benchmark discipline;
 - `12-mvp-user-workflow-and-api-contract.md` — product-facing API/workflow.
 
-The following documents define the new runtime direction and override conflicting assumptions about building a custom agent harness:
+The following documents define the current runtime/implementation direction and override conflicting assumptions about building a custom agent harness:
 
 - `13-agent-runtime-and-multi-agent-orchestration.md` — canonical runtime/orchestration design;
 - `14-agent-runtime-decision-record.md` — explicit ADR selecting OpenAI Agents SDK;
@@ -31,11 +31,14 @@ The following documents define the new runtime direction and override conflictin
 - `17-agent-methodology-and-benchmark-map.md` — complete mapping of referenced research methodologies to measurable layers;
 - `18-migration-plan-custom-harness-to-agents-sdk.md` — migration and retirement criteria;
 - `20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, structured-output, multimodal, handoff, guardrail, tracing, and upgrade constraints;
-- `21-implementation-governance-and-agent-execution.md` — canonical implementation sequencing, workstream separation, parity requirements, and definition-of-done rules for implementation agents.
+- `21-implementation-governance-and-agent-execution.md` — canonical implementation sequencing, workstream separation, parity requirements, and definition-of-done rules for implementation agents;
+- `22-architecture-fitness-functions.md` — executable architecture-governance methodology and rules for creating/evolving structural fitness functions.
+
+`docs/testing/current-guarantees.toml` is the normative semantic guarantee inventory used by architecture/testing governance. It names durable guarantees and required evidence classes; it intentionally does not freeze exact test filenames.
 
 ## Operational agent instructions and reusable prompts
 
-`AGENTS.md` is the repository-wide operational map for coding agents. It summarizes branch/CI discipline, what to read first, non-negotiable boundaries, benchmark/evidence rules, and validation expectations. It intentionally points back to the canonical docs instead of duplicating architecture rationale.
+`AGENTS.md` is the repository-wide operational map for coding agents. It summarizes branch/CI discipline, what to read first, non-negotiable boundaries, benchmark/evidence rules, architecture-fitness policy, and validation expectations. It intentionally points back to the canonical docs instead of duplicating architecture rationale.
 
 Reusable task prompts live under `prompts/`:
 
@@ -46,9 +49,9 @@ Prompts are execution aids, not architecture authority. If a prompt conflicts wi
 
 ## Conflict resolution rule
 
-If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–21, the newer runtime documents take precedence.
+If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–22, the newer runtime/implementation documents take precedence.
 
-This precedence applies only to generic agent-runtime mechanics. It does **not** relax older requirements concerning:
+This precedence applies only to generic agent-runtime/implementation mechanics. It does **not** relax older requirements concerning:
 
 - provenance;
 - source preservation;
@@ -62,6 +65,14 @@ This precedence applies only to generic agent-runtime mechanics. It does **not**
 - market validation.
 
 Those remain mandatory unless explicitly changed by a future ADR.
+
+## Architecture/testing interpretation rule
+
+`docs/22-architecture-fitness-functions.md` defines when a documented architecture rule should become a deterministic fitness function. `docs/testing/current-guarantees.toml` defines the durable semantic guarantees and the evidence classes each one requires.
+
+Architecture tests are blocking structural evidence, not substitutes for PostgreSQL/security/concurrency tests or semantic legal benchmarks. A fitness test should protect a stable risk/boundary rather than freeze incidental repository shape.
+
+When architecture intentionally changes, update the current normative document, guarantee inventory when semantics change, and executable fitness function in one coherent change. Do not mechanically weaken a test or widen an allowlist only to make CI green.
 
 ## Research-method interpretation rule
 
@@ -89,4 +100,5 @@ Trust layer: provenance + typed evidence + independent audit
 Research method: iterative root agent + bounded specialists + claim verification
 Evaluation: layered frozen benchmarks + real-user market validation
 Implementation mode: small attributable workstreams with exact-head CI and semantic benchmark evidence
+Architecture governance: normative guarantee inventory + blocking fitness functions + stronger evidence by risk class
 ```
