@@ -46,6 +46,7 @@ class ArtifactCatalogRecord:
     source_registry_id: UUID
     official_url: str
     source_identifier: str
+    source_collection: str
     observed_filename: str | None
     storage_locator: str
 
@@ -126,6 +127,7 @@ class PostgresOfficialArtifactCatalog:
                 artifact_id=artifact_id,
                 source_registry_id=source_registry_id,
                 source_identifier=artifact.candidate.source_identifier,
+                source_collection=artifact.candidate.collection,
                 locator_type="official_url",
                 locator=artifact.candidate.document_url,
                 observed_filename=observed_filename,
@@ -137,6 +139,7 @@ class PostgresOfficialArtifactCatalog:
                 artifact_id=artifact_id,
                 source_registry_id=source_registry_id,
                 source_identifier=artifact.candidate.source_identifier,
+                source_collection=artifact.candidate.collection,
                 locator_type="storage_object",
                 locator=storage_locator,
                 observed_filename=PurePosixPath(artifact.object_key).name,
@@ -149,6 +152,7 @@ class PostgresOfficialArtifactCatalog:
             source_registry_id=source_registry_id,
             official_url=artifact.candidate.document_url,
             source_identifier=artifact.candidate.source_identifier,
+            source_collection=artifact.candidate.collection,
             observed_filename=observed_filename,
             storage_locator=storage_locator,
         )
@@ -160,6 +164,7 @@ class PostgresOfficialArtifactCatalog:
         artifact_id: UUID,
         source_registry_id: UUID,
         source_identifier: str,
+        source_collection: str,
         locator_type: str,
         locator: str,
         observed_filename: str | None,
@@ -172,6 +177,7 @@ class PostgresOfficialArtifactCatalog:
                 artifact_id,
                 source_registry_id,
                 source_identifier,
+                source_collection,
                 locator_type,
                 locator,
                 observed_filename,
@@ -180,10 +186,11 @@ class PostgresOfficialArtifactCatalog:
                 first_seen_at,
                 last_seen_at
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp(), clock_timestamp())
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp(), clock_timestamp())
             on conflict (artifact_id, locator_type, locator) do update
             set source_registry_id = excluded.source_registry_id,
                 source_identifier = excluded.source_identifier,
+                source_collection = excluded.source_collection,
                 observed_filename = coalesce(
                     excluded.observed_filename,
                     corpus.source_artifact_locations.observed_filename
@@ -196,6 +203,7 @@ class PostgresOfficialArtifactCatalog:
                 artifact_id,
                 source_registry_id,
                 source_identifier,
+                source_collection,
                 locator_type,
                 locator,
                 observed_filename,
