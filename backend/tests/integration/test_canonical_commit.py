@@ -9,6 +9,7 @@ import psycopg
 import pytest
 
 from jurisnexo.corpus.access import (
+    CanonicalAuditState,
     CanonicalCommitAuthorization,
     CorpusAuthorizationError,
     CorpusPrincipal,
@@ -18,6 +19,7 @@ from jurisnexo.corpus.canonical_commit import (
     CanonicalCaseCommitRequest,
     CanonicalCommitError,
     CanonicalSourcePageBinding,
+    StructureAuditState,
     commit_canonical_case,
 )
 from jurisnexo.ingestion.decision_reconstruction import (
@@ -146,8 +148,8 @@ def _request(
     artifact_id: UUID,
     page_ids: tuple[UUID, UUID],
     court_id: UUID,
-    extraction_state: str = "VERIFIED",
-    structure_state: str = "APPROVED",
+    extraction_state: CanonicalAuditState = "VERIFIED",
+    structure_state: StructureAuditState = "APPROVED",
     decision: SourceFaithfulDecision | None = None,
 ) -> CanonicalCaseCommitRequest:
     return CanonicalCaseCommitRequest(
