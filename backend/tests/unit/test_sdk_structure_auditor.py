@@ -5,7 +5,10 @@ from agents import FunctionTool
 from pydantic import ValidationError
 
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
-from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
+from jurisnexo.ingestion.document_environment import (
+    DocumentEnvironment,
+    DocumentEnvironmentError,
+)
 from jurisnexo.ingestion.sdk_structure_auditor import (
     StructureAuditResult,
     build_structure_auditor,
