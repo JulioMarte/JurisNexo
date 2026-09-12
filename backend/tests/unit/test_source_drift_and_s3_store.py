@@ -18,9 +18,13 @@ class MissingObjectError(Exception):
     pass
 
 
+def _empty_s3_objects() -> dict[tuple[str, str], bytes]:
+    return {}
+
+
 @dataclass(slots=True)
 class FakeS3Client:
-    objects: dict[tuple[str, str], bytes] = field(default_factory=dict)
+    objects: dict[tuple[str, str], bytes] = field(default_factory=_empty_s3_objects)
 
     def head_object(self, *, Bucket: str, Key: str) -> object:
         if (Bucket, Key) not in self.objects:
