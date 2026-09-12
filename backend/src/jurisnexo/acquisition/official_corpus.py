@@ -6,6 +6,8 @@ from html.parser import HTMLParser
 from typing import Literal, Protocol
 from urllib.parse import urljoin, urlparse
 
+from jurisnexo.observability import acquisition_span, span_event
+
 SourceName = Literal["supreme_court", "constitutional_court"]
 
 TC_SENTENCES_URL = (
@@ -197,40 +199,71 @@ def acquire_candidates(
     object_store: ObjectStore,
     artifact_catalog: ArtifactCatalog | None = None,
 ) -> tuple[StoredOfficialArtifact, ...]:
-    """Download, content-address, deduplicate, and register official PDFs."""
+    """Download, content-address, deduplicate, register, and trace official PDFs."""
 
     seen_urls: set[str] = set()
     results: list[StoredOfficialArtifact] = []
-    for candidate in candidates:
-        if candidate.document_url in seen_urls:
-            continue
-        seen_urls.add(candidate.document_url)
-        content = fetcher.get_bytes(candidate.document_url)
-        if not content.startswith(b"%PDF"):
-            raise ValueError(f"official document is not a PDF: {candidate.document_url}")
-        digest = sha256_hex(content)
-        key = object_key_for(source=candidate.source, sha256=digest)
-        already_present = object_store.exists(key)
-        if not already_present:
-            object_store.put(
-                key=key,
-                content=content,
-                content_type="application/pdf",
-                metadata={
-                    "source": candidate.source,
-                    "source_identifier": candidate.source_identifier,
-                    "source_url": candidate.document_url,
-                    "sha256": digest,
-                },
-            )
-        artifact = StoredOfficialArtifact(
-            candidate=candidate,
-            sha256=digest,
-            byte_count=len(content),
-            object_key=key,
-            already_present=already_present,
-        )
-        if artifact_catalog is not None:
-            artifact_catalog.register(artifact)
-        results.append(artifact)
+    with acquisition_span("acquisition.batch", candidate_count=len(candidates)) as batch_span:
+        for candidate in candidates:
+            if candidate.document_url in seen_urls:
+                span_event(
+                    "candidate.duplicate_url_skipped",
+                    source=candidate.source,
+                    source_identifier=candidate.source_identifier,
+                )
+                continue
+            seen_urls.add(candidate.document_url)
+            host = urlparse(candidate.document_url).hostname or ""
+            with acquisition_span(
+                "acquisition.artifact",
+                source=candidate.source,
+                source_identifier=candidate.source_identifier,
+                **{"server.address": host},
+            ) as artifact_span:
+                with acquisition_span("acquisition.download"):
+                    content = fetcher.get_bytes(candidate.document_url)
+                if not content.startswith(b"%PDF"):
+                    raise ValueError(f"official document is not a PDF: {candidate.document_url}")
+
+                with acquisition_span("acquisition.hash", byte_count=len(content)) as hash_span:
+                    digest = sha256_hex(content)
+                    hash_span.set_attribute("artifact.sha256_prefix", digest[:12])
+
+                key = object_key_for(source=candidate.source, sha256=digest)
+                with acquisition_span("acquisition.object_store.head", object_key=key):
+                    already_present = object_store.exists(key)
+                if not already_present:
+                    with acquisition_span(
+                        "acquisition.object_store.put",
+                        object_key=key,
+                        byte_count=len(content),
+                    ):
+                        object_store.put(
+                            key=key,
+                            content=content,
+                            content_type="application/pdf",
+                            metadata={
+                                "source": candidate.source,
+                                "source_identifier": candidate.source_identifier,
+                                "source_url": candidate.document_url,
+                                "sha256": digest,
+                            },
+                        )
+
+                artifact = StoredOfficialArtifact(
+                    candidate=candidate,
+                    sha256=digest,
+                    byte_count=len(content),
+                    object_key=key,
+                    already_present=already_present,
+                )
+                if artifact_catalog is not None:
+                    with acquisition_span("acquisition.catalog.register"):
+                        artifact_catalog.register(artifact)
+                artifact_span.set_attribute("artifact.byte_count", len(content))
+                artifact_span.set_attribute("artifact.sha256_prefix", digest[:12])
+                artifact_span.set_attribute("artifact.already_present", already_present)
+                results.append(artifact)
+
+        batch_span.set_attribute("acquisition.completed_count", len(results))
     return tuple(results)
