@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import TypedDict, cast
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
 INVENTORY = REPO_ROOT / "docs" / "testing" / "current-guarantees.toml"
 
 KNOWN_CLASSIFICATIONS = {"HARD", "CONTROLLED", "FLEXIBLE", "HISTORICAL"}
