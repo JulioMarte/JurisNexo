@@ -1,0 +1,28 @@
+name: Generate SDK lockfile
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/pyproject.toml"
+      - ".github/workflows/generate-sdk-lock.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.4"
+      - name: Generate lock
+        working-directory: backend
+        run: uv lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-uv-lock
+          path: backend/uv.lock
+          if-no-files-found: error
