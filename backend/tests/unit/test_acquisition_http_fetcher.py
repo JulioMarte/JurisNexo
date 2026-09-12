@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 
 import pytest
 
-from jurisnexo.acquisition.http_fetcher import BoundedHttpFetcher, HttpPayload
+from jurisnexo.acquisition.http_fetcher import (
+    BoundedHttpFetcher,
+    HttpPayload,
+    HttpStatusError,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
 
@@ -88,13 +92,7 @@ def test_fetcher_rejects_redirect_to_non_allowlisted_host() -> None:
 
 
 def test_fetcher_retries_transient_http_error_with_bounded_backoff() -> None:
-    transient = HTTPError(
-        "https://official.example/a.pdf",
-        503,
-        "temporary",
-        hdrs=None,
-        fp=None,
-    )
+    transient = HttpStatusError(url="https://official.example/a.pdf", status=503)
     transport = SequenceTransport(
         outcomes=(
             transient,
