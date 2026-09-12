@@ -19,6 +19,13 @@ class HttpPayload:
     status: int
 
 
+class HttpStatusError(RuntimeError):
+    def __init__(self, *, url: str, status: int) -> None:
+        super().__init__(f"HTTP {status} from {url}")
+        self.url = url
+        self.status = status
+
+
 class HttpTransport(Protocol):
     def fetch(self, *, url: str, timeout_seconds: float, user_agent: str) -> HttpPayload: ...
 
@@ -82,7 +89,6 @@ class BoundedHttpFetcher:
 
     def get_bytes(self, url: str) -> bytes:
         self._require_allowed_url(url)
-        last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
                 payload = self.transport.fetch(
@@ -92,29 +98,22 @@ class BoundedHttpFetcher:
                 )
                 self._require_allowed_url(payload.final_url)
                 if payload.status >= 400:
-                    raise HTTPError(
-                        payload.final_url,
-                        payload.status,
-                        f"HTTP {payload.status}",
-                        hdrs=None,
-                        fp=None,
-                    )
+                    raise HttpStatusError(url=payload.final_url, status=payload.status)
                 if len(payload.content) > self.max_bytes:
                     raise ValueError(
                         f"official-source response exceeds max_bytes={self.max_bytes}"
                     )
                 return payload.content
             except HTTPError as exc:
-                last_error = exc
-                retryable = exc.code in self.retryable_status
-            except URLError as exc:
-                last_error = exc
-                retryable = True
+                if exc.code not in self.retryable_status or attempt >= self.max_attempts:
+                    raise
+            except HttpStatusError as exc:
+                if exc.status not in self.retryable_status or attempt >= self.max_attempts:
+                    raise
+            except URLError:
+                if attempt >= self.max_attempts:
+                    raise
 
-            if not retryable or attempt >= self.max_attempts:
-                if last_error is None:
-                    raise RuntimeError("HTTP acquisition failed without an error")
-                raise last_error
             self.sleep(self.retry_base_delay_seconds * (2 ** (attempt - 1)))
 
         raise RuntimeError("unreachable acquisition retry state")
