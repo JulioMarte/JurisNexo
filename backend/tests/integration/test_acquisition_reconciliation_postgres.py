@@ -143,4 +143,4 @@ def test_reconciliation_acquires_only_missing_compendium_rows_and_certifies(
             sha256=sha256_hex(missing_content),
         )
         assert missing_key in store.keys
-        assert missing_key.startswith("official/constitutional_court/")
+        assert missing_key.startswith("jurisdictions/do/tc/decisions/")
