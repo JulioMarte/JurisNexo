@@ -17,7 +17,7 @@ class PostgresRegisteredArtifactInventory:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                select
+                select distinct on (l.source_identifier, l.locator)
                     r.code,
                     l.source_identifier,
                     l.locator,
@@ -28,7 +28,11 @@ class PostgresRegisteredArtifactInventory:
                 where r.code = %s
                   and l.locator_type = 'official_url'
                   and l.source_identifier is not null
-                order by l.source_identifier, l.last_seen_at, l.id
+                order by
+                    l.source_identifier,
+                    l.locator,
+                    l.last_seen_at desc,
+                    l.id desc
                 """,
                 (source,),
             )
