@@ -18,6 +18,13 @@ PAGE_SIZE = 10
 Surface = Literal["decisions", "historical", "bulletins"]
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().casefold() not in {"", "0", "false", "no", "off"}
+
+
 def configure_telemetry(surface: Surface) -> None:
     provider = TracerProvider(
         resource=Resource.create(
@@ -31,7 +38,8 @@ def configure_telemetry(surface: Surface) -> None:
             }
         )
     )
-    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    if _env_flag("JURISNEXO_OTEL_CONSOLE", True):
+        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
     trace.set_tracer_provider(provider)
 
 
@@ -147,6 +155,33 @@ def write_record(
     output.write("\n")
 
 
+def write_rejected_row(
+    path: Path,
+    *,
+    surface: Surface,
+    shard_index: int,
+    coordinate: str,
+    row: dict[str, Any],
+    error: Exception,
+) -> None:
+    with path.open("a", encoding="utf-8") as rejected:
+        rejected.write(
+            json.dumps(
+                {
+                    "surface": surface,
+                    "shard_index": shard_index,
+                    "coordinate": coordinate,
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                    "row": row,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        rejected.write("\n")
+
+
 def main() -> None:
     surface_value = os.environ.get("SCJ_SURFACE", "decisions")
     if surface_value not in {"decisions", "historical", "bulletins"}:
@@ -162,6 +197,9 @@ def main() -> None:
     tracer = trace.get_tracer("jurisnexo.scj.inventory")
 
     output_path = output_dir / f"{surface}-shard-{shard_index:02d}.jsonl"
+    rejected_path = output_dir / f"{surface}-shard-{shard_index:02d}-rejected.jsonl"
+    if rejected_path.exists():
+        rejected_path.unlink()
     key_digest = hashlib.sha256()
     row_count = 0
     expected_total: int | None = None
@@ -180,7 +218,6 @@ def main() -> None:
             navigation = page.goto(TARGET, wait_until="networkidle", timeout=120_000)
             if navigation is None or navigation.status != 200:
                 raise RuntimeError("SCJ portal bootstrap failed")
-            # A real UI query initializes the server session used by the underlying endpoints.
             page.select_option("#cbTipoDocumento", "1")
             page.wait_for_timeout(2_000)
 
@@ -212,18 +249,27 @@ def main() -> None:
                                 raise RuntimeError(
                                     f"SCJ {surface} returned an empty page before total at start={start}"
                                 )
-                            # The SCJ endpoint sometimes returns more than the requested ten rows.
-                            # We deliberately preserve them all and certify completeness later by
-                            # unique stable-key cardinality against recordsFiltered.
                             for offset, row in enumerate(rows):
-                                write_record(
-                                    output,
-                                    surface=surface,
-                                    shard_index=shard_index,
-                                    coordinate=f"start={start};offset={offset}",
-                                    row=row,
-                                    digest=key_digest,
-                                )
+                                coordinate = f"start={start};offset={offset}"
+                                try:
+                                    write_record(
+                                        output,
+                                        surface=surface,
+                                        shard_index=shard_index,
+                                        coordinate=coordinate,
+                                        row=row,
+                                        digest=key_digest,
+                                    )
+                                except ValueError as exc:
+                                    write_rejected_row(
+                                        rejected_path,
+                                        surface=surface,
+                                        shard_index=shard_index,
+                                        coordinate=coordinate,
+                                        row=row,
+                                        error=exc,
+                                    )
+                                    raise
                                 row_count += 1
                             span.set_attribute("scj.page.row_count", len(rows))
                 else:
@@ -251,14 +297,26 @@ def main() -> None:
                             ):
                                 raise TypeError("SCJ bulletin data is not a list of objects")
                             for offset, row in enumerate(rows):
-                                write_record(
-                                    output,
-                                    surface=surface,
-                                    shard_index=shard_index,
-                                    coordinate=f"year={year};offset={offset}",
-                                    row=row,
-                                    digest=key_digest,
-                                )
+                                coordinate = f"year={year};offset={offset}"
+                                try:
+                                    write_record(
+                                        output,
+                                        surface=surface,
+                                        shard_index=shard_index,
+                                        coordinate=coordinate,
+                                        row=row,
+                                        digest=key_digest,
+                                    )
+                                except ValueError as exc:
+                                    write_rejected_row(
+                                        rejected_path,
+                                        surface=surface,
+                                        shard_index=shard_index,
+                                        coordinate=coordinate,
+                                        row=row,
+                                        error=exc,
+                                    )
+                                    raise
                                 row_count += 1
                             span.set_attribute("scj.year.row_count", len(rows))
             browser.close()
