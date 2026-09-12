@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, LiteralString
 from uuid import UUID
 
 import psycopg
@@ -94,7 +94,7 @@ def _insert_case(cursor: psycopg.Cursor[Any], *, scope_id: UUID, court_id: UUID)
 
 
 def _expect_foreign_key_violation(
-    cursor: psycopg.Cursor[Any], sql: str, params: tuple[object, ...]
+    cursor: psycopg.Cursor[Any], sql: LiteralString, params: tuple[object, ...]
 ) -> None:
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         cursor.execute(sql, params)
