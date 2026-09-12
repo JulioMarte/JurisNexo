@@ -34,6 +34,11 @@ class S3ObjectStoreConfig:
         if not self.region.strip():
             raise ValueError("region must not be empty")
 
+    def locator_for(self, key: str) -> str:
+        if not key.strip():
+            raise ValueError("object key must not be empty")
+        return f"s3://{self.bucket}/{key}"
+
 
 @dataclass(slots=True)
 class S3ObjectStore:
