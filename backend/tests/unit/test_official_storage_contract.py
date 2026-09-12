@@ -1,9 +1,6 @@
-from __future__ import annotations
-
 import pytest
 
 from jurisnexo.acquisition.official_corpus import object_key_for
-
 
 DIGEST = "a" * 64
 
