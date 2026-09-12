@@ -8,7 +8,10 @@ from agents.decorators import tool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jurisnexo.ingestion.decision_reconstruction import SourceFaithfulDecision
-from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
+from jurisnexo.ingestion.document_environment import (
+    DocumentEnvironment,
+    DocumentEnvironmentError,
+)
 from jurisnexo.ingestion.sdk_extraction_agent import (
     ExtractionAnnotations,
     render_decision_page,
@@ -202,11 +205,20 @@ def validate_extraction_audit_evidence(
             label = f"audit check {check_index}, evidence {evidence_index}"
             page = environment.get_page(evidence.view_page)
             if page.printed_page_number != evidence.printed_page:
-                raise DocumentEnvironmentError(f"{label}: printed page identity does not match source")
-            if evidence.source_reference is not None and page.source_reference != evidence.source_reference:
-                raise DocumentEnvironmentError(f"{label}: source_reference does not match source")
+                raise DocumentEnvironmentError(
+                    f"{label}: printed page identity does not match source"
+                )
+            if (
+                evidence.source_reference is not None
+                and page.source_reference != evidence.source_reference
+            ):
+                raise DocumentEnvironmentError(
+                    f"{label}: source_reference does not match source"
+                )
             if evidence.exact_excerpt not in page.text:
-                raise DocumentEnvironmentError(f"{label}: exact_excerpt is absent from source page")
+                raise DocumentEnvironmentError(
+                    f"{label}: exact_excerpt is absent from source page"
+                )
 
 
 def build_extraction_auditor(
