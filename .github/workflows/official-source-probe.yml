@@ -2,6 +2,8 @@ name: Official source probe
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * *"
 
 permissions:
   contents: read
@@ -30,7 +32,7 @@ jobs:
           uv run python -m jurisnexo.acquisition.source_probe \
             --output-directory ../source-probe-output
 
-      - name: Upload source evidence
+      - name: Upload source evidence and recovery requests
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -39,5 +41,6 @@ jobs:
             source-probe-output/scj-megaconsulta.html
             source-probe-output/tc-sentences.html
             source-probe-output/summary.json
+            source-probe-output/browser-recovery-*.json
           if-no-files-found: warn
           retention-days: 14

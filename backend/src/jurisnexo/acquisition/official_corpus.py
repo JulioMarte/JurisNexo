@@ -49,6 +49,10 @@ class ObjectStore(Protocol):
     ) -> None: ...
 
 
+class ArtifactCatalog(Protocol):
+    def register(self, artifact: StoredOfficialArtifact) -> object: ...
+
+
 @dataclass(frozen=True, slots=True)
 class _Anchor:
     href: str
@@ -191,8 +195,9 @@ def acquire_candidates(
     candidates: tuple[OfficialDocumentCandidate, ...],
     fetcher: HttpFetcher,
     object_store: ObjectStore,
+    artifact_catalog: ArtifactCatalog | None = None,
 ) -> tuple[StoredOfficialArtifact, ...]:
-    """Download and content-address official PDFs idempotently."""
+    """Download, content-address, deduplicate, and register official PDFs."""
 
     seen_urls: set[str] = set()
     results: list[StoredOfficialArtifact] = []
@@ -218,13 +223,14 @@ def acquire_candidates(
                     "sha256": digest,
                 },
             )
-        results.append(
-            StoredOfficialArtifact(
-                candidate=candidate,
-                sha256=digest,
-                byte_count=len(content),
-                object_key=key,
-                already_present=already_present,
-            )
+        artifact = StoredOfficialArtifact(
+            candidate=candidate,
+            sha256=digest,
+            byte_count=len(content),
+            object_key=key,
+            already_present=already_present,
         )
+        if artifact_catalog is not None:
+            artifact_catalog.register(artifact)
+        results.append(artifact)
     return tuple(results)

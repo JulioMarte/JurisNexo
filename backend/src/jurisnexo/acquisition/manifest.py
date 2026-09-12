@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from jurisnexo.acquisition.official_corpus import (
+    ArtifactCatalog,
     HttpFetcher,
     ObjectStore,
     OfficialDocumentCandidate,
@@ -35,7 +36,7 @@ class AcquisitionManifestRecord:
 
 
 class FileAcquisitionManifest:
-    """Append-only JSONL checkpoint for resumable deterministic acquisition runs."""
+    """Append-only JSONL history and latest checkpoint for deterministic acquisition."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -77,9 +78,7 @@ class FileAcquisitionManifest:
         )
         key = self._key(record.source, record.document_url)
         existing = self._records.get(key)
-        if existing is not None:
-            if existing != record:
-                raise ValueError("manifest already contains conflicting data for document URL")
+        if existing == record:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as stream:
@@ -94,9 +93,10 @@ def acquire_candidates_resumable(
     fetcher: HttpFetcher,
     object_store: ObjectStore,
     manifest: FileAcquisitionManifest,
+    artifact_catalog: ArtifactCatalog | None = None,
     refresh: bool = False,
 ) -> tuple[StoredOfficialArtifact, ...]:
-    """Acquire candidates one-by-one and checkpoint every successful object write."""
+    """Acquire candidates and preserve every successful URL-to-content observation."""
 
     results: list[StoredOfficialArtifact] = []
     seen_urls: set[tuple[SourceName, str]] = set()
@@ -108,28 +108,18 @@ def acquire_candidates_resumable(
 
         existing = manifest.get(candidate)
         if existing is not None and not refresh:
-            results.append(existing.to_artifact(candidate))
+            artifact = existing.to_artifact(candidate)
+            if artifact_catalog is not None:
+                artifact_catalog.register(artifact)
+            results.append(artifact)
             continue
 
         acquired = acquire_candidates(
             candidates=(candidate,),
             fetcher=fetcher,
             object_store=object_store,
+            artifact_catalog=artifact_catalog,
         )[0]
-        if existing is not None and refresh:
-            refreshed = AcquisitionManifestRecord(
-                source=acquired.candidate.source,
-                source_identifier=acquired.candidate.source_identifier,
-                discovery_url=acquired.candidate.discovery_url,
-                document_url=acquired.candidate.document_url,
-                sha256=acquired.sha256,
-                byte_count=acquired.byte_count,
-                object_key=acquired.object_key,
-            )
-            if existing != refreshed:
-                raise ValueError(
-                    "refresh detected changed content for an already checkpointed document URL"
-                )
         manifest.append(acquired)
         results.append(acquired)
     return tuple(results)
