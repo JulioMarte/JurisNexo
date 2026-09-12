@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from jurisnexo.corpus.access import (
+    CanonicalAuditState,
     CanonicalCommitAuthorization,
     CorpusAuthorizationError,
     CorpusPrincipal,
@@ -30,7 +31,9 @@ def _principal(*, public_commit: bool = False) -> CorpusPrincipal:
     )
 
 
-def _request(*, scope: CorpusScope, audit_state: str = "VERIFIED") -> CanonicalCommitAuthorization:
+def _request(
+    *, scope: CorpusScope, audit_state: CanonicalAuditState = "VERIFIED"
+) -> CanonicalCommitAuthorization:
     return CanonicalCommitAuthorization(
         scope=scope,
         extraction_audit_state=audit_state,
@@ -84,7 +87,9 @@ def test_public_write_requires_explicit_privilege() -> None:
     "audit_state",
     ["MORE_INVESTIGATION_REQUIRED", "REJECTED", "SOURCE_QUALITY_BLOCKED"],
 )
-def test_canonical_commit_rejects_non_verified_extraction_audit(audit_state: str) -> None:
+def test_canonical_commit_rejects_non_verified_extraction_audit(
+    audit_state: CanonicalAuditState,
+) -> None:
     request = _request(
         scope=CorpusScope(visibility="private", organization_id=ORG_A),
         audit_state=audit_state,
@@ -94,7 +99,9 @@ def test_canonical_commit_rejects_non_verified_extraction_audit(audit_state: str
 
 
 @pytest.mark.parametrize("audit_state", ["VERIFIED", "VERIFIED_WITH_AMENDMENTS"])
-def test_canonical_commit_allows_verified_audit_for_member(audit_state: str) -> None:
+def test_canonical_commit_allows_verified_audit_for_member(
+    audit_state: CanonicalAuditState,
+) -> None:
     request = _request(
         scope=CorpusScope(visibility="private", organization_id=ORG_A),
         audit_state=audit_state,
