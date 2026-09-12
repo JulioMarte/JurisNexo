@@ -14,6 +14,10 @@ from jurisnexo.acquisition.official_corpus import OfficialDocumentCandidate, obj
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
 
 
+def _empty_keys() -> set[str]:
+    return set()
+
+
 @dataclass(slots=True)
 class FakeInventory:
     observations: tuple[RegisteredArtifactObservation, ...]
@@ -24,7 +28,7 @@ class FakeInventory:
 
 @dataclass(slots=True)
 class FakeObjectStore:
-    keys: set[str] = field(default_factory=set)
+    keys: set[str] = field(default_factory=_empty_keys)
 
     def exists(self, key: str) -> bool:
         return key in self.keys
