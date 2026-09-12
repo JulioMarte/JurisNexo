@@ -66,7 +66,9 @@ def authorize_scope_read(*, principal: CorpusPrincipal, scope: CorpusScope) -> N
     if scope.visibility == "public":
         return
     if scope.organization_id not in principal.organization_ids:
-        raise CorpusAuthorizationError("principal is not a member of the private corpus organization")
+        raise CorpusAuthorizationError(
+            "principal is not a member of the private corpus organization"
+        )
 
 
 def authorize_scope_write(*, principal: CorpusPrincipal, scope: CorpusScope) -> None:
