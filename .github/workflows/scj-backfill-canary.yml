@@ -11,6 +11,7 @@ on:
       - 'backend/src/jurisnexo/corpus/artifact_catalog.py'
       - 'backend/src/jurisnexo/corpus/artifact_inventory.py'
       - 'backend/src/jurisnexo/observability.py'
+      - 'backend/migrations/**'
   workflow_dispatch:
 
 permissions:
@@ -50,7 +51,11 @@ jobs:
             printf 'Missing required GitHub Actions secrets: %s\n' "${missing[*]}" >&2
             exit 2
           fi
-          echo 'Live database and S3 configuration is present.'
+          if [[ "$JURISNEXO_S3_BUCKET" != "official-corpus" ]]; then
+            echo 'JURISNEXO_S3_BUCKET must be official-corpus for the canonical live corpus.' >&2
+            exit 2
+          fi
+          echo 'Live database and canonical S3 configuration is present.'
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
@@ -62,12 +67,23 @@ jobs:
           'playwright==1.62.0'
           'opentelemetry-sdk==1.44.0'
           'opentelemetry-exporter-otlp-proto-http==1.44.0'
+      - name: Upgrade live corpus schema
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          alembic current
+          alembic upgrade head
+          alembic current
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Acquire and verify three live SCJ PDFs
+        shell: bash
         env:
           SCJ_CANARY_OUTPUT: ${{ runner.temp }}/scj-canary-output
-        run: python backend/scripts/scj_backfill_canary.py 2>&1 | tee scj-canary-otel.log
+        run: |
+          set -euo pipefail
+          python backend/scripts/scj_backfill_canary.py 2>&1 | tee scj-canary-otel.log
       - name: Upload canary evidence and OpenTelemetry output
         if: always()
         uses: actions/upload-artifact@v4
