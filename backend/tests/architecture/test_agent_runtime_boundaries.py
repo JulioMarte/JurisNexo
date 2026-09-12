@@ -13,6 +13,8 @@ CONCRETE_PROVIDER_PREFIXES = (
     "google.generativeai",
     "google.genai",
 )
+AGENT_ROLE_DIRECTORIES = {"agents", "agent_runtime", "research"}
+AGENT_ROLE_SUFFIXES = ("_agent", "_auditor")
 
 
 def _imports(path: Path) -> list[str]:
@@ -32,14 +34,19 @@ def _matches_prefix(import_name: str, prefixes: tuple[str, ...]) -> bool:
     )
 
 
+def _is_agent_runtime_surface(path: Path) -> bool:
+    relative_parts = path.relative_to(SRC_ROOT).parts
+    role_parts = set(relative_parts[:-1])
+    stem = path.stem
+    return bool(
+        role_parts & AGENT_ROLE_DIRECTORIES
+        or stem.startswith("agent")
+        or stem.endswith(AGENT_ROLE_SUFFIXES)
+    )
+
+
 def _agent_runtime_files() -> list[Path]:
-    files: list[Path] = []
-    for path in SRC_ROOT.rglob("*.py"):
-        relative_parts = path.relative_to(SRC_ROOT).parts
-        role_parts = set(relative_parts[:-1])
-        if role_parts & {"agents", "agent_runtime", "research"} or path.stem.startswith("agent"):
-            files.append(path)
-    return files
+    return [path for path in SRC_ROOT.rglob("*.py") if _is_agent_runtime_surface(path)]
 
 
 def test_agent_runtime_surfaces_do_not_import_database_drivers() -> None:
