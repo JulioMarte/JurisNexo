@@ -153,7 +153,10 @@ def _validate_artifact_pages(
             )
         page_numbers.append(page_number)
 
-    if any(right <= left for left, right in zip(page_numbers, page_numbers[1:])):
+    if any(
+        right <= left
+        for left, right in zip(page_numbers, page_numbers[1:], strict=False)
+    ):
         raise CanonicalCommitError(
             "artifact pages must follow strictly increasing physical source order"
         )
