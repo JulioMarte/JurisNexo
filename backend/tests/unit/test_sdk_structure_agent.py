@@ -27,7 +27,7 @@ def _environment() -> DocumentEnvironment:
 
 
 def test_structure_agent_uses_structured_output_and_document_tools() -> None:
-    agent = build_structure_agent(model="gpt-5.6-luna")
+    agent = build_structure_agent(model="gemini/gemini-3.8-flash")
 
     assert agent.name == "JurisNexo Structure Agent"
     assert agent.output_type == DocumentStructureHypothesis
