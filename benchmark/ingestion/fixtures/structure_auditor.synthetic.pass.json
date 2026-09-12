@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "benchmark": "structure_auditor_evaluation",
+  "dataset_kind": "controlled_synthetic",
+  "cases": [
+    {
+      "case_id": "bad-index-destination",
+      "audit_state": "REJECTED",
+      "structure_agent_tokens": 8200,
+      "auditor_tokens": 3100,
+      "structure_agent_latency_ms": 12400,
+      "auditor_latency_ms": 5100
+    },
+    {
+      "case_id": "bad-end-boundary",
+      "audit_state": "MORE_INVESTIGATION_REQUIRED",
+      "structure_agent_tokens": 7600,
+      "auditor_tokens": 2800,
+      "structure_agent_latency_ms": 11100,
+      "auditor_latency_ms": 4700
+    },
+    {
+      "case_id": "valid-clean-boundary",
+      "audit_state": "APPROVED",
+      "structure_agent_tokens": 6900,
+      "auditor_tokens": 2300,
+      "structure_agent_latency_ms": 9800,
+      "auditor_latency_ms": 3900
+    },
+    {
+      "case_id": "valid-bounded-amendment",
+      "audit_state": "APPROVED_WITH_AMENDMENTS",
+      "structure_agent_tokens": 7100,
+      "auditor_tokens": 2500,
+      "structure_agent_latency_ms": 10300,
+      "auditor_latency_ms": 4200
+    }
+  ]
+}

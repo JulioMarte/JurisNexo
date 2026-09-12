@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "benchmark": "structure_auditor_evaluation",
+  "dataset_kind": "controlled_synthetic",
+  "thresholds": {
+    "min_error_detection_recall": 1.0,
+    "max_false_rejection_rate": 0.0
+  },
+  "cases": [
+    {
+      "case_id": "bad-index-destination",
+      "expected_action": "block_extraction",
+      "reason": "The candidate accepted an index destination without resolving conflicting neighboring evidence."
+    },
+    {
+      "case_id": "bad-end-boundary",
+      "expected_action": "block_extraction",
+      "reason": "The proposed decision end leaks content from the following decision."
+    },
+    {
+      "case_id": "valid-clean-boundary",
+      "expected_action": "allow_extraction",
+      "reason": "The candidate boundaries and source evidence are internally and externally supported."
+    },
+    {
+      "case_id": "valid-bounded-amendment",
+      "expected_action": "allow_extraction",
+      "reason": "A bounded correction is explicit and does not leave material ambiguity unresolved."
+    }
+  ]
+}
