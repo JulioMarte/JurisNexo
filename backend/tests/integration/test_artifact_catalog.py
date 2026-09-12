@@ -60,7 +60,8 @@ def test_catalog_records_hash_url_filename_storage_and_discovery_trace(
             cursor.execute(
                 """
                 select a.sha256, a.byte_size, r.code,
-                       l.locator, l.observed_filename, l.discovered_via
+                       l.source_identifier, l.locator,
+                       l.observed_filename, l.discovered_via
                 from corpus.source_artifacts a
                 join corpus.source_registries r on r.id = %s
                 join corpus.source_artifact_locations l on l.artifact_id = a.id
@@ -74,6 +75,7 @@ def test_catalog_records_hash_url_filename_storage_and_discovery_trace(
             "d" * 64,
             1234,
             "supreme_court",
+            "fixture-123",
             artifact.candidate.document_url,
             "sentencia-123.pdf",
             artifact.candidate.discovery_url,
