@@ -1,0 +1,30 @@
+{
+  "trace": [
+    {
+      "tool": "get_printed_page",
+      "requested_printed_pages": [353],
+      "output": "view_page=2 | printed_page=353 | source_reference=synthetic:page-353\nContinuation of the previous decision."
+    }
+  ],
+  "hypothesis": {
+    "has_index": true,
+    "index_reference_investigations": [
+      {
+        "reference_as_printed": 353,
+        "resolution_status": "confirmed_at_reference",
+        "observed_decision_start_printed_page": 353,
+        "evidence_pages": [
+          {
+            "view_page": 2,
+            "printed_page": 353,
+            "role": "claimed_destination",
+            "source_reference": "synthetic:page-353"
+          }
+        ],
+        "observed_description": "Assumed the indexed target starts here.",
+        "explanation": "Accepted the index destination without investigating the mismatch.",
+        "confidence": 0.9
+      }
+    ]
+  }
+}

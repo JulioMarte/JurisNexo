@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "target_id": "synthetic-printed-reference-353-boundary-v1",
+  "claimed_printed_reference": 353,
+  "expected_resolution_status": "confirmed_nearby",
+  "expected_observed_start_printed_page": 354,
+  "investigation_window": {
+    "start": 352,
+    "end": 355
+  },
+  "gold_rationale": "Controlled fixture: printed page 353 contains continuation text from the prior decision; the indexed target begins on printed page 354. The scorer requires the original index reference to remain preserved as a source claim."
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "target_id": "synthetic-printed-reference-353-boundary-v1",
+  "artifact_label": "controlled synthetic boundary discrepancy",
+  "claimed_printed_reference": 353,
+  "expected_description": "Investigate the decision identified by the source index at printed page 353.",
+  "instructions": [
+    "Read the claimed printed destination before reaching a conclusion.",
+    "If the destination does not match the indexed decision, inspect nearby printed pages or delegate a bounded neighborhood investigation.",
+    "Preserve the original printed reference as a source claim even if the observed start differs.",
+    "Return a trace-supported resolution or explicitly remain unresolved."
+  ],
+  "note": "This controlled fixture tests the discrepancy behavior without asserting an unverified historical resolution. Gold is stored separately and is not exposed to the agent prompt."
+}
