@@ -93,6 +93,13 @@ def _insert_case(cursor: psycopg.Cursor[Any], *, scope_id: UUID, court_id: UUID)
     return row[0]
 
 
+def _expect_foreign_key_violation(
+    cursor: psycopg.Cursor[Any], sql: str, params: tuple[object, ...]
+) -> None:
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        cursor.execute(sql, params)
+
+
 def test_same_scope_occurrence_and_case_page_are_allowed(
     connection: psycopg.Connection[Any],
 ) -> None:
@@ -137,17 +144,17 @@ def test_occurrence_cannot_link_case_to_artifact_from_another_scope(
         artifact_id, _ = _insert_artifact(cursor, scope_id=scope_a, sha_char="b")
         case_id = _insert_case(cursor, scope_id=scope_b, court_id=court_id)
 
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
-            cursor.execute(
-                """
-                insert into corpus.case_artifact_occurrences (
-                    case_id, artifact_id, start_page, end_page,
-                    segmentation_status, segmentation_method, scope_id
-                )
-                values (%s, %s, 1, 1, 'verified', 'contract-test', %s)
-                """,
-                (case_id, artifact_id, scope_b),
+        _expect_foreign_key_violation(
+            cursor,
+            """
+            insert into corpus.case_artifact_occurrences (
+                case_id, artifact_id, start_page, end_page,
+                segmentation_status, segmentation_method, scope_id
             )
+            values (%s, %s, 1, 1, 'verified', 'contract-test', %s)
+            """,
+            (case_id, artifact_id, scope_b),
+        )
 
 
 def test_case_page_cannot_link_case_to_artifact_from_another_scope(
@@ -164,14 +171,14 @@ def test_case_page_cannot_link_case_to_artifact_from_another_scope(
         )
         case_id = _insert_case(cursor, scope_id=scope_b, court_id=court_id)
 
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
-            cursor.execute(
-                """
-                insert into corpus.case_pages (
-                    case_id, artifact_id, artifact_page_id,
-                    ordinal_in_case, scope_id
-                )
-                values (%s, %s, %s, 1, %s)
-                """,
-                (case_id, artifact_id, artifact_page_id, scope_b),
+        _expect_foreign_key_violation(
+            cursor,
+            """
+            insert into corpus.case_pages (
+                case_id, artifact_id, artifact_page_id,
+                ordinal_in_case, scope_id
             )
+            values (%s, %s, %s, 1, %s)
+            """,
+            (case_id, artifact_id, artifact_page_id, scope_b),
+        )
