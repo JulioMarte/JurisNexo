@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
 
 
 def test_normative_architecture_sources_are_discoverable() -> None:
