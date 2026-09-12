@@ -49,6 +49,16 @@ def _agent_runtime_files() -> list[Path]:
     return [path for path in SRC_ROOT.rglob("*.py") if _is_agent_runtime_surface(path)]
 
 
+def test_agent_runtime_surface_detection_is_role_based_not_package_snapshot() -> None:
+    assert _is_agent_runtime_surface(SRC_ROOT / "ingestion" / "structure_agent.py")
+    assert _is_agent_runtime_surface(SRC_ROOT / "ingestion" / "extraction_auditor.py")
+    assert _is_agent_runtime_surface(SRC_ROOT / "agents" / "research.py")
+    assert _is_agent_runtime_surface(SRC_ROOT / "ingestion" / "agentic_discovery.py")
+
+    assert not _is_agent_runtime_surface(SRC_ROOT / "ingestion" / "observation_persistence.py")
+    assert not _is_agent_runtime_surface(SRC_ROOT / "research" / "repository.py")
+
+
 def test_agent_runtime_surfaces_do_not_import_database_drivers() -> None:
     violations: list[str] = []
     for path in _agent_runtime_files():
