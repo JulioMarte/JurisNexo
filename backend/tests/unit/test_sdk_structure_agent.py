@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from agents import FunctionTool
 
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
@@ -29,8 +30,10 @@ def test_structure_agent_uses_structured_output_and_document_tools() -> None:
     agent = build_structure_agent(model="gpt-5.6-luna")
 
     assert agent.name == "JurisNexo Structure Agent"
-    assert agent.output_type is DocumentStructureHypothesis
-    assert {tool.name for tool in agent.tools} == {
+    assert agent.output_type == DocumentStructureHypothesis
+    function_tools = [tool for tool in agent.tools if isinstance(tool, FunctionTool)]
+    assert len(function_tools) == len(agent.tools)
+    assert {tool.name for tool in function_tools} == {
         "get_page",
         "get_pages",
         "get_printed_page",
