@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -75,6 +75,23 @@ def _empty_metadata_hypotheses() -> list[MetadataHypothesis]:
     return []
 
 
+class InvestigationPageEvidence(BaseModel):
+    """One explicit correspondence between a document-view page and printed page."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    view_page: int = Field(ge=1)
+    printed_page: int = Field(ge=1)
+    role: Literal["claimed_destination", "observed_content", "neighbor_context"] = (
+        "observed_content"
+    )
+    source_reference: str | None = None
+
+
+def _empty_investigation_page_evidence() -> list[InvestigationPageEvidence]:
+    return []
+
+
 class IndexReferenceInvestigation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -87,11 +104,42 @@ class IndexReferenceInvestigation(BaseModel):
         "contradictory",
     ]
     observed_decision_start_printed_page: int | None = Field(default=None, ge=1)
-    evidence_printed_pages: list[int] = Field(default_factory=_empty_ints)
-    evidence_view_pages: list[int] = Field(default_factory=_empty_ints)
+    evidence_pages: list[InvestigationPageEvidence] = Field(
+        default_factory=_empty_investigation_page_evidence
+    )
     observed_description: str
     explanation: str
     confidence: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_parallel_evidence(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        legacy_printed = data.pop("evidence_printed_pages", None)
+        legacy_view = data.pop("evidence_view_pages", None)
+        if legacy_printed is None and legacy_view is None:
+            return data
+        if "evidence_pages" in data:
+            raise ValueError(
+                "cannot combine evidence_pages with legacy parallel evidence arrays"
+            )
+        printed = legacy_printed or []
+        view = legacy_view or []
+        if len(printed) != len(view):
+            raise ValueError(
+                "legacy evidence_printed_pages and evidence_view_pages must have equal length"
+            )
+        data["evidence_pages"] = [
+            {
+                "view_page": view_page,
+                "printed_page": printed_page,
+                "role": "observed_content",
+            }
+            for printed_page, view_page in zip(printed, view, strict=True)
+        ]
+        return data
 
     @model_validator(mode="after")
     def validate_resolution(self) -> IndexReferenceInvestigation:
@@ -112,6 +160,18 @@ class IndexReferenceInvestigation(BaseModel):
             and self.observed_decision_start_printed_page == self.reference_as_printed
         ):
             raise ValueError("confirmed_nearby must identify a different observed start page")
+        if self.observed_decision_start_printed_page is not None and self.evidence_pages:
+            observed_pages = {item.printed_page for item in self.evidence_pages}
+            if self.observed_decision_start_printed_page not in observed_pages:
+                raise ValueError(
+                    "observed decision start must be present in typed evidence_pages"
+                )
+        seen_pairs: set[tuple[int, int]] = set()
+        for item in self.evidence_pages:
+            pair = (item.view_page, item.printed_page)
+            if pair in seen_pairs:
+                raise ValueError("duplicate view/printed evidence page correspondence")
+            seen_pairs.add(pair)
         return self
 
 
@@ -180,6 +240,10 @@ include only metadata values that are explicitly evidenced in inspected pages, t
 the physical evidence pages. Typical useful fields include document_type, decision_date,
 decision_number, docket_number, and parties. Leave an end page or field unknown rather than
 guessing it. Prefer an explicit unknown/review-required conclusion over unsupported certainty.
+
+For index-reference investigations, evidence_pages is the canonical evidence contract. Each
+entry must explicitly bind one document-view page to its printed/editorial page identity; never
+return unrelated parallel arrays of view pages and printed pages.
 
 Do not claim a rule is validated. Describe evidence and recommend the next programmatic checks
 needed to validate or reject each important hypothesis.
