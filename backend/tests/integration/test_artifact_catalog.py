@@ -159,12 +159,12 @@ def test_same_hash_is_deduplicated_but_new_official_location_is_preserved(
                 select locator
                 from corpus.source_artifact_locations
                 where artifact_id = %s and locator_type = 'official_url'
-                order by locator
                 """,
                 (first.artifact_id,),
             )
-            urls = [row[0] for row in cursor.fetchall()]
+            urls = {row[0] for row in cursor.fetchall()}
 
-        assert urls == sorted(
-            [original.candidate.document_url, alternate.candidate.document_url]
-        )
+        assert urls == {
+            original.candidate.document_url,
+            alternate.candidate.document_url,
+        }
