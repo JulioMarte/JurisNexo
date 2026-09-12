@@ -11,7 +11,7 @@ _TRACER = trace.get_tracer("jurisnexo.acquisition")
 
 
 @contextmanager
-def acquisition_span(name: str, **attributes: Any) -> Generator[Span, None, None]:
+def acquisition_span(name: str, **attributes: Any) -> Generator[Span]:
     """Create an OpenTelemetry acquisition span without choosing an exporter.
 
     JurisNexo's core only depends on the OpenTelemetry API. The runtime (for example the live
