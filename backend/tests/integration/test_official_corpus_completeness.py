@@ -87,3 +87,65 @@ def test_catalog_registration_can_be_certified_end_to_end(
         assert report.discovered_count == 1
         assert report.registered_count == 1
         assert report.storage_verified_count == 1
+
+
+def test_historical_url_replacement_certifies_latest_observation(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True):
+        candidate = OfficialDocumentCandidate(
+            source="constitutional_court",
+            source_identifier="TC/0998/26",
+            discovery_url="https://www.tribunalconstitucional.gob.do/fixture/TC-0998-26",
+            document_url="https://tribunalsitestorage.blob.core.windows.net/fixture/TC-0998-26.pdf",
+        )
+        catalog = PostgresOfficialArtifactCatalog(
+            connection=connection,
+            storage_bucket="jurisnexo-official",
+        )
+        old_digest = "7" * 64
+        new_digest = "8" * 64
+        catalog.register(
+            StoredOfficialArtifact(
+                candidate=candidate,
+                sha256=old_digest,
+                byte_count=700,
+                object_key=object_key_for(source=candidate.source, sha256=old_digest),
+                already_present=False,
+            )
+        )
+        catalog.register(
+            StoredOfficialArtifact(
+                candidate=candidate,
+                sha256=new_digest,
+                byte_count=800,
+                object_key=object_key_for(source=candidate.source, sha256=new_digest),
+                already_present=False,
+            )
+        )
+
+        observations = PostgresRegisteredArtifactInventory(
+            connection=connection
+        ).observations_for("constitutional_court")
+        matching = [
+            observation
+            for observation in observations
+            if observation.source_identifier == candidate.source_identifier
+        ]
+
+        assert len(matching) == 1
+        assert matching[0].sha256 == new_digest
+
+        report = verify_source_completeness(
+            snapshot=SourceInventorySnapshot(
+                source="constitutional_court",
+                candidates=(candidate,),
+                enumeration_complete=True,
+                enumeration_basis="integration fixture",
+            ),
+            inventory=PostgresRegisteredArtifactInventory(connection=connection),
+            object_store=MemoryObjectStore(
+                keys={object_key_for(source=candidate.source, sha256=new_digest)}
+            ),
+        )
+        assert report.complete is True
