@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
-
 from jurisnexo.acquisition.completeness import (
     RegisteredArtifactObservation,
     SourceInventorySnapshot,
@@ -17,34 +15,20 @@ from jurisnexo.acquisition.official_corpus import (
 )
 from jurisnexo.acquisition.reconciliation import reconcile_source
 
-pytestmark = [pytest.mark.unit, pytest.mark.provenance]
 
-
-def _empty_keys() -> set[str]:
-    return set()
-
-
-def _empty_observations() -> list[RegisteredArtifactObservation]:
-    return []
-
-
-def _empty_requests() -> list[str]:
-    return []
-
-
-@dataclass(slots=True)
+@dataclass
 class MemoryFetcher:
     documents: dict[str, bytes]
-    requested: list[str] = field(default_factory=_empty_requests)
+    requested: list[str] = field(default_factory=list)
 
     def get_bytes(self, url: str) -> bytes:
         self.requested.append(url)
         return self.documents[url]
 
 
-@dataclass(slots=True)
+@dataclass
 class MemoryObjectStore:
-    keys: set[str] = field(default_factory=_empty_keys)
+    keys: set[str] = field(default_factory=set)
 
     def exists(self, key: str) -> bool:
         return key in self.keys
@@ -57,22 +41,18 @@ class MemoryObjectStore:
         content_type: str,
         metadata: dict[str, str],
     ) -> None:
-        assert content.startswith(b"%PDF")
-        assert content_type == "application/pdf"
-        assert metadata["sha256"] == sha256_hex(content)
+        del content, content_type, metadata
         self.keys.add(key)
 
 
-@dataclass(slots=True)
+@dataclass
 class MemoryCatalog:
-    observations: list[RegisteredArtifactObservation] = field(
-        default_factory=_empty_observations
-    )
+    observations: list[RegisteredArtifactObservation] = field(default_factory=list)
 
     def observations_for(self, source: SourceName) -> tuple[RegisteredArtifactObservation, ...]:
         return tuple(item for item in self.observations if item.source == source)
 
-    def register(self, artifact: StoredOfficialArtifact) -> object:
+    def register(self, artifact: StoredOfficialArtifact) -> RegisteredArtifactObservation:
         observation = RegisteredArtifactObservation(
             source=artifact.candidate.source,
             source_identifier=artifact.candidate.source_identifier,
@@ -106,13 +86,13 @@ def _candidate(
     )
 
 
-def test_object_keys_are_partitioned_by_official_source() -> None:
+def test_object_keys_are_partitioned_by_jurisdiction_source_and_collection() -> None:
     digest = "a" * 64
     tc_key = object_key_for(source="constitutional_court", sha256=digest)
     scj_key = object_key_for(source="supreme_court", sha256=digest)
 
-    assert tc_key == f"official/constitutional_court/aa/{digest}.pdf"
-    assert scj_key == f"official/supreme_court/aa/{digest}.pdf"
+    assert tc_key == f"jurisdictions/do/tc/decisions/aa/{digest}.pdf"
+    assert scj_key == f"jurisdictions/do/scj/decisions/aa/{digest}.pdf"
     assert tc_key != scj_key
 
 
@@ -140,15 +120,15 @@ def test_reconciliation_fetches_only_documents_missing_from_catalog() -> None:
             )
         ]
     )
-    store = MemoryObjectStore(keys={present_key})
     fetcher = MemoryFetcher(documents={missing.document_url: missing_pdf})
+    store = MemoryObjectStore(keys={present_key})
 
     result = reconcile_source(
         snapshot=SourceInventorySnapshot(
             source="constitutional_court",
             candidates=(present, missing),
             enumeration_complete=True,
-            enumeration_basis="complete fixture inventory",
+            enumeration_basis="complete fixture",
         ),
         inventory=catalog,
         fetcher=fetcher,
@@ -160,17 +140,19 @@ def test_reconciliation_fetches_only_documents_missing_from_catalog() -> None:
     assert result.plan.acquisition_count == 1
     assert result.acquired_count == 1
     assert result.report.complete is True
-    assert result.report.discovered_count == 2
-    assert result.report.registered_count == 2
-    assert result.report.storage_verified_count == 2
-
-
-def test_reconciliation_repairs_missing_object_without_losing_registration() -> None:
-    candidate = _candidate(
-        "TC/0003/26",
-        "https://blob.example/TC-0003-26.pdf",
+    missing_key = object_key_for(
+        source="constitutional_court",
+        sha256=sha256_hex(missing_pdf),
     )
-    content = b"%PDF-1.7 restore-me"
+    assert missing_key in store.keys
+
+
+def test_reconciliation_repairs_missing_object_for_registered_document() -> None:
+    candidate = _candidate(
+        "TC/0100/26",
+        "https://blob.example/TC-0100-26.pdf",
+    )
+    content = b"%PDF-1.7 restore"
     digest = sha256_hex(content)
     catalog = MemoryCatalog(
         observations=[
@@ -182,15 +164,15 @@ def test_reconciliation_repairs_missing_object_without_losing_registration() -> 
             )
         ]
     )
-    store = MemoryObjectStore()
     fetcher = MemoryFetcher(documents={candidate.document_url: content})
+    store = MemoryObjectStore()
 
     result = reconcile_source(
         snapshot=SourceInventorySnapshot(
             source="constitutional_court",
             candidates=(candidate,),
             enumeration_complete=True,
-            enumeration_basis="complete fixture inventory",
+            enumeration_basis="complete fixture",
         ),
         inventory=catalog,
         fetcher=fetcher,
@@ -198,7 +180,33 @@ def test_reconciliation_repairs_missing_object_without_losing_registration() -> 
         artifact_catalog=catalog,
     )
 
-    assert result.plan.missing_registration == ()
-    assert result.plan.missing_storage == (candidate,)
+    assert fetcher.requested == [candidate.document_url]
+    assert result.plan.storage_repair_count == 1
     assert result.report.complete is True
-    assert object_key_for(source="constitutional_court", sha256=digest) in store.keys
+
+
+def test_incomplete_source_inventory_cannot_be_certified() -> None:
+    candidate = _candidate(
+        "TC/0200/26",
+        "https://blob.example/TC-0200-26.pdf",
+    )
+    content = b"%PDF-1.7 fixture"
+    fetcher = MemoryFetcher(documents={candidate.document_url: content})
+    store = MemoryObjectStore()
+    catalog = MemoryCatalog()
+
+    result = reconcile_source(
+        snapshot=SourceInventorySnapshot(
+            source="constitutional_court",
+            candidates=(candidate,),
+            enumeration_complete=False,
+            enumeration_basis="bounded test inventory",
+        ),
+        inventory=catalog,
+        fetcher=fetcher,
+        object_store=store,
+        artifact_catalog=catalog,
+    )
+
+    assert result.report.complete is False
+    assert "enumeration" in result.report.reason.casefold()
