@@ -1,0 +1,43 @@
+name: Official source probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: 0.12.4
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Install locked backend
+        working-directory: backend
+        run: uv sync --frozen --group dev
+
+      - name: Probe official SCJ and TC discovery surfaces
+        working-directory: backend
+        run: |
+          uv run python -m jurisnexo.acquisition.source_probe \
+            --output-directory ../source-probe-output
+
+      - name: Upload source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-source-probe-${{ github.run_id }}
+          path: |
+            source-probe-output/scj-megaconsulta.html
+            source-probe-output/tc-sentences.html
+            source-probe-output/summary.json
+          if-no-files-found: warn
+          retention-days: 14
