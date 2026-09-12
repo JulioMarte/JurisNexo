@@ -50,28 +50,46 @@ def test_evidence_spans_must_match_exact_source_text() -> None:
     page_text = decision.pages[0].text
     exact = "SENTENCIA 12-2026"
     start = page_text.index(exact)
-    payload = {
-        "metadata": [
-            {
-                "field": "decision_number",
-                "value": "12-2026",
-                "confidence": 0.99,
-                "evidence": [
-                    {
-                        "view_page": 2,
-                        "char_start": start,
-                        "char_end": start + len(exact),
-                        "exact_text": exact,
-                    }
-                ],
-            }
-        ]
-    }
-    annotations = ExtractionAnnotations.model_validate(payload)
+    annotations = ExtractionAnnotations.model_validate(
+        {
+            "metadata": [
+                {
+                    "field": "decision_number",
+                    "value": "12-2026",
+                    "confidence": 0.99,
+                    "evidence": [
+                        {
+                            "view_page": 2,
+                            "char_start": start,
+                            "char_end": start + len(exact),
+                            "exact_text": exact,
+                        }
+                    ],
+                }
+            ]
+        }
+    )
     validate_extraction_annotations(annotations=annotations, decision=decision)
 
-    payload["metadata"][0]["evidence"][0]["exact_text"] = "invented"
-    bad = ExtractionAnnotations.model_validate(payload)
+    bad = ExtractionAnnotations.model_validate(
+        {
+            "metadata": [
+                {
+                    "field": "decision_number",
+                    "value": "12-2026",
+                    "confidence": 0.99,
+                    "evidence": [
+                        {
+                            "view_page": 2,
+                            "char_start": start,
+                            "char_end": start + len(exact),
+                            "exact_text": "invented",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
     with pytest.raises(ValueError, match="does not match source"):
         validate_extraction_annotations(annotations=bad, decision=decision)
 
