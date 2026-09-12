@@ -36,7 +36,10 @@ class RecordingSleep:
         self.delays.append(seconds)
 
 
-def _fetcher(transport: SequenceTransport, sleep: RecordingSleep | None = None) -> BoundedHttpFetcher:
+def _fetcher(
+    transport: SequenceTransport,
+    sleep: RecordingSleep | None = None,
+) -> BoundedHttpFetcher:
     return BoundedHttpFetcher(
         allowed_hosts=frozenset({"official.example"}),
         transport=transport,
@@ -46,7 +49,13 @@ def _fetcher(transport: SequenceTransport, sleep: RecordingSleep | None = None) 
 
 def test_fetcher_accepts_allowlisted_https_response() -> None:
     transport = SequenceTransport(
-        outcomes=(HttpPayload(content=b"%PDF fixture", final_url="https://official.example/a.pdf", status=200),)
+        outcomes=(
+            HttpPayload(
+                content=b"%PDF fixture",
+                final_url="https://official.example/a.pdf",
+                status=200,
+            ),
+        )
     )
 
     content = _fetcher(transport).get_bytes("https://official.example/a.pdf")
@@ -65,7 +74,13 @@ def test_fetcher_rejects_non_allowlisted_input_host() -> None:
 
 def test_fetcher_rejects_redirect_to_non_allowlisted_host() -> None:
     transport = SequenceTransport(
-        outcomes=(HttpPayload(content=b"%PDF", final_url="https://evil.example/a.pdf", status=200),)
+        outcomes=(
+            HttpPayload(
+                content=b"%PDF",
+                final_url="https://evil.example/a.pdf",
+                status=200,
+            ),
+        )
     )
 
     with pytest.raises(ValueError, match="non-allowlisted"):
@@ -83,7 +98,11 @@ def test_fetcher_retries_transient_http_error_with_bounded_backoff() -> None:
     transport = SequenceTransport(
         outcomes=(
             transient,
-            HttpPayload(content=b"%PDF", final_url="https://official.example/a.pdf", status=200),
+            HttpPayload(
+                content=b"%PDF",
+                final_url="https://official.example/a.pdf",
+                status=200,
+            ),
         )
     )
     sleep = RecordingSleep()
@@ -98,7 +117,11 @@ def test_fetcher_retries_network_error() -> None:
     transport = SequenceTransport(
         outcomes=(
             URLError("temporary network failure"),
-            HttpPayload(content=b"ok", final_url="https://official.example/page", status=200),
+            HttpPayload(
+                content=b"ok",
+                final_url="https://official.example/page",
+                status=200,
+            ),
         )
     )
 
@@ -108,7 +131,13 @@ def test_fetcher_retries_network_error() -> None:
 
 def test_fetcher_fails_closed_on_oversized_response() -> None:
     transport = SequenceTransport(
-        outcomes=(HttpPayload(content=b"12345", final_url="https://official.example/a", status=200),)
+        outcomes=(
+            HttpPayload(
+                content=b"12345",
+                final_url="https://official.example/a",
+                status=200,
+            ),
+        )
     )
     fetcher = BoundedHttpFetcher(
         allowed_hosts=frozenset({"official.example"}),
