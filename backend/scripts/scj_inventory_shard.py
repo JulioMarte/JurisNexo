@@ -5,7 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
@@ -14,17 +14,18 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from playwright.sync_api import APIRequestContext, sync_playwright
 
 TARGET = "https://consultasentenciascj.poderjudicial.gob.do/"
-ENDPOINT = "https://consultasentenciascj.poderjudicial.gob.do/Home/GetExpedientes"
 PAGE_SIZE = 10
+Surface = Literal["decisions", "historical", "bulletins"]
 
 
-def configure_telemetry() -> None:
+def configure_telemetry(surface: Surface) -> None:
     provider = TracerProvider(
         resource=Resource.create(
             {
                 "service.name": "jurisnexo-scj-inventory",
                 "service.version": os.environ.get("GITHUB_SHA", "local"),
                 "deployment.environment.name": "github-actions",
+                "jurisnexo.surface": surface,
                 "jurisnexo.shard.index": int(os.environ["SCJ_SHARD_INDEX"]),
                 "jurisnexo.shard.count": int(os.environ["SCJ_SHARD_COUNT"]),
             }
@@ -34,9 +35,10 @@ def configure_telemetry() -> None:
     trace.set_tracer_provider(provider)
 
 
-def datatables_form(*, start: int) -> dict[str, str]:
+def datatables_form(*, start: int, historical: bool = False) -> dict[str, str]:
+    column_count = 3 if historical else 4
     fields: dict[str, str] = {"draw": "1"}
-    for column in range(4):
+    for column in range(column_count):
         prefix = f"columns[{column}]"
         fields.update(
             {
@@ -54,21 +56,20 @@ def datatables_form(*, start: int) -> dict[str, str]:
             "length": str(PAGE_SIZE),
             "search[value]": "",
             "search[regex]": "false",
-            "IdTribunal": "",
-            "Materia": "",
             "Ano": "",
             "Mes": "",
-            "IdTipoDocumento": "1",
             "Contenido": "",
         }
     )
+    if not historical:
+        fields.update({"IdTribunal": "", "Materia": "", "IdTipoDocumento": "1"})
     return fields
 
 
-def fetch_page(request: APIRequestContext, *, start: int) -> tuple[int, list[dict[str, Any]]]:
+def post_json(request: APIRequestContext, *, path: str, form: dict[str, str]) -> dict[str, Any]:
     response = request.post(
-        ENDPOINT,
-        form=datatables_form(start=start),
+        f"{TARGET.rstrip('/')}{path}",
+        form=form,
         headers={
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "X-Requested-With": "XMLHttpRequest",
@@ -77,41 +78,99 @@ def fetch_page(request: APIRequestContext, *, start: int) -> tuple[int, list[dic
         timeout=90_000,
     )
     if response.status != 200:
-        raise RuntimeError(f"SCJ inventory page start={start} returned HTTP {response.status}")
+        raise RuntimeError(f"SCJ {path} returned HTTP {response.status}")
     payload = response.json()
     if not isinstance(payload, dict):
-        raise TypeError("SCJ inventory response is not an object")
+        raise TypeError(f"SCJ {path} response is not an object")
+    return payload
+
+
+def fetch_page(
+    request: APIRequestContext, *, surface: Surface, start: int
+) -> tuple[int, list[dict[str, Any]]]:
+    if surface == "decisions":
+        payload = post_json(
+            request, path="/Home/GetExpedientes", form=datatables_form(start=start)
+        )
+    elif surface == "historical":
+        payload = post_json(
+            request,
+            path="/Home/GetBoletinesHistorico",
+            form=datatables_form(start=start, historical=True),
+        )
+    else:
+        raise ValueError("bulletins do not use server-side paging")
     rows = payload.get("data", [])
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
-        raise TypeError("SCJ inventory data is not a list of objects")
-    total = int(payload.get("recordsFiltered", 0))
-    return total, rows
+        raise TypeError(f"SCJ {surface} data is not a list of objects")
+    return int(payload.get("recordsFiltered", 0)), rows
 
 
-def stable_row_key(row: dict[str, Any]) -> str:
-    expediente = str(row.get("idExpediente") or "").strip()
-    guid = str(row.get("guidBlob") or "").strip()
-    url = str(row.get("urlBlob") or "").strip()
-    if not expediente or not url.startswith("https://"):
-        raise ValueError("SCJ decision row lacks idExpediente or HTTPS urlBlob")
-    return f"{expediente}\t{guid}\t{url}"
+def stable_row_key(surface: Surface, row: dict[str, Any]) -> str:
+    if surface == "decisions":
+        identifier = str(row.get("idExpediente") or "").strip()
+        guid = str(row.get("guidBlob") or "").strip()
+        url = str(row.get("urlBlob") or "").strip()
+    elif surface == "historical":
+        identifier = f"{row.get('ano', '')}-{row.get('mes', '')}-{row.get('partes', '')}".strip()
+        guid = ""
+        url = str(row.get("rutaDoc") or "").strip()
+    else:
+        identifier = str(row.get("idCuerpo") or "").strip()
+        guid = str(row.get("idCabecera") or "").strip()
+        url = str(row.get("urlCuerpo") or "").strip()
+    if not identifier or not url.startswith("https://"):
+        raise ValueError(f"SCJ {surface} row lacks a stable identifier or HTTPS PDF URL")
+    return f"{surface}\t{identifier}\t{guid}\t{url}"
+
+
+def write_record(
+    output: Any,
+    *,
+    surface: Surface,
+    shard_index: int,
+    coordinate: str,
+    row: dict[str, Any],
+    digest: Any,
+) -> None:
+    key = stable_row_key(surface, row)
+    digest.update(key.encode("utf-8"))
+    digest.update(b"\n")
+    record = {
+        "surface": surface,
+        "shard_index": shard_index,
+        "coordinate": coordinate,
+        "_stable_key": key,
+        "row": row,
+    }
+    output.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+    output.write("\n")
 
 
 def main() -> None:
+    surface_value = os.environ.get("SCJ_SURFACE", "decisions")
+    if surface_value not in {"decisions", "historical", "bulletins"}:
+        raise ValueError(f"unknown SCJ surface: {surface_value}")
+    surface: Surface = surface_value  # type: ignore[assignment]
     shard_index = int(os.environ["SCJ_SHARD_INDEX"])
     shard_count = int(os.environ["SCJ_SHARD_COUNT"])
     if shard_count < 1 or not 0 <= shard_index < shard_count:
         raise ValueError("invalid SCJ shard coordinates")
     output_dir = Path(os.environ["SCJ_SHARD_OUTPUT"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    configure_telemetry()
+    configure_telemetry(surface)
     tracer = trace.get_tracer("jurisnexo.scj.inventory")
 
-    output_path = output_dir / f"shard-{shard_index:02d}.jsonl"
+    output_path = output_dir / f"{surface}-shard-{shard_index:02d}.jsonl"
     key_digest = hashlib.sha256()
     row_count = 0
+    expected_total: int | None = None
+    total_pages: int | None = None
+    all_years: list[int] = []
+    processed_years: list[int] = []
 
     with tracer.start_as_current_span("scj.inventory.shard") as root:
+        root.set_attribute("scj.surface", surface)
         root.set_attribute("scj.shard.index", shard_index)
         root.set_attribute("scj.shard.count", shard_count)
         with sync_playwright() as playwright:
@@ -121,62 +180,102 @@ def main() -> None:
             navigation = page.goto(TARGET, wait_until="networkidle", timeout=120_000)
             if navigation is None or navigation.status != 200:
                 raise RuntimeError("SCJ portal bootstrap failed")
+            # A real UI query initializes the server session used by the underlying endpoints.
             page.select_option("#cbTipoDocumento", "1")
-            page.wait_for_timeout(3_000)
-
-            total, first_rows = fetch_page(context.request, start=0)
-            if total <= 0 or not first_rows:
-                raise RuntimeError("SCJ inventory initialization returned no decisions")
-            total_pages = math.ceil(total / PAGE_SIZE)
-            root.set_attribute("scj.inventory.expected_rows", total)
-            root.set_attribute("scj.inventory.total_pages", total_pages)
+            page.wait_for_timeout(2_000)
 
             with output_path.open("w", encoding="utf-8") as output:
-                for page_index in range(shard_index, total_pages, shard_count):
-                    start = page_index * PAGE_SIZE
-                    with tracer.start_as_current_span("scj.inventory.page") as span:
-                        span.set_attribute("scj.page.index", page_index)
-                        span.set_attribute("scj.page.start", start)
-                        observed_total, rows = fetch_page(context.request, start=start)
-                        if observed_total != total:
-                            raise RuntimeError(
-                                "SCJ inventory changed during snapshot: "
-                                f"expected={total}, observed={observed_total}, start={start}"
-                            )
-                        expected_page_size = min(PAGE_SIZE, total - start)
-                        if len(rows) != expected_page_size:
-                            raise RuntimeError(
-                                f"SCJ page start={start} expected {expected_page_size} rows, "
-                                f"got {len(rows)}"
-                            )
-                        for offset, row in enumerate(rows):
-                            key = stable_row_key(row)
-                            key_digest.update(key.encode("utf-8"))
-                            key_digest.update(b"\n")
-                            record = {
-                                "_page_index": page_index,
-                                "_start": start,
-                                "_offset": offset,
-                                "_stable_key": key,
-                                "row": row,
-                            }
-                            output.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
-                            output.write("\n")
-                            row_count += 1
-                        span.set_attribute("scj.page.row_count", len(rows))
+                if surface in {"decisions", "historical"}:
+                    expected_total, first_rows = fetch_page(
+                        context.request, surface=surface, start=0
+                    )
+                    if expected_total <= 0 or not first_rows:
+                        raise RuntimeError(f"SCJ {surface} initialization returned no records")
+                    total_pages = math.ceil(expected_total / PAGE_SIZE)
+                    root.set_attribute("scj.inventory.expected_rows", expected_total)
+                    root.set_attribute("scj.inventory.total_pages", total_pages)
 
+                    for page_index in range(shard_index, total_pages, shard_count):
+                        start = page_index * PAGE_SIZE
+                        with tracer.start_as_current_span("scj.inventory.page") as span:
+                            span.set_attribute("scj.page.index", page_index)
+                            span.set_attribute("scj.page.start", start)
+                            observed_total, rows = fetch_page(
+                                context.request, surface=surface, start=start
+                            )
+                            if observed_total != expected_total:
+                                raise RuntimeError(
+                                    f"SCJ {surface} changed during snapshot: "
+                                    f"expected={expected_total}, observed={observed_total}, start={start}"
+                                )
+                            if not rows:
+                                raise RuntimeError(
+                                    f"SCJ {surface} returned an empty page before total at start={start}"
+                                )
+                            # The SCJ endpoint sometimes returns more than the requested ten rows.
+                            # We deliberately preserve them all and certify completeness later by
+                            # unique stable-key cardinality against recordsFiltered.
+                            for offset, row in enumerate(rows):
+                                write_record(
+                                    output,
+                                    surface=surface,
+                                    shard_index=shard_index,
+                                    coordinate=f"start={start};offset={offset}",
+                                    row=row,
+                                    digest=key_digest,
+                                )
+                                row_count += 1
+                            span.set_attribute("scj.page.row_count", len(rows))
+                else:
+                    year_options = page.locator("#cbAno option").evaluate_all(
+                        "els => els.map(o => o.value).filter(v => /^\\d{4}$/.test(v)).map(Number)"
+                    )
+                    all_years = sorted({int(year) for year in year_options})
+                    if not all_years:
+                        raise RuntimeError("SCJ bulletin year selector exposed no years")
+                    processed_years = [
+                        year for index, year in enumerate(all_years) if index % shard_count == shard_index
+                    ]
+                    root.set_attribute("scj.inventory.year_count", len(all_years))
+                    for year in processed_years:
+                        with tracer.start_as_current_span("scj.inventory.year") as span:
+                            span.set_attribute("scj.year", year)
+                            payload = post_json(
+                                context.request,
+                                path="/Home/GetBoletines",
+                                form={"Ano": str(year), "Mes": ""},
+                            )
+                            rows = payload.get("data", [])
+                            if not isinstance(rows, list) or not all(
+                                isinstance(row, dict) for row in rows
+                            ):
+                                raise TypeError("SCJ bulletin data is not a list of objects")
+                            for offset, row in enumerate(rows):
+                                write_record(
+                                    output,
+                                    surface=surface,
+                                    shard_index=shard_index,
+                                    coordinate=f"year={year};offset={offset}",
+                                    row=row,
+                                    digest=key_digest,
+                                )
+                                row_count += 1
+                            span.set_attribute("scj.year.row_count", len(rows))
             browser.close()
 
         summary = {
+            "surface": surface,
             "shard_index": shard_index,
             "shard_count": shard_count,
-            "expected_total_rows": total,
+            "expected_total_rows": expected_total,
             "total_pages": total_pages,
             "captured_rows": row_count,
             "stable_key_stream_sha256": key_digest.hexdigest(),
             "page_size": PAGE_SIZE,
+            "all_years": all_years,
+            "processed_years": processed_years,
         }
-        (output_dir / f"shard-{shard_index:02d}-summary.json").write_text(
+        (output_dir / f"{surface}-shard-{shard_index:02d}-summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
         )
         root.set_attribute("scj.inventory.captured_rows", row_count)
