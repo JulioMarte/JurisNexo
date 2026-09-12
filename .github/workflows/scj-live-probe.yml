@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/scj-live-probe.yml'
       - 'backend/scripts/scj_live_probe.py'
+      - 'backend/scripts/scj_endpoint_inventory_probe.py'
   workflow_dispatch:
 
 permissions:
@@ -36,6 +37,10 @@ jobs:
         env:
           SCJ_PROBE_OUTPUT: ${{ runner.temp }}/scj-probe-output
         run: python backend/scripts/scj_live_probe.py 2>&1 | tee scj-probe-otel.log
+      - name: Probe deterministic SCJ endpoint and counts
+        env:
+          SCJ_ENDPOINT_PROBE_OUTPUT: ${{ runner.temp }}/scj-endpoint-probe-output
+        run: python backend/scripts/scj_endpoint_inventory_probe.py 2>&1 | tee -a scj-probe-otel.log
       - name: Upload probe evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,4 +50,5 @@ jobs:
           retention-days: 14
           path: |
             ${{ runner.temp }}/scj-probe-output/**
+            ${{ runner.temp }}/scj-endpoint-probe-output/**
             scj-probe-otel.log
