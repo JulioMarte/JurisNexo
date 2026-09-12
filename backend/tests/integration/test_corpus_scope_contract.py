@@ -38,31 +38,38 @@ def test_public_scope_singleton_exists(connection: psycopg.Connection[Any]) -> N
 def test_private_scope_requires_organization(
     connection: psycopg.Connection[Any],
 ) -> None:
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        with pytest.raises(psycopg.errors.CheckViolation):
-            cursor.execute(
-                "insert into corpus.scopes (visibility) values ('private')"
-            )
+    with (
+        connection.transaction(force_rollback=True),
+        connection.cursor() as cursor,
+        pytest.raises(psycopg.errors.CheckViolation),
+    ):
+        cursor.execute("insert into corpus.scopes (visibility) values ('private')")
 
 
 def test_public_scope_rejects_organization(
     connection: psycopg.Connection[Any],
 ) -> None:
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        with pytest.raises(psycopg.errors.CheckViolation):
-            cursor.execute(
-                """
-                insert into corpus.scopes (visibility, organization_id)
-                values ('public', %s)
-                """,
-                (ORG_A,),
-            )
+    with (
+        connection.transaction(force_rollback=True),
+        connection.cursor() as cursor,
+        pytest.raises(psycopg.errors.CheckViolation),
+    ):
+        cursor.execute(
+            """
+            insert into corpus.scopes (visibility, organization_id)
+            values ('public', %s)
+            """,
+            (ORG_A,),
+        )
 
 
 def test_public_scope_is_singleton(connection: psycopg.Connection[Any]) -> None:
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        with pytest.raises(psycopg.errors.UniqueViolation):
-            cursor.execute("insert into corpus.scopes (visibility) values ('public')")
+    with (
+        connection.transaction(force_rollback=True),
+        connection.cursor() as cursor,
+        pytest.raises(psycopg.errors.UniqueViolation),
+    ):
+        cursor.execute("insert into corpus.scopes (visibility) values ('public')")
 
 
 def test_only_one_private_scope_per_organization(
@@ -168,14 +175,17 @@ def test_root_scope_must_reference_a_real_scope(
     connection: psycopg.Connection[Any],
 ) -> None:
     missing_scope = UUID("00000000-0000-0000-0000-000000000099")
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
-            cursor.execute(
-                """
-                insert into corpus.source_artifacts (
-                    sha256, mime_type, byte_size, scope_id
-                )
-                values (repeat('e', 64), 'application/pdf', 30, %s)
-                """,
-                (missing_scope,),
+    with (
+        connection.transaction(force_rollback=True),
+        connection.cursor() as cursor,
+        pytest.raises(psycopg.errors.ForeignKeyViolation),
+    ):
+        cursor.execute(
+            """
+            insert into corpus.source_artifacts (
+                sha256, mime_type, byte_size, scope_id
             )
+            values (repeat('e', 64), 'application/pdf', 30, %s)
+            """,
+            (missing_scope,),
+        )
