@@ -85,7 +85,8 @@ def scj_source_observation_from_record(
         raise TypeError("SCJ inventory record is missing its row object")
     row = cast(JsonObject, row_value)
     surface = str(record.get("surface") or "").strip()
-    notes: JsonObject = {}
+    record_notes = record.get("_normalization_notes")
+    notes: JsonObject = dict(cast(JsonObject, record_notes)) if isinstance(record_notes, dict) else {}
     if surface == "decisions":
         expediente_id = str(row.get("idExpediente") or "").strip()
         guid_blob = str(row.get("guidBlob") or "").strip()
@@ -104,14 +105,21 @@ def scj_source_observation_from_record(
         year = str(row.get("ano") or "").strip()
         month = str(row.get("mes") or "").strip()
         parties = " ".join(str(row.get("partes") or "").split())
-        if not (year or month or parties):
-            raise ValueError("SCJ historical decision lacks stable source identity")
-        source_identifier = f"historical:{year}:{month}:{parties}"
-        collection = "historical-decisions"
-        document_kind = "judicial_decision"
         document_url = str(row.get("rutaDoc") or "").strip()
+        if not (year or month or parties):
+            raise ValueError("SCJ historical decision lacks descriptive source metadata")
         if not document_url.startswith("https://"):
             raise ValueError("SCJ historical decision lacks HTTPS document URL")
+        # The historical endpoint exposes no publisher-issued row/document id. Year/month/parties
+        # is demonstrably non-unique in the live corpus, so the official document locator is the
+        # only collision-safe deterministic source identity we can prove without inventing
+        # semantic continuity. If the publisher later changes the locator, that is retained as a
+        # new source record until a separate resolution layer proves equivalence.
+        url_digest = hashlib.sha256(document_url.encode("utf-8")).hexdigest()
+        source_identifier = f"historical-url-sha256:{url_digest}"
+        notes["source_identifier_basis"] = "official_document_url_sha256"
+        collection = "historical-decisions"
+        document_kind = "judicial_decision"
         availability = "available"
     elif surface == "bulletins":
         body_id = str(row.get("idCuerpo") or "").strip()
@@ -121,9 +129,10 @@ def scj_source_observation_from_record(
         source_identifier = f"bulletin:{header_id}:{body_id}"
         collection = "bulletins"
         document_kind = "official_bulletin"
-        document_url, availability, notes = normalize_scj_bulletin_pdf_url(
+        document_url, availability, url_notes = normalize_scj_bulletin_pdf_url(
             row.get("urlCuerpo")
         )
+        notes.update(url_notes)
     else:
         raise ValueError(f"unsupported SCJ inventory surface: {surface!r}")
     return SourceDocumentObservation(
