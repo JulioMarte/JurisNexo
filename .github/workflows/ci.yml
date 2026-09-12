@@ -43,6 +43,8 @@ jobs:
         run: docker compose --profile test build test
       - name: Ruff
         run: docker compose --profile test run --rm --no-deps test ruff check src tests migrations
+      - name: Architecture fitness functions
+        run: docker compose --profile test run --rm --no-deps test pytest tests/architecture
       - name: Ruff ingestion benchmark runners
         run: >-
           docker compose --profile test run --rm --no-deps
