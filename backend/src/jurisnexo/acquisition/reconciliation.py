@@ -13,6 +13,7 @@ from jurisnexo.acquisition.official_corpus import (
     HttpFetcher,
     ObjectStore,
     OfficialDocumentCandidate,
+    SourceName,
     acquire_candidates,
     object_key_for,
 )
@@ -20,7 +21,7 @@ from jurisnexo.acquisition.official_corpus import (
 
 @dataclass(frozen=True, slots=True)
 class SourceReconciliationPlan:
-    source: str
+    source: SourceName
     discovered_count: int
     missing_registration: tuple[OfficialDocumentCandidate, ...]
     missing_storage: tuple[OfficialDocumentCandidate, ...]
