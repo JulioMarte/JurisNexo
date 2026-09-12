@@ -1,50 +1,54 @@
 name: SDK structure agent benchmark
 
 on:
+  push:
+    branches:
+      - benchmark/gemini38-vs-deepseek-v4-flash
+    paths:
+      - '.github/workflows/sdk-structure-agent-benchmark.yml'
+      - 'benchmark/ingestion/**'
+      - 'backend/src/jurisnexo/ingestion/**'
+      - 'backend/src/jurisnexo/model_providers/**'
   workflow_dispatch:
-    inputs:
-      source_url:
-        description: Official Poder Judicial historical bulletin PDF URL
-        required: true
-        default: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
-        type: string
-      provider:
-        description: Model provider
-        required: true
-        default: gemini
-        type: choice
-        options:
-          - gemini
-          - deepseek
-      model:
-        description: Explicit provider model ID
-        required: true
-        default: gemini-3.8-flash
-        type: string
-      max_turns:
-        description: Maximum agent turns
-        required: true
-        default: "16"
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: sdk-structure-agent-benchmark-${{ inputs.provider }}
+  group: sdk-structure-agent-benchmark-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   benchmark:
+    name: ${{ matrix.provider }} / ${{ matrix.model }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    environment: llm-benchmark
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: gemini
+            model: gemini-3.8-flash
+          - provider: deepseek
+            model: deepseek-v4-flash
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      UV_PYTHON: "3.13"
+      UV_PYTHON: '3.13'
+      SOURCE_URL: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
+      MAX_TURNS: '16'
     steps:
       - uses: actions/checkout@v6
+
+      - name: Validate provider secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.provider }}' in
+            gemini) test -n "${GEMINI_API_KEY:-}" || { echo 'GEMINI_API_KEY is required' >&2; exit 1; } ;;
+            deepseek) test -n "${DEEPSEEK_API_KEY:-}" || { echo 'DEEPSEEK_API_KEY is required' >&2; exit 1; } ;;
+            *) exit 2 ;;
+          esac
 
       - name: Install PDF tools
         run: sudo apt-get update && sudo apt-get install --yes poppler-utils
@@ -60,51 +64,60 @@ jobs:
         working-directory: backend
         run: uv sync --frozen --group dev
 
-      - name: Validate provider secret
+      - name: Acquire frozen official PDF
         shell: bash
         run: |
           set -euo pipefail
-          case "${{ inputs.provider }}" in
-            gemini) test -n "${GEMINI_API_KEY:-}" || { echo "GEMINI_API_KEY is required" >&2; exit 1; } ;;
-            deepseek) test -n "${DEEPSEEK_API_KEY:-}" || { echo "DEEPSEEK_API_KEY is required" >&2; exit 1; } ;;
-            *) exit 2 ;;
-          esac
-
-      - name: Acquire allowlisted official PDF
-        shell: bash
-        run: |
-          set -euo pipefail
-          SOURCE_URL="${{ inputs.source_url }}"
-          case "$SOURCE_URL" in
-            https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/*.pdf|https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/*.PDF) ;;
-            *) echo "Refusing non-allowlisted source URL: $SOURCE_URL" >&2; exit 1 ;;
-          esac
           mkdir -p benchmark-output
           curl --fail --location --show-error --silent --retry 3 --retry-all-errors \
             --connect-timeout 30 --max-time 600 "$SOURCE_URL" -o benchmark-output/source.pdf
-          test "$(head -c 4 benchmark-output/source.pdf)" = "%PDF"
+          test "$(head -c 4 benchmark-output/source.pdf)" = '%PDF'
           sha256sum benchmark-output/source.pdf | tee benchmark-output/sha256.txt
           pdftotext -bbox-layout benchmark-output/source.pdf benchmark-output/bbox-layout.html
 
       - name: Run production Structure Agent
         working-directory: backend
+        shell: bash
         run: |
+          set -euo pipefail
           uv run python ../benchmark/ingestion/run_sdk_structure_agent_benchmark.py \
             --bbox ../benchmark-output/bbox-layout.html \
             --output ../benchmark-output/sdk-structure-result.json \
             --artifact-label "Official SCJ Boletín Judicial Núm. 831, Febrero 1980. Verify the SUMARIO and investigate index-to-destination discrepancies, including neighboring printed pages when a claimed destination does not match." \
-            --provider "${{ inputs.provider }}" \
-            --model "${{ inputs.model }}" \
-            --max-turns "${{ inputs.max_turns }}"
+            --provider '${{ matrix.provider }}' \
+            --model '${{ matrix.model }}' \
+            --max-turns "$MAX_TURNS" \
+            2>&1 | tee ../benchmark-output/agent-run.log
 
       - name: Score against frozen historical gold
         working-directory: backend
+        shell: bash
         run: |
+          set -euo pipefail
           uv run python ../benchmark/ingestion/evaluate_historical_bulletin_agent.py \
             --result ../benchmark-output/sdk-structure-result.json \
             --gold ../benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
             --sha256 ../benchmark-output/sha256.txt \
-            --output ../benchmark-output/sdk-structure-score.json
+            --output ../benchmark-output/sdk-structure-score.json \
+            2>&1 | tee ../benchmark-output/scorer.log
+
+      - name: Write benchmark metadata
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          Path('benchmark-output/benchmark-metadata.json').write_text(
+              json.dumps({
+                  'provider': '${{ matrix.provider }}',
+                  'model': '${{ matrix.model }}',
+                  'github_sha': '${{ github.sha }}',
+                  'run_id': '${{ github.run_id }}',
+              }, indent=2),
+              encoding='utf-8',
+          )
+          PY
 
       - name: Print benchmark summary
         if: always()
@@ -114,7 +127,7 @@ jobs:
           import json
           from pathlib import Path
           out = Path('benchmark-output')
-          for name in ('sdk-structure-result.json', 'sdk-structure-score.json', 'sdk-structure-agent-error.json'):
+          for name in ('benchmark-metadata.json', 'sdk-structure-result.json', 'sdk-structure-score.json', 'sdk-structure-agent-error.json'):
               path = out / name
               if path.exists():
                   print(f'--- {name} ---')
@@ -125,11 +138,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sdk-structure-${{ inputs.provider }}-${{ github.run_id }}
+          name: sdk-structure-${{ matrix.provider }}-${{ matrix.model }}-${{ github.run_id }}
           path: |
             benchmark-output/sha256.txt
+            benchmark-output/benchmark-metadata.json
             benchmark-output/sdk-structure-result.json
             benchmark-output/sdk-structure-score.json
             benchmark-output/sdk-structure-agent-error.json
+            benchmark-output/agent-run.log
+            benchmark-output/scorer.log
           if-no-files-found: warn
           retention-days: 14
