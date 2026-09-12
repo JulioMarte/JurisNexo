@@ -5,12 +5,11 @@ import json
 from pathlib import Path
 
 from jurisnexo.acquisition.http_fetcher import OFFICIAL_SOURCE_HOSTS, BoundedHttpFetcher
-from jurisnexo.acquisition.official_corpus import (
-    SCJ_MEGAQUERY_URL,
-    TC_SENTENCES_URL,
-    discover_scj_pdf_candidates_from_html,
-    discover_tc_detail_pages,
-    sha256_hex,
+from jurisnexo.acquisition.official_corpus import SCJ_MEGAQUERY_URL, TC_SENTENCES_URL
+from jurisnexo.acquisition.source_drift import (
+    BrowserRecoveryRequest,
+    inspect_scj_megaconsulta_surface,
+    inspect_tc_sentence_surface,
 )
 
 
@@ -27,33 +26,28 @@ def probe_official_sources(
     (output_directory / "scj-megaconsulta.html").write_bytes(scj_bytes)
     (output_directory / "tc-sentences.html").write_bytes(tc_bytes)
 
-    scj_candidates = discover_scj_pdf_candidates_from_html(
-        html=scj_html,
-        page_url=SCJ_MEGAQUERY_URL,
+    observations = (
+        inspect_scj_megaconsulta_surface(scj_html),
+        inspect_tc_sentence_surface(tc_html),
     )
-    tc_detail_pages = discover_tc_detail_pages(
-        html=tc_html,
-        listing_url=TC_SENTENCES_URL,
-    )
+    drifted = tuple(item for item in observations if item.requires_browser_recovery)
     summary: dict[str, object] = {
-        "scj": {
-            "url": SCJ_MEGAQUERY_URL,
-            "sha256": sha256_hex(scj_bytes),
-            "byte_count": len(scj_bytes),
-            "direct_pdf_candidate_count": len(scj_candidates),
-        },
-        "constitutional_court": {
-            "url": TC_SENTENCES_URL,
-            "sha256": sha256_hex(tc_bytes),
-            "byte_count": len(tc_bytes),
-            "sentence_detail_count": len(tc_detail_pages),
-            "first_sentence_ids": [item[0] for item in tc_detail_pages[:10]],
-        },
+        "status": "SOURCE_DRIFT" if drifted else "HEALTHY",
+        "surfaces": [json.loads(item.to_json()) for item in observations],
+        "browser_recovery_required": bool(drifted),
     }
     (output_directory / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+    for observation in drifted:
+        request = BrowserRecoveryRequest(observation=observation)
+        filename = f"browser-recovery-{observation.surface}.json"
+        (output_directory / filename).write_text(
+            request.to_json() + "\n",
+            encoding="utf-8",
+        )
     return summary
 
 
@@ -71,6 +65,8 @@ def main() -> None:
     )
     summary = probe_official_sources(fetcher=fetcher, output_directory=args.output_directory)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if summary["status"] == "SOURCE_DRIFT":
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
