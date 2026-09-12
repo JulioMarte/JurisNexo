@@ -79,6 +79,18 @@ class DocumentEnvironment:
             source_reference=self._source_reference(page_number),
         )
 
+    def get_full_page(self, page_number: int) -> PageView:
+        """Return the complete stored page without agent-context clipping."""
+
+        self._validate_page_number(page_number)
+        return PageView(
+            page_number=page_number,
+            text=self.pages[page_number - 1],
+            truncated=False,
+            printed_page_number=self._printed_page_number(page_number),
+            source_reference=self._source_reference(page_number),
+        )
+
     def get_printed_page(self, printed_page_number: int) -> PageView:
         if not self.supports_printed_page_lookup:
             raise DocumentEnvironmentError("printed-page lookup is unavailable in this environment")
