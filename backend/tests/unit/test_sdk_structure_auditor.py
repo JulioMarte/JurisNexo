@@ -73,7 +73,7 @@ def test_structure_auditor_is_independent_agent_with_read_only_document_tools() 
     auditor = build_structure_auditor(model="gemini/gemini-3.8-flash")
 
     assert auditor.name == "JurisNexo Structure Auditor"
-    assert auditor.output_type == StructureAuditResult
+    assert auditor.output_type is None
     function_tools = [tool for tool in auditor.tools if isinstance(tool, FunctionTool)]
     assert len(function_tools) == len(auditor.tools)
     assert {tool.name for tool in function_tools} == {
@@ -83,6 +83,7 @@ def test_structure_auditor_is_independent_agent_with_read_only_document_tools() 
         "get_printed_page",
         "get_printed_pages",
         "search_text",
+        "finalize_structure_audit",
     }
 
 
