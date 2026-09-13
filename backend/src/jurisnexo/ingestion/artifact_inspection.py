@@ -75,11 +75,13 @@ def build_artifact_inspection_profile(
     notes: list[str] = []
     if image_pages and text_pages:
         notes.append(
-            "image and extractable-text signals can coexist because scanned PDFs may carry hidden OCR"
+            "image and extractable-text signals can coexist because scanned PDFs may "
+            "carry hidden OCR"
         )
     if len(text_pages) != physical_page_count:
+        missing_text_count = physical_page_count - len(text_pages)
         notes.append(
-            f"{physical_page_count - len(text_pages)} physical page(s) have little or no extractable text"
+            f"{missing_text_count} physical page(s) have little or no extractable text"
         )
 
     return ArtifactInspectionProfile(
