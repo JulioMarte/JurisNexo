@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agents import Agent, ModelSettings, RunConfig, Runner
+from agents.exceptions import MaxTurnsExceeded
+from agents.models.interface import ModelProvider
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jurisnexo.ingestion.document_discovery import (
@@ -16,6 +18,7 @@ from jurisnexo.ingestion.document_environment import (
 )
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
+    StructureInvestigationBudgetExceeded,
     get_page,
     get_pages,
     get_printed_page,
@@ -235,6 +238,7 @@ async def run_structure_auditor(
     search_max_hits: int = 20,
     artifact_profile: ArtifactInspectionProfile | None = None,
     trace_prompt_max_chars: int = 40_000,
+    model_provider: ModelProvider | None = None,
 ) -> StructureAuditorRunResult:
     """Adversarially audit one structure hypothesis and validate every cited page identity."""
 
@@ -256,16 +260,25 @@ async def run_structure_auditor(
         "Try to falsify the candidate. Verify the riskiest claims independently, search for at "
         "least one plausible omission, and only approve what your own source checks support."
     )
-    result = await Runner.run(
-        starting_agent=auditor,
-        input=prompt,
-        context=context,
-        max_turns=max_turns,
-        run_config=RunConfig(
-            workflow_name="JurisNexo Adversarial Structure Audit",
-            trace_include_sensitive_data=False,
-        ),
-    )
+    try:
+        result = await Runner.run(
+            starting_agent=auditor,
+            input=prompt,
+            context=context,
+            max_turns=max_turns,
+            run_config=RunConfig(
+                workflow_name="JurisNexo Adversarial Structure Audit",
+                trace_include_sensitive_data=False,
+                model_provider=model_provider,
+            ),
+        )
+    except MaxTurnsExceeded as exc:
+        raise StructureInvestigationBudgetExceeded(
+            stage="structure_auditor",
+            max_turns=max_turns,
+            tool_trace=context.trace_recorder.events,
+        ) from exc
+
     audit = result.final_output_as(StructureAuditResult, raise_if_incorrect_type=True)
     validate_structure_audit_evidence(audit=audit, environment=environment)
     return StructureAuditorRunResult(
