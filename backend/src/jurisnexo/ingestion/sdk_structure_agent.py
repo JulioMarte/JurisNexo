@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
+from agents.agent import StopAtTools
 from agents.decorators import tool
-from agents.exceptions import MaxTurnsExceeded
+from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.models.interface import ModelProvider
 
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
@@ -31,6 +33,7 @@ class StructureAgentContext:
     search_max_hits: int = 20
     artifact_profile: ArtifactInspectionProfile | None = None
     trace_recorder: StructureToolTraceRecorder = field(default_factory=StructureToolTraceRecorder)
+    finalized_output: list[object] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_tool_output_chars < 1_000:
@@ -67,6 +70,23 @@ class StructureInvestigationBudgetExceeded(RuntimeError):
         super().__init__(message)
 
 
+class StructureInvestigationFailed(RuntimeError):
+    """Model/runtime failure that preserves all durable evidence gathered before failure."""
+
+    def __init__(
+        self,
+        *,
+        stage: str,
+        error: Exception,
+        tool_trace: tuple[StructureToolTraceEvent, ...],
+    ) -> None:
+        self.stage = stage
+        self.error_type = type(error).__name__
+        self.error_message = str(error)
+        self.tool_trace = tool_trace
+        super().__init__(f"{stage} failed with {self.error_type}: {self.error_message}")
+
+
 _STRUCTURE_AGENT_INSTRUCTIONS = """\
 You are the JurisNexo Structure Agent. You are the first reasoning stage after an immutable
 source artifact has been stored and registered. Your job is document archaeology, not legal
@@ -97,6 +117,10 @@ understood or explicitly unresolved; material index entries/boundary signals acc
 anomalies enumerated; and every high-risk conclusion tied to source evidence. Do not finalize
 merely to conserve turns. Conversely, do not repeat equivalent tool calls once they add no new
 evidence. The runtime turn limit is a safety fuse, not a target.
+
+IMPORTANT: You do not finish by writing a JSON answer. When the investigation is complete, call
+finalize_structure_hypothesis exactly once with the complete candidate hypothesis. That tool is
+the only valid way to finish the run. Its arguments are schema-validated before the run stops.
 """
 
 
@@ -187,19 +211,9 @@ def inspect_artifact(ctx: RunContextWrapper[StructureAgentContext]) -> str:
         profile_text = render_artifact_profile(ctx.context.artifact_profile)
         result = bound_tool_output(ctx.context, profile_text)
     except Exception as exc:
-        _trace_error(
-            ctx.context,
-            tool_name="inspect_artifact",
-            arguments=arguments,
-            error=exc,
-        )
+        _trace_error(ctx.context, tool_name="inspect_artifact", arguments=arguments, error=exc)
         raise
-    return _trace_success(
-        ctx.context,
-        tool_name="inspect_artifact",
-        arguments=arguments,
-        result=result,
-    )
+    return _trace_success(ctx.context, tool_name="inspect_artifact", arguments=arguments, result=result)
 
 
 @tool(failure_error_function=None)
@@ -218,9 +232,7 @@ def get_page(ctx: RunContextWrapper[StructureAgentContext], page_number: int) ->
 
 @tool(failure_error_function=None)
 def get_pages(
-    ctx: RunContextWrapper[StructureAgentContext],
-    start_page: int,
-    end_page: int,
+    ctx: RunContextWrapper[StructureAgentContext], start_page: int, end_page: int
 ) -> str:
     """Read an inclusive range of document-view pages when a focused neighborhood is needed."""
 
@@ -237,8 +249,7 @@ def get_pages(
 
 @tool(failure_error_function=None)
 def get_printed_page(
-    ctx: RunContextWrapper[StructureAgentContext],
-    printed_page_number: int,
+    ctx: RunContextWrapper[StructureAgentContext], printed_page_number: int
 ) -> str:
     """Resolve and read one original printed/editorial page number."""
 
@@ -247,19 +258,9 @@ def get_printed_page(
         page = ctx.context.environment.get_printed_page(printed_page_number)
         result = bound_tool_output(ctx.context, _page_text(page))
     except Exception as exc:
-        _trace_error(
-            ctx.context,
-            tool_name="get_printed_page",
-            arguments=arguments,
-            error=exc,
-        )
+        _trace_error(ctx.context, tool_name="get_printed_page", arguments=arguments, error=exc)
         raise
-    return _trace_success(
-        ctx.context,
-        tool_name="get_printed_page",
-        arguments=arguments,
-        result=result,
-    )
+    return _trace_success(ctx.context, tool_name="get_printed_page", arguments=arguments, result=result)
 
 
 @tool(failure_error_function=None)
@@ -275,25 +276,12 @@ def get_printed_pages(
         "end_printed_page": end_printed_page,
     }
     try:
-        page_range = ctx.context.environment.get_printed_pages(
-            start_printed_page,
-            end_printed_page,
-        )
+        page_range = ctx.context.environment.get_printed_pages(start_printed_page, end_printed_page)
         result = bound_tool_output(ctx.context, render_printed_page_range(page_range))
     except Exception as exc:
-        _trace_error(
-            ctx.context,
-            tool_name="get_printed_pages",
-            arguments=arguments,
-            error=exc,
-        )
+        _trace_error(ctx.context, tool_name="get_printed_pages", arguments=arguments, error=exc)
         raise
-    return _trace_success(
-        ctx.context,
-        tool_name="get_printed_pages",
-        arguments=arguments,
-        result=result,
-    )
+    return _trace_success(ctx.context, tool_name="get_printed_pages", arguments=arguments, result=result)
 
 
 @tool(failure_error_function=None)
@@ -302,15 +290,30 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
 
     arguments: dict[str, int | str] = {"query": query}
     try:
-        hits = ctx.context.environment.search_text(
-            query,
-            max_hits=ctx.context.search_max_hits,
-        )
+        hits = ctx.context.environment.search_text(query, max_hits=ctx.context.search_max_hits)
         result = bound_tool_output(ctx.context, _search_text(query, hits))
     except Exception as exc:
         _trace_error(ctx.context, tool_name="search_text", arguments=arguments, error=exc)
         raise
     return _trace_success(ctx.context, tool_name="search_text", arguments=arguments, result=result)
+
+
+@tool(failure_error_function=None)
+def finalize_structure_hypothesis(
+    ctx: RunContextWrapper[StructureAgentContext], hypothesis: DocumentStructureHypothesis
+) -> str:
+    """Finalize the complete candidate structure after investigation is materially complete."""
+
+    if ctx.context.finalized_output:
+        raise ValueError("structure hypothesis was already finalized")
+    ctx.context.finalized_output.append(hypothesis)
+    rendered = hypothesis.model_dump_json()
+    return _trace_success(
+        ctx.context,
+        tool_name="finalize_structure_hypothesis",
+        arguments={"output_type": "DocumentStructureHypothesis"},
+        result=rendered,
+    )
 
 
 def build_structure_agent(*, model: str) -> Agent[StructureAgentContext]:
@@ -328,8 +331,9 @@ def build_structure_agent(*, model: str) -> Agent[StructureAgentContext]:
             get_printed_page,
             get_printed_pages,
             search_text,
+            finalize_structure_hypothesis,
         ],
-        output_type=DocumentStructureHypothesis,
+        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_structure_hypothesis"]),
     )
 
 
@@ -343,14 +347,20 @@ async def run_structure_agent(
     search_max_hits: int = 20,
     artifact_profile: ArtifactInspectionProfile | None = None,
     model_provider: ModelProvider | None = None,
+    trace_journal_path: Path | None = None,
 ) -> StructureAgentRunResult:
     """Run structure discovery and reject source-unsupported page identities."""
 
+    recorder = StructureToolTraceRecorder(
+        stage="structure_agent",
+        journal_path=trace_journal_path,
+    )
     context = StructureAgentContext(
         environment=environment,
         max_tool_output_chars=max_tool_output_chars,
         search_max_hits=search_max_hits,
         artifact_profile=artifact_profile,
+        trace_recorder=recorder,
     )
     agent = build_structure_agent(model=model)
     initial_page = _page_text(environment.get_page(1))
@@ -359,8 +369,8 @@ async def run_structure_agent(
         f"Environment: {environment.describe()}\n\n"
         f"Initial page preview:\n{initial_page}\n\n"
         "Investigate the complete structural problem conservatively. Use tools whenever "
-        "needed, record unresolved uncertainty explicitly, and finalize only after the "
-        "completion checklist in your instructions is materially satisfied."
+        "needed, record unresolved uncertainty explicitly, and finish only by calling "
+        "finalize_structure_hypothesis after the completion checklist is materially satisfied."
     )
     run_config = RunConfig(
         workflow_name="JurisNexo Structure Discovery",
@@ -382,15 +392,25 @@ async def run_structure_agent(
             max_turns=max_turns,
             tool_trace=context.trace_recorder.events,
         ) from exc
+    except ModelBehaviorError as exc:
+        raise StructureInvestigationFailed(
+            stage="structure_agent",
+            error=exc,
+            tool_trace=context.trace_recorder.events,
+        ) from exc
 
-    hypothesis = result.final_output_as(
-        DocumentStructureHypothesis,
-        raise_if_incorrect_type=True,
-    )
-    validate_index_reference_evidence(
-        hypothesis=hypothesis,
-        environment=environment,
-    )
+    if len(context.finalized_output) != 1 or not isinstance(
+        context.finalized_output[0], DocumentStructureHypothesis
+    ):
+        error = RuntimeError("structure agent ended without a validated finalization tool call")
+        raise StructureInvestigationFailed(
+            stage="structure_agent",
+            error=error,
+            tool_trace=context.trace_recorder.events,
+        )
+
+    hypothesis = context.finalized_output[0]
+    validate_index_reference_evidence(hypothesis=hypothesis, environment=environment)
     return StructureAgentRunResult(
         hypothesis=hypothesis,
         usage_total_tokens=result.context_wrapper.usage.total_tokens,
