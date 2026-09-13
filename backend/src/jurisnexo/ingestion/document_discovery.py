@@ -76,12 +76,12 @@ def _empty_metadata_hypotheses() -> list[MetadataHypothesis]:
 
 
 class InvestigationPageEvidence(BaseModel):
-    """One explicit correspondence between a document-view page and printed page."""
+    """One source-backed document-view page, with printed identity when resolvable."""
 
     model_config = ConfigDict(extra="forbid")
 
     view_page: int = Field(ge=1)
-    printed_page: int = Field(ge=1)
+    printed_page: int | None = Field(default=None, ge=1)
     role: Literal["claimed_destination", "observed_content", "neighbor_context"] = (
         "observed_content"
     )
@@ -165,12 +165,14 @@ class IndexReferenceInvestigation(BaseModel):
         ):
             raise ValueError("confirmed_nearby must identify a different observed start page")
         if self.observed_decision_start_printed_page is not None and self.evidence_pages:
-            observed_pages = {item.printed_page for item in self.evidence_pages}
+            observed_pages = {
+                item.printed_page for item in self.evidence_pages if item.printed_page is not None
+            }
             if self.observed_decision_start_printed_page not in observed_pages:
                 raise ValueError(
                     "observed decision start must be present in typed evidence_pages"
                 )
-        seen_pairs: set[tuple[int, int]] = set()
+        seen_pairs: set[tuple[int, int | None]] = set()
         for item in self.evidence_pages:
             pair = (item.view_page, item.printed_page)
             if pair in seen_pairs:
@@ -246,8 +248,9 @@ decision_number, docket_number, and parties. Leave an end page or field unknown 
 guessing it. Prefer an explicit unknown/review-required conclusion over unsupported certainty.
 
 For index-reference investigations, evidence_pages is the canonical evidence contract. Each
-entry must explicitly bind one document-view page to its printed/editorial page identity; never
-return unrelated parallel arrays of view pages and printed pages.
+entry must bind a document-view page to its printed/editorial page when that printed identity is
+actually resolved by the workspace. If the source view page has no resolved printed number,
+printed_page must be null; never invent one merely to satisfy the schema.
 
 Do not claim a rule is validated. Describe evidence and recommend the next programmatic checks
 needed to validate or reject each important hypothesis.
