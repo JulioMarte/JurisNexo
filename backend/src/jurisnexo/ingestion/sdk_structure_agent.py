@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import cast
 
 from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
 from agents.decorators import tool
@@ -368,7 +367,7 @@ async def run_structure_agent(
         trace_include_sensitive_data=False,
     )
     if model_provider is not None:
-        run_config.model_provider = cast(ModelProvider, model_provider)
+        run_config.model_provider = model_provider
     try:
         result = await Runner.run(
             starting_agent=agent,
