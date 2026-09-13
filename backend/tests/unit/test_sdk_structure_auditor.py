@@ -77,6 +77,7 @@ def test_structure_auditor_is_independent_agent_with_read_only_document_tools() 
     function_tools = [tool for tool in auditor.tools if isinstance(tool, FunctionTool)]
     assert len(function_tools) == len(auditor.tools)
     assert {tool.name for tool in function_tools} == {
+        "inspect_artifact",
         "get_page",
         "get_pages",
         "get_printed_page",
@@ -164,6 +165,25 @@ def test_rejected_requires_source_backed_contradiction() -> None:
                 "summary": "Unsupported rejection is forbidden.",
             }
         )
+
+
+def test_rendering_mode_check_can_use_deterministic_artifact_profile_without_page_evidence() -> None:
+    audit = StructureAuditResult.model_validate(
+        {
+            "state": "APPROVED",
+            "checks": [
+                {
+                    "kind": "artifact_rendering_mode",
+                    "status": "supported",
+                    "target": "scanned image with text layer",
+                    "explanation": "Independent inspect_artifact profile supports this mode.",
+                }
+            ],
+            "summary": "Rendering mode independently checked.",
+        }
+    )
+
+    assert audit.allows_extraction is True
 
 
 def test_audit_evidence_validator_rejects_wrong_page_mapping() -> None:
