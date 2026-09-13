@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
 from agents.decorators import tool
+from agents.exceptions import MaxTurnsExceeded
+from agents.models.interface import ModelProvider
 
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import (
@@ -43,6 +45,22 @@ class StructureAgentRunResult:
     usage_total_tokens: int
     last_agent_name: str
     tool_trace: tuple[StructureToolTraceEvent, ...]
+
+
+class StructureInvestigationBudgetExceeded(RuntimeError):
+    """Safety fuse exception that preserves the evidence gathered before termination."""
+
+    def __init__(
+        self,
+        *,
+        stage: str,
+        max_turns: int,
+        tool_trace: tuple[StructureToolTraceEvent, ...],
+    ) -> None:
+        self.stage = stage
+        self.max_turns = max_turns
+        self.tool_trace = tool_trace
+        super().__init__(f"{stage} exceeded max_turns={max_turns} after {len(tool_trace)} tool calls")
 
 
 _STRUCTURE_AGENT_INSTRUCTIONS = """\
@@ -300,6 +318,7 @@ async def run_structure_agent(
     max_tool_output_chars: int = 60_000,
     search_max_hits: int = 20,
     artifact_profile: ArtifactInspectionProfile | None = None,
+    model_provider: ModelProvider | None = None,
 ) -> StructureAgentRunResult:
     """Run structure discovery and reject source-unsupported page identities."""
 
@@ -319,16 +338,25 @@ async def run_structure_agent(
         "record unresolved uncertainty explicitly, and finalize only after the completion checklist "
         "in your instructions is materially satisfied."
     )
-    result = await Runner.run(
-        starting_agent=agent,
-        input=prompt,
-        context=context,
-        max_turns=max_turns,
-        run_config=RunConfig(
-            workflow_name="JurisNexo Structure Discovery",
-            trace_include_sensitive_data=False,
-        ),
-    )
+    try:
+        result = await Runner.run(
+            starting_agent=agent,
+            input=prompt,
+            context=context,
+            max_turns=max_turns,
+            run_config=RunConfig(
+                workflow_name="JurisNexo Structure Discovery",
+                trace_include_sensitive_data=False,
+                model_provider=model_provider,
+            ),
+        )
+    except MaxTurnsExceeded as exc:
+        raise StructureInvestigationBudgetExceeded(
+            stage="structure_agent",
+            max_turns=max_turns,
+            tool_trace=context.trace_recorder.events,
+        ) from exc
+
     hypothesis = result.final_output_as(
         DocumentStructureHypothesis,
         raise_if_incorrect_type=True,
