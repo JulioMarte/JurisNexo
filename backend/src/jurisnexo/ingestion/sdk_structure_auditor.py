@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from agents import Agent, ModelSettings, RunConfig, Runner
 from agents.exceptions import MaxTurnsExceeded
@@ -148,12 +148,12 @@ both a candidate structure hypothesis and the Structure Agent's document-inspect
 neither is authoritative. The trace is evidence of what the first agent looked at, not proof that
 its conclusions are correct.
 
-Your job is to try to falsify the candidate. Independently use the same read-only workspace tools
-to reproduce the highest-risk claims and deliberately search for omissions or contradictory
-evidence the first agent may have missed. Pay special attention to artifact rendering mode, index
-location, candidate starts and ends, transitions between decisions, continued decisions,
-index-to-destination consistency, duplicate scans, missing/repeated printed pages, OCR-damaged
-references, conflicting names or dates, and neighboring-content leakage.
+Your job is to try to falsify the candidate and independently verify its material claims. Use the
+same read-only workspace tools to reproduce the highest-risk claims and deliberately search for
+omissions or contradictory evidence the first agent may have missed. Pay special attention to
+artifact rendering mode, index location, candidate starts and ends, transitions between decisions,
+continued decisions, index-to-destination consistency, duplicate scans, missing/repeated printed
+pages, OCR-damaged references, conflicting names or dates, and neighboring-content leakage.
 
 Do not merely replay every first-agent call. Select checks adversarially. At minimum, independently
 re-check representative index/boundary claims, investigate any anomaly or unresolved item, and
@@ -264,17 +264,19 @@ async def run_structure_auditor(
         "Try to falsify the candidate. Verify the riskiest claims independently, search for at "
         "least one plausible omission, and only approve what your own source checks support."
     )
+    run_config = RunConfig(
+        workflow_name="JurisNexo Adversarial Structure Audit",
+        trace_include_sensitive_data=False,
+    )
+    if model_provider is not None:
+        run_config.model_provider = cast(ModelProvider, model_provider)
     try:
         result = await Runner.run(
             starting_agent=auditor,
             input=prompt,
             context=context,
             max_turns=max_turns,
-            run_config=RunConfig(
-                workflow_name="JurisNexo Adversarial Structure Audit",
-                trace_include_sensitive_data=False,
-                model_provider=model_provider,
-            ),
+            run_config=run_config,
         )
     except MaxTurnsExceeded as exc:
         raise StructureInvestigationBudgetExceeded(
