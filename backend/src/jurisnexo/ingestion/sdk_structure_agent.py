@@ -48,7 +48,7 @@ class StructureAgentRunResult:
 
 
 class StructureInvestigationBudgetExceeded(RuntimeError):
-    """Safety fuse exception that preserves the evidence gathered before termination."""
+    """Safety fuse exception that preserves evidence gathered before termination."""
 
     def __init__(
         self,
@@ -60,7 +60,11 @@ class StructureInvestigationBudgetExceeded(RuntimeError):
         self.stage = stage
         self.max_turns = max_turns
         self.tool_trace = tool_trace
-        super().__init__(f"{stage} exceeded max_turns={max_turns} after {len(tool_trace)} tool calls")
+        message = (
+            f"{stage} exceeded max_turns={max_turns} "
+            f"after {len(tool_trace)} tool calls"
+        )
+        super().__init__(message)
 
 
 _STRUCTURE_AGENT_INSTRUCTIONS = """\
@@ -180,9 +184,15 @@ def inspect_artifact(ctx: RunContextWrapper[StructureAgentContext]) -> str:
 
     arguments: dict[str, int | str] = {}
     try:
-        result = bound_tool_output(ctx.context, render_artifact_profile(ctx.context.artifact_profile))
+        profile_text = render_artifact_profile(ctx.context.artifact_profile)
+        result = bound_tool_output(ctx.context, profile_text)
     except Exception as exc:
-        _trace_error(ctx.context, tool_name="inspect_artifact", arguments=arguments, error=exc)
+        _trace_error(
+            ctx.context,
+            tool_name="inspect_artifact",
+            arguments=arguments,
+            error=exc,
+        )
         raise
     return _trace_success(
         ctx.context,
@@ -198,7 +208,8 @@ def get_page(ctx: RunContextWrapper[StructureAgentContext], page_number: int) ->
 
     arguments: dict[str, int | str] = {"page_number": page_number}
     try:
-        result = bound_tool_output(ctx.context, _page_text(ctx.context.environment.get_page(page_number)))
+        page = ctx.context.environment.get_page(page_number)
+        result = bound_tool_output(ctx.context, _page_text(page))
     except Exception as exc:
         _trace_error(ctx.context, tool_name="get_page", arguments=arguments, error=exc)
         raise
@@ -236,7 +247,12 @@ def get_printed_page(
         page = ctx.context.environment.get_printed_page(printed_page_number)
         result = bound_tool_output(ctx.context, _page_text(page))
     except Exception as exc:
-        _trace_error(ctx.context, tool_name="get_printed_page", arguments=arguments, error=exc)
+        _trace_error(
+            ctx.context,
+            tool_name="get_printed_page",
+            arguments=arguments,
+            error=exc,
+        )
         raise
     return _trace_success(
         ctx.context,
@@ -265,7 +281,12 @@ def get_printed_pages(
         )
         result = bound_tool_output(ctx.context, render_printed_page_range(page_range))
     except Exception as exc:
-        _trace_error(ctx.context, tool_name="get_printed_pages", arguments=arguments, error=exc)
+        _trace_error(
+            ctx.context,
+            tool_name="get_printed_pages",
+            arguments=arguments,
+            error=exc,
+        )
         raise
     return _trace_success(
         ctx.context,
@@ -281,7 +302,10 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
 
     arguments: dict[str, int | str] = {"query": query}
     try:
-        hits = ctx.context.environment.search_text(query, max_hits=ctx.context.search_max_hits)
+        hits = ctx.context.environment.search_text(
+            query,
+            max_hits=ctx.context.search_max_hits,
+        )
         result = bound_tool_output(ctx.context, _search_text(query, hits))
     except Exception as exc:
         _trace_error(ctx.context, tool_name="search_text", arguments=arguments, error=exc)
@@ -334,9 +358,9 @@ async def run_structure_agent(
         f"Artifact: {artifact_label}\n"
         f"Environment: {environment.describe()}\n\n"
         f"Initial page preview:\n{initial_page}\n\n"
-        "Investigate the complete structural problem conservatively. Use tools whenever needed, "
-        "record unresolved uncertainty explicitly, and finalize only after the completion checklist "
-        "in your instructions is materially satisfied."
+        "Investigate the complete structural problem conservatively. Use tools whenever "
+        "needed, record unresolved uncertainty explicitly, and finalize only after the "
+        "completion checklist in your instructions is materially satisfied."
     )
     try:
         result = await Runner.run(
