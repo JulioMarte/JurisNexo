@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,11 +31,13 @@ class ArtifactInspectionProfile(BaseModel):
 
 
 class StructureToolTraceEvent(BaseModel):
-    """One deterministic record of a document-inspection tool invocation."""
+    """One durable record of a document-inspection or finalization tool invocation."""
 
     model_config = ConfigDict(extra="forbid")
 
     sequence: int = Field(ge=1)
+    occurred_at: datetime
+    stage: Literal["structure_agent", "structure_auditor", "structure_reinvestigation"]
     tool_name: str
     arguments: dict[str, int | str]
     status: Literal["success", "error"]
@@ -44,17 +49,37 @@ class StructureToolTraceEvent(BaseModel):
 
 
 class StructureToolTraceRecorder:
-    """In-memory trace recorder intentionally independent from provider/SDK internals."""
+    """Append-only trace recorder that can survive a process failure via JSONL."""
 
-    def __init__(self, *, excerpt_chars: int = 2_000) -> None:
+    def __init__(
+        self,
+        *,
+        stage: Literal[
+            "structure_agent", "structure_auditor", "structure_reinvestigation"
+        ] = "structure_agent",
+        excerpt_chars: int = 2_000,
+        journal_path: Path | None = None,
+    ) -> None:
         if excerpt_chars < 200:
             raise ValueError("excerpt_chars must be at least 200")
+        self._stage = stage
         self._excerpt_chars = excerpt_chars
+        self._journal_path = journal_path
         self._events: list[StructureToolTraceEvent] = []
+        if journal_path is not None:
+            journal_path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
     def events(self) -> tuple[StructureToolTraceEvent, ...]:
         return tuple(self._events)
+
+    def _append(self, event: StructureToolTraceEvent) -> None:
+        self._events.append(event)
+        if self._journal_path is None:
+            return
+        with self._journal_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event.model_dump(mode="json"), ensure_ascii=False) + "\n")
+            handle.flush()
 
     def record_success(
         self,
@@ -64,9 +89,11 @@ class StructureToolTraceRecorder:
         result: str,
     ) -> None:
         encoded = result.encode("utf-8", errors="replace")
-        self._events.append(
+        self._append(
             StructureToolTraceEvent(
                 sequence=len(self._events) + 1,
+                occurred_at=datetime.now(UTC),
+                stage=self._stage,
                 tool_name=tool_name,
                 arguments=arguments,
                 status="success",
@@ -83,9 +110,11 @@ class StructureToolTraceRecorder:
         arguments: dict[str, int | str],
         error: Exception,
     ) -> None:
-        self._events.append(
+        self._append(
             StructureToolTraceEvent(
                 sequence=len(self._events) + 1,
+                occurred_at=datetime.now(UTC),
+                stage=self._stage,
                 tool_name=tool_name,
                 arguments=arguments,
                 status="error",
