@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from jurisnexo.ingestion.structure_trace import StructureToolTraceRecorder, render_tool_trace
@@ -18,6 +20,8 @@ def test_trace_records_digest_excerpt_and_arguments() -> None:
 
     event = recorder.events[0]
     assert event.sequence == 1
+    assert event.stage == "structure_agent"
+    assert event.occurred_at.tzinfo is not None
     assert event.tool_name == "get_page"
     assert event.arguments == {"page_number": 7}
     assert event.status == "success"
@@ -39,6 +43,32 @@ def test_trace_records_errors_without_swallowing_identity() -> None:
     assert event.status == "error"
     assert event.error_type == "ValueError"
     assert event.error_message == "missing page"
+
+
+def test_trace_journal_is_appended_immediately(tmp_path) -> None:
+    journal = tmp_path / "trace.jsonl"
+    recorder = StructureToolTraceRecorder(
+        stage="structure_auditor",
+        journal_path=journal,
+    )
+
+    recorder.record_success(
+        tool_name="get_page",
+        arguments={"page_number": 1},
+        result="first result",
+    )
+    first_lines = journal.read_text(encoding="utf-8").splitlines()
+    assert len(first_lines) == 1
+    assert json.loads(first_lines[0])["stage"] == "structure_auditor"
+
+    recorder.record_error(
+        tool_name="get_page",
+        arguments={"page_number": 999},
+        error=ValueError("bad page"),
+    )
+    lines = journal.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[1])["status"] == "error"
 
 
 def test_render_tool_trace_is_bounded_and_preserves_omission_marker() -> None:
