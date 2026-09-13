@@ -167,7 +167,7 @@ def test_rejected_requires_source_backed_contradiction() -> None:
         )
 
 
-def test_rendering_mode_check_can_use_deterministic_artifact_profile_without_page_evidence() -> None:
+def test_rendering_mode_check_can_use_artifact_profile_without_page_evidence() -> None:
     audit = StructureAuditResult.model_validate(
         {
             "state": "APPROVED",
