@@ -25,6 +25,7 @@ from jurisnexo.ingestion.scanned_page_materialization import (
 )
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureInvestigationBudgetExceeded,
+    StructureInvestigationFailed,
     run_structure_agent,
 )
 from jurisnexo.ingestion.sdk_structure_auditor import run_structure_auditor
@@ -99,6 +100,10 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _journal_path(args: argparse.Namespace) -> Path:
+    return args.trace_output.with_suffix(".jsonl")
+
+
 def _write_budget_failure(
     *,
     args: argparse.Namespace,
@@ -112,6 +117,27 @@ def _write_budget_failure(
         "tool_call_count": len(exc.tool_trace),
         "artifact_profile": profile.model_dump(mode="json"),
         "tool_trace": _serialize_trace(exc.tool_trace),
+        "journal_path": str(_journal_path(args)),
+    }
+    _write_json(args.trace_output, payload)
+    _write_json(args.trace_output.with_name("structure-pipeline-error.json"), payload)
+
+
+def _write_runtime_failure(
+    *,
+    args: argparse.Namespace,
+    exc: StructureInvestigationFailed,
+    profile: ArtifactInspectionProfile,
+) -> None:
+    payload = {
+        "status": "RUNTIME_FAILURE",
+        "stage": exc.stage,
+        "error_type": exc.error_type,
+        "error_message": exc.error_message,
+        "tool_call_count": len(exc.tool_trace),
+        "artifact_profile": profile.model_dump(mode="json"),
+        "tool_trace": _serialize_trace(exc.tool_trace),
+        "journal_path": str(_journal_path(args)),
     }
     _write_json(args.trace_output, payload)
     _write_json(args.trace_output.with_name("structure-pipeline-error.json"), payload)
@@ -134,6 +160,9 @@ async def _run(args: argparse.Namespace) -> None:
         physical_pages=physical_pages,
         image_page_numbers=image_pages,
     )
+    journal_path = _journal_path(args)
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.unlink(missing_ok=True)
 
     try:
         structure = await run_structure_agent(
@@ -145,9 +174,13 @@ async def _run(args: argparse.Namespace) -> None:
             search_max_hits=args.search_max_hits,
             artifact_profile=profile,
             model_provider=provider,
+            trace_journal_path=journal_path,
         )
     except StructureInvestigationBudgetExceeded as exc:
         _write_budget_failure(args=args, exc=exc, profile=profile)
+        raise
+    except StructureInvestigationFailed as exc:
+        _write_runtime_failure(args=args, exc=exc, profile=profile)
         raise
 
     structure_payload = {
@@ -179,9 +212,13 @@ async def _run(args: argparse.Namespace) -> None:
             search_max_hits=args.search_max_hits,
             artifact_profile=profile,
             model_provider=provider,
+            trace_journal_path=journal_path,
         )
     except StructureInvestigationBudgetExceeded as exc:
         _write_budget_failure(args=args, exc=exc, profile=profile)
+        raise
+    except StructureInvestigationFailed as exc:
+        _write_runtime_failure(args=args, exc=exc, profile=profile)
         raise
 
     audit_payload = {
@@ -198,6 +235,7 @@ async def _run(args: argparse.Namespace) -> None:
         {
             "status": "COMPLETE",
             "artifact_profile": profile.model_dump(mode="json"),
+            "journal_path": str(journal_path),
             "structure_agent": {
                 "tool_call_count": len(structure.tool_trace),
                 "tool_trace": _serialize_trace(structure.tool_trace),
