@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from agents import Agent, ModelSettings, RunConfig, Runner
 from agents.exceptions import MaxTurnsExceeded
@@ -166,11 +166,13 @@ material page-level check must cite typed evidence that binds view_page to print
 invent page identities or provenance. Artifact-rendering checks may rely on inspect_artifact's
 deterministic profile rather than page evidence.
 
-Return APPROVED only when the material claims you checked are supported and no material check
-remains contradicted or unresolved. Use APPROVED_WITH_AMENDMENTS when extraction can safely
-continue after explicit bounded corrections. Use MORE_INVESTIGATION_REQUIRED for unresolved
-material ambiguity, REJECTED for source-backed contradiction that invalidates the hypothesis,
-and SOURCE_QUALITY_BLOCKED when the source cannot support a reliable structural decision.
+You must not approve a candidate merely because the first agent was confident, used many tools,
+or produced a coherent narrative. Return APPROVED only when the material claims you checked are
+supported by your independent source review and no material check remains contradicted or
+unresolved. Use APPROVED_WITH_AMENDMENTS when extraction can safely continue after explicit bounded
+corrections. Use MORE_INVESTIGATION_REQUIRED for unresolved material ambiguity, REJECTED for
+source-backed contradiction that invalidates the hypothesis, and SOURCE_QUALITY_BLOCKED when the
+source cannot support a reliable structural decision.
 
 Approval must state what was independently checked. Unknown is preferable to unsupported certainty.
 """
@@ -269,7 +271,7 @@ async def run_structure_auditor(
         trace_include_sensitive_data=False,
     )
     if model_provider is not None:
-        run_config.model_provider = cast(ModelProvider, model_provider)
+        run_config.model_provider = model_provider
     try:
         result = await Runner.run(
             starting_agent=auditor,
