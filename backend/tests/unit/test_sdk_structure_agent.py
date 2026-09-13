@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from agents import FunctionTool
 
-from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
@@ -27,11 +26,11 @@ def _environment() -> DocumentEnvironment:
     )
 
 
-def test_structure_agent_uses_structured_output_and_document_tools() -> None:
+def test_structure_agent_uses_validated_finalization_and_document_tools() -> None:
     agent = build_structure_agent(model="gemini/gemini-3.8-flash")
 
     assert agent.name == "JurisNexo Structure Agent"
-    assert agent.output_type == DocumentStructureHypothesis
+    assert agent.output_type is None
     function_tools = [tool for tool in agent.tools if isinstance(tool, FunctionTool)]
     assert len(function_tools) == len(agent.tools)
     assert {tool.name for tool in function_tools} == {
@@ -41,6 +40,7 @@ def test_structure_agent_uses_structured_output_and_document_tools() -> None:
         "get_printed_page",
         "get_printed_pages",
         "search_text",
+        "finalize_structure_hypothesis",
     }
 
 
