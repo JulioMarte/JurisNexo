@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -253,6 +254,107 @@ class PostgresSourceDocumentInventory:
                 ),
             )
         return source_document_id
+
+    def observe_many(self, observations: Sequence[SourceDocumentObservation]) -> int:
+        """Persist one same-source batch with a constant number of database round trips."""
+        if not observations:
+            return 0
+        source = observations[0].source
+        if any(observation.source != source for observation in observations):
+            raise ValueError("observe_many requires observations from exactly one source")
+
+        identities = [
+            (observation.source_collection, observation.source_identifier)
+            for observation in observations
+        ]
+        if len(identities) != len(set(identities)):
+            raise ValueError("observe_many batch contains duplicate source document identities")
+
+        registry_id = self._ensure_registry(source)
+        incoming: list[JsonObject] = []
+        for observation in observations:
+            incoming.append(
+                {
+                    "source_identifier": observation.source_identifier,
+                    "source_collection": observation.source_collection,
+                    "document_kind": observation.document_kind,
+                    "discovery_url": observation.discovery_url,
+                    "document_url": observation.document_url,
+                    "artifact_availability": observation.artifact_availability,
+                    "source_payload": observation.source_payload,
+                    "payload_sha256": observation.payload_sha256,
+                    "normalization_notes": observation.normalization_notes,
+                }
+            )
+
+        encoded = json.dumps(incoming, ensure_ascii=False, sort_keys=True)
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH incoming AS (
+                    SELECT *
+                    FROM jsonb_to_recordset(%s::jsonb) AS value(
+                        source_identifier text,
+                        source_collection text,
+                        document_kind text,
+                        discovery_url text,
+                        document_url text,
+                        artifact_availability text,
+                        source_payload jsonb,
+                        payload_sha256 text,
+                        normalization_notes jsonb
+                    )
+                ), upserted AS (
+                    INSERT INTO corpus.source_documents (
+                        source_registry_id, source_identifier, source_collection,
+                        document_kind, discovery_url, current_document_url,
+                        artifact_availability, latest_source_metadata, latest_payload_sha256
+                    )
+                    SELECT
+                        %s::uuid,
+                        source_identifier,
+                        source_collection,
+                        document_kind,
+                        discovery_url,
+                        document_url,
+                        artifact_availability,
+                        source_payload,
+                        payload_sha256
+                    FROM incoming
+                    ON CONFLICT (source_registry_id, source_collection, source_identifier)
+                    DO UPDATE SET
+                        document_kind = EXCLUDED.document_kind,
+                        discovery_url = EXCLUDED.discovery_url,
+                        current_document_url = EXCLUDED.current_document_url,
+                        artifact_availability = EXCLUDED.artifact_availability,
+                        latest_source_metadata = EXCLUDED.latest_source_metadata,
+                        latest_payload_sha256 = EXCLUDED.latest_payload_sha256,
+                        last_seen_at = clock_timestamp(),
+                        updated_at = now()
+                    RETURNING id, source_identifier, source_collection
+                )
+                INSERT INTO corpus.source_document_observations (
+                    source_document_id, discovery_url, document_url,
+                    artifact_availability, source_payload, payload_sha256,
+                    normalization_notes
+                )
+                SELECT
+                    upserted.id,
+                    incoming.discovery_url,
+                    incoming.document_url,
+                    incoming.artifact_availability,
+                    incoming.source_payload,
+                    incoming.payload_sha256,
+                    incoming.normalization_notes
+                FROM incoming
+                JOIN upserted
+                  ON upserted.source_identifier = incoming.source_identifier
+                 AND upserted.source_collection = incoming.source_collection
+                ON CONFLICT DO NOTHING
+                """,
+                (encoded, registry_id),
+            )
+        return len(observations)
 
     def link_artifact_sha256(
         self,
