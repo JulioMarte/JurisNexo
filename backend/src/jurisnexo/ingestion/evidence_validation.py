@@ -21,11 +21,12 @@ def validate_index_reference_evidence(
     hypothesis: DocumentStructureHypothesis,
     environment: DocumentEnvironment,
 ) -> None:
-    """Prove that every typed index-reference evidence pair exists in the source view.
+    """Prove that every typed index-reference evidence item exists in the source view.
 
-    This is intentionally deterministic. The model may propose page identities, but it does
-    not get authority to assert that a view page corresponds to a printed page or provenance
-    reference. Those facts are checked against the immutable DocumentEnvironment.
+    Printed/editorial identity is verified when the immutable workspace has resolved it. A real
+    view page may legitimately have no resolved printed number; in that case the model must emit
+    ``printed_page=null`` rather than inventing pagination. This preserves page evidence without
+    turning an unresolved printed identity into false provenance.
     """
 
     for investigation_index, investigation in enumerate(
@@ -45,10 +46,12 @@ def validate_index_reference_evidence(
                 ) from exc
 
             if page.printed_page_number is None:
-                raise EvidenceValidationError(
-                    f"{label}: view page {evidence.view_page} has no resolved printed page"
-                )
-            if page.printed_page_number != evidence.printed_page:
+                if evidence.printed_page is not None:
+                    raise EvidenceValidationError(
+                        f"{label}: view page {evidence.view_page} has no resolved printed page; "
+                        f"model claimed printed page {evidence.printed_page}"
+                    )
+            elif evidence.printed_page != page.printed_page_number:
                 raise EvidenceValidationError(
                     f"{label}: view page {evidence.view_page} resolves to printed page "
                     f"{page.printed_page_number}, not claimed printed page {evidence.printed_page}"
