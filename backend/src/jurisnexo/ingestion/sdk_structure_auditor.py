@@ -150,7 +150,7 @@ its conclusions are correct.
 
 Your job is to try to falsify the candidate and independently verify its material claims. Use the
 same read-only workspace tools to reproduce the highest-risk claims and deliberately search for
-omissions or contradictory evidence the first agent may have missed. Pay special attention to
+omissions or contradictory evidence the first agent may have missed. Use workspace tools to inspect source evidence yourself. Pay special attention to
 artifact rendering mode, index location, candidate starts and ends, transitions between decisions,
 continued decisions, index-to-destination consistency, duplicate scans, missing/repeated printed
 pages, OCR-damaged references, conflicting names or dates, and neighboring-content leakage.
