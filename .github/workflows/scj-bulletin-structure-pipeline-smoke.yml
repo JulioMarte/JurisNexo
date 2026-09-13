@@ -142,5 +142,6 @@ jobs:
             ingestion-smoke/structure-audit.json
             ingestion-smoke/structure-score.json
             ingestion-smoke/structure-trace.json
+            ingestion-smoke/structure-trace.jsonl
             ingestion-smoke/structure-pipeline-error.json
             ingestion-smoke/summary.json
