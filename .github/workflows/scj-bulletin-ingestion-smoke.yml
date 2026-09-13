@@ -71,7 +71,7 @@ jobs:
             --artifact-label 'Official SCJ Boletín Judicial Núm. 831, Febrero 1980. Treat this as an ingestion candidate: identify document boundaries conservatively, verify the SUMARIO, and investigate mismatched printed-page destinations.' \
             --provider gemini \
             --model gemini-3.8-flash \
-            --max-turns 16
+            --max-turns 32
 
       - name: Validate against frozen historical truth
         working-directory: backend
