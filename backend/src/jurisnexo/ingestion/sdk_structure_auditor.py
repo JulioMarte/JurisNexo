@@ -81,9 +81,13 @@ class StructureAuditCheck(BaseModel):
 
     @model_validator(mode="after")
     def require_evidence_for_material_findings(self) -> StructureAuditCheck:
-        if self.status in {"supported", "contradicted"} and not self.evidence_pages:
-            if self.kind != "artifact_rendering_mode":
-                raise ValueError("supported or contradicted audit checks require evidence_pages")
+        requires_page_evidence = (
+            self.status in {"supported", "contradicted"}
+            and not self.evidence_pages
+            and self.kind != "artifact_rendering_mode"
+        )
+        if requires_page_evidence:
+            raise ValueError("supported or contradicted audit checks require evidence_pages")
         return self
 
 
