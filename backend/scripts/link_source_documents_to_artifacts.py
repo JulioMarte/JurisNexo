@@ -7,6 +7,7 @@ from pathlib import Path
 import psycopg
 
 SOURCE = os.environ["SOURCE_DOCUMENT_LINK_SOURCE"]
+COLLECTION = os.environ.get("SOURCE_DOCUMENT_LINK_COLLECTION", "").strip() or None
 OUTPUT_DIR = Path(os.environ["SOURCE_DOCUMENT_LINK_OUTPUT"])
 
 
@@ -28,6 +29,7 @@ def main() -> None:
                      AND sal.locator_type = 'official_url'
                      AND sal.locator = sd.current_document_url
                     WHERE sr.code = %s
+                      AND (%s IS NULL OR sd.source_collection = %s)
                       AND sd.artifact_availability = 'available'
                       AND sd.current_document_url IS NOT NULL
                     ORDER BY sd.id, sal.last_seen_at DESC, sal.id DESC
@@ -40,7 +42,7 @@ def main() -> None:
                 ON CONFLICT (source_document_id, artifact_id, relationship_type)
                 DO UPDATE SET last_seen_at = clock_timestamp()
                 """,
-                (SOURCE,),
+                (SOURCE, COLLECTION, COLLECTION),
             )
             cursor.execute(
                 """
@@ -58,8 +60,9 @@ def main() -> None:
                   ON sda.source_document_id = sd.id
                  AND sda.relationship_type = 'primary'
                 WHERE sr.code = %s
+                  AND (%s IS NULL OR sd.source_collection = %s)
                 """,
-                (SOURCE,),
+                (SOURCE, COLLECTION, COLLECTION),
             )
             row = cursor.fetchone()
     if row is None:
@@ -68,6 +71,7 @@ def main() -> None:
     summary = {
         "status": "COMPLETE" if available_unlinked == 0 else "INCOMPLETE",
         "source": SOURCE,
+        "source_collection": COLLECTION,
         "available_source_documents": available,
         "not_published_source_documents": not_published,
         "linked_source_documents": linked,

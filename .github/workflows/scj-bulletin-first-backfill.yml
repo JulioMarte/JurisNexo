@@ -1,0 +1,289 @@
+name: SCJ bulletin-first corpus backfill
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ops/scj-bulletin-first-backfill
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-bulletin-first-corpus-backfill
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: '1'
+  JURISNEXO_OTEL_CONSOLE: 'false'
+
+jobs:
+  preflight:
+    name: Validate SCJ bulletin production configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate live configuration without exposing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in DATABASE_URL JURISNEXO_S3_BUCKET JURISNEXO_S3_ENDPOINT_URL JURISNEXO_S3_REGION JURISNEXO_S3_ACCESS_KEY_ID JURISNEXO_S3_SECRET_ACCESS_KEY; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required backfill secrets: %s\n' "${missing[*]}" >&2
+            exit 2
+          fi
+          if [[ "$JURISNEXO_S3_BUCKET" != "official-corpus" ]]; then
+            echo 'SCJ bulletin backfill requires JURISNEXO_S3_BUCKET=official-corpus.' >&2
+            exit 2
+          fi
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install backend schema runtime
+        run: python -m pip install -e ./backend
+      - name: Require live database at repository migration head
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(alembic heads | awk 'NR == 1 {print $1}')"
+          current="$(alembic current | awk 'NR == 1 {print $1}')"
+          test -n "$expected" && test -n "$current"
+          if [[ "$current" != "$expected" ]]; then
+            printf 'Live database schema mismatch: current=%s expected=%s\n' "$current" "$expected" >&2
+            exit 2
+          fi
+          printf 'Production corpus schema ready at %s.\n' "$current"
+
+  inventory:
+    name: SCJ bulletin inventory shard ${{ matrix.shard }}/4
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned SCJ inventory runtime
+        run: >-
+          python -m pip install
+          'playwright==1.62.0'
+          'opentelemetry-api==1.44.0'
+          'opentelemetry-sdk==1.44.0'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Enumerate assigned official bulletin years
+        shell: bash
+        env:
+          SCJ_SURFACE: bulletins
+          SCJ_SHARD_INDEX: ${{ matrix.shard }}
+          SCJ_SHARD_COUNT: '4'
+          SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-bulletin-inventory-shard
+        run: |
+          set -euo pipefail
+          python backend/scripts/scj_inventory_shard.py
+      - name: Preserve bulletin inventory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-inventory-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ runner.temp }}/scj-bulletin-inventory-shard/**
+
+  certify:
+    name: Certify exhaustive official SCJ bulletin inventory
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: scj-bulletin-inventory-*
+          path: ${{ runner.temp }}/scj-bulletin-inventory-shards
+          merge-multiple: true
+      - name: Certify every year exposed by the official bulletin selector
+        shell: bash
+        env:
+          SCJ_INVENTORY_INPUT: ${{ runner.temp }}/scj-bulletin-inventory-shards
+          SCJ_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-bulletin-certified
+        run: |
+          set -euo pipefail
+          python backend/scripts/merge_scj_bulletin_inventory.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-certified-inventory
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ runner.temp }}/scj-bulletin-certified/**
+
+  register:
+    name: Register every official SCJ bulletin source record
+    needs: certify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e ./backend
+      - uses: actions/download-artifact@v5
+        with:
+          name: scj-bulletin-certified-inventory
+          path: ${{ runner.temp }}/scj-bulletin-certified
+      - name: Persist publisher records before acquiring artifacts
+        env:
+          SCJ_SOURCE_INVENTORY_FILE: ${{ runner.temp }}/scj-bulletin-certified/scj-documents.inventory.jsonl
+          SCJ_SOURCE_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-bulletin-registration
+        run: python backend/scripts/register_scj_source_inventory.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-artifact-ready-inventory
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/scj-bulletin-registration/**
+
+  acquire:
+    name: SCJ bulletin acquisition shard ${{ matrix.shard }}/8
+    needs: register
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned production acquisition runtime
+        run: >-
+          python -m pip install
+          -e ./backend
+          'boto3==1.43.93'
+          'opentelemetry-sdk==1.44.0'
+          'opentelemetry-exporter-otlp-proto-http==1.44.0'
+      - uses: actions/download-artifact@v5
+        with:
+          name: scj-bulletin-artifact-ready-inventory
+          path: ${{ runner.temp }}/scj-bulletin-artifact-ready
+      - name: Acquire assigned bulletin artifacts
+        shell: bash
+        env:
+          SCJ_INVENTORY_FILE: ${{ runner.temp }}/scj-bulletin-artifact-ready/scj-artifact-ready.inventory.jsonl
+          SCJ_BACKFILL_SHARD_INDEX: ${{ matrix.shard }}
+          SCJ_BACKFILL_SHARD_COUNT: '8'
+          SCJ_BACKFILL_OUTPUT: ${{ runner.temp }}/scj-bulletin-backfill-output
+        run: |
+          set -euo pipefail
+          python backend/scripts/scj_backfill_shard.py 2>&1 | tee scj-bulletin-${{ matrix.shard }}.log
+      - name: Preserve acquisition evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-backfill-${{ matrix.shard }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/scj-bulletin-backfill-output/**
+            scj-bulletin-${{ matrix.shard }}.log
+
+  link:
+    name: Link SCJ bulletin publications to immutable artifacts
+    needs: acquire
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e ./backend
+      - name: Resolve current bulletin URLs to acquired SHA artifacts
+        env:
+          SOURCE_DOCUMENT_LINK_SOURCE: supreme_court
+          SOURCE_DOCUMENT_LINK_COLLECTION: bulletins
+          SOURCE_DOCUMENT_LINK_OUTPUT: ${{ runner.temp }}/scj-bulletin-links
+        run: python backend/scripts/link_source_documents_to_artifacts.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-source-document-links
+          retention-days: 30
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/scj-bulletin-links/**
+
+  verify:
+    name: Verify complete SCJ bulletin PostgreSQL and S3 corpus
+    needs: [register, acquire, link]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e ./backend 'boto3==1.43.93'
+      - uses: actions/download-artifact@v5
+        with:
+          name: scj-bulletin-artifact-ready-inventory
+          path: ${{ runner.temp }}/scj-bulletin-artifact-ready
+      - name: Reconcile every downloadable bulletin against PostgreSQL and S3
+        env:
+          BACKFILL_VERIFY_SOURCE: supreme_court
+          BACKFILL_VERIFY_INVENTORY: ${{ runner.temp }}/scj-bulletin-artifact-ready/scj-artifact-ready.inventory.jsonl
+          BACKFILL_VERIFY_OUTPUT: ${{ runner.temp }}/scj-bulletin-verification
+        run: python backend/scripts/verify_official_backfill.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-final-verification
+          retention-days: 30
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/scj-bulletin-verification/**
