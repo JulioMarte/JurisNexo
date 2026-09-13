@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ArtifactInspectionProfile(BaseModel):
-    """Deterministic artifact facts exposed to the Structure Agent as evidence, not conclusions."""
+    """Deterministic artifact facts exposed to the Structure Agent as evidence."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -105,8 +105,12 @@ def render_artifact_profile(profile: ArtifactInspectionProfile | None) -> str:
     return profile.model_dump_json(indent=2)
 
 
-def render_tool_trace(events: tuple[StructureToolTraceEvent, ...], *, max_chars: int = 40_000) -> str:
-    """Render a bounded trace for adversarial review without dropping call identity/digests."""
+def render_tool_trace(
+    events: tuple[StructureToolTraceEvent, ...],
+    *,
+    max_chars: int = 40_000,
+) -> str:
+    """Render a bounded trace without dropping call identity or result digests."""
 
     if max_chars < 2_000:
         raise ValueError("max_chars must be at least 2000")
