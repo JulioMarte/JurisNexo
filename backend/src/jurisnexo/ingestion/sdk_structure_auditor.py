@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from agents import Agent, ModelSettings, RunConfig, Runner
-from agents.exceptions import MaxTurnsExceeded
+from agents.agent import StopAtTools
+from agents.decorators import tool
+from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.models.interface import ModelProvider
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -19,6 +22,7 @@ from jurisnexo.ingestion.document_environment import (
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
     StructureInvestigationBudgetExceeded,
+    StructureInvestigationFailed,
     get_page,
     get_pages,
     get_printed_page,
@@ -29,6 +33,7 @@ from jurisnexo.ingestion.sdk_structure_agent import (
 from jurisnexo.ingestion.structure_trace import (
     ArtifactInspectionProfile,
     StructureToolTraceEvent,
+    StructureToolTraceRecorder,
     render_tool_trace,
 )
 
@@ -110,9 +115,7 @@ class StructureAuditResult(BaseModel):
             raise ValueError("approval requires at least one independently checked claim")
         if self.state == "APPROVED":
             material_failures = [
-                check
-                for check in self.checks
-                if check.status in {"contradicted", "unresolved"}
+                check for check in self.checks if check.status in {"contradicted", "unresolved"}
             ]
             if material_failures:
                 raise ValueError("APPROVED cannot contain contradicted or unresolved checks")
@@ -179,7 +182,31 @@ source-backed contradiction that invalidates the hypothesis, and SOURCE_QUALITY_
 source cannot support a reliable structural decision.
 
 Approval must state what was independently checked. Unknown is preferable to unsupported certainty.
+When MORE_INVESTIGATION_REQUIRED or SOURCE_QUALITY_BLOCKED is used, required_follow_up must contain
+focused, executable checks rather than vague requests for more review.
+
+IMPORTANT: You do not finish by writing a JSON answer. When your independent audit is complete,
+call finalize_structure_audit exactly once with the complete audit result. That tool is the only
+valid way to finish the run and validates the schema before termination.
 """
+
+
+@tool(failure_error_function=None)
+def finalize_structure_audit(
+    ctx: RunContextWrapper[StructureAgentContext], audit: StructureAuditResult
+) -> str:
+    """Finalize the adversarial structure audit after independent source verification."""
+
+    if ctx.context.finalized_output:
+        raise ValueError("structure audit was already finalized")
+    ctx.context.finalized_output.append(audit)
+    rendered = audit.model_dump_json()
+    ctx.context.trace_recorder.record_success(
+        tool_name="finalize_structure_audit",
+        arguments={"output_type": "StructureAuditResult"},
+        result=rendered,
+    )
+    return rendered
 
 
 def build_structure_auditor(*, model: str) -> Agent[StructureAgentContext]:
@@ -197,15 +224,14 @@ def build_structure_auditor(*, model: str) -> Agent[StructureAgentContext]:
             get_printed_page,
             get_printed_pages,
             search_text,
+            finalize_structure_audit,
         ],
-        output_type=StructureAuditResult,
+        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_structure_audit"]),
     )
 
 
 def validate_structure_audit_evidence(
-    *,
-    audit: StructureAuditResult,
-    environment: DocumentEnvironment,
+    *, audit: StructureAuditResult, environment: DocumentEnvironment
 ) -> None:
     """Reject model-produced audit evidence that does not match the immutable source view."""
 
@@ -229,13 +255,8 @@ def validate_structure_audit_evidence(
                     f"{label}: view page {evidence.view_page} resolves to printed page "
                     f"{page.printed_page_number}, not {evidence.printed_page}"
                 )
-            if (
-                evidence.source_reference is not None
-                and page.source_reference != evidence.source_reference
-            ):
-                raise DocumentEnvironmentError(
-                    f"{label}: source_reference does not match source view"
-                )
+            if evidence.source_reference is not None and page.source_reference != evidence.source_reference:
+                raise DocumentEnvironmentError(f"{label}: source_reference does not match source view")
 
 
 async def run_structure_auditor(
@@ -251,14 +272,20 @@ async def run_structure_auditor(
     artifact_profile: ArtifactInspectionProfile | None = None,
     trace_prompt_max_chars: int = 40_000,
     model_provider: ModelProvider | None = None,
+    trace_journal_path: Path | None = None,
 ) -> StructureAuditorRunResult:
     """Adversarially audit one structure hypothesis and validate every cited page identity."""
 
+    recorder = StructureToolTraceRecorder(
+        stage="structure_auditor",
+        journal_path=trace_journal_path,
+    )
     context = StructureAgentContext(
         environment=environment,
         max_tool_output_chars=max_tool_output_chars,
         search_max_hits=search_max_hits,
         artifact_profile=artifact_profile,
+        trace_recorder=recorder,
     )
     auditor = build_structure_auditor(model=model)
     trace_text = render_tool_trace(structure_agent_trace, max_chars=trace_prompt_max_chars)
@@ -270,7 +297,7 @@ async def run_structure_auditor(
         "Structure Agent inspection trace (untrusted prior-work record):\n"
         f"{trace_text}\n\n"
         "Try to falsify the candidate. Verify the riskiest claims independently, search for at "
-        "least one plausible omission, and only approve what your own source checks support."
+        "least one plausible omission, and finish only by calling finalize_structure_audit."
     )
     run_config = RunConfig(
         workflow_name="JurisNexo Adversarial Structure Audit",
@@ -292,8 +319,24 @@ async def run_structure_auditor(
             max_turns=max_turns,
             tool_trace=context.trace_recorder.events,
         ) from exc
+    except ModelBehaviorError as exc:
+        raise StructureInvestigationFailed(
+            stage="structure_auditor",
+            error=exc,
+            tool_trace=context.trace_recorder.events,
+        ) from exc
 
-    audit = result.final_output_as(StructureAuditResult, raise_if_incorrect_type=True)
+    if len(context.finalized_output) != 1 or not isinstance(
+        context.finalized_output[0], StructureAuditResult
+    ):
+        error = RuntimeError("structure auditor ended without a validated finalization tool call")
+        raise StructureInvestigationFailed(
+            stage="structure_auditor",
+            error=error,
+            tool_trace=context.trace_recorder.events,
+        )
+
+    audit = context.finalized_output[0]
     validate_structure_audit_evidence(audit=audit, environment=environment)
     return StructureAuditorRunResult(
         audit=audit,
