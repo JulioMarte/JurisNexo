@@ -7,8 +7,14 @@ from jurisnexo.ingestion.document_discovery import (
     IndexReferenceInvestigation,
     InvestigationPageEvidence,
 )
-from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
-from jurisnexo.ingestion.evidence_validation import EvidenceValidationError, validate_index_reference_evidence
+from jurisnexo.ingestion.document_environment import (
+    DocumentEnvironment,
+    DocumentEnvironmentError,
+)
+from jurisnexo.ingestion.evidence_validation import (
+    EvidenceValidationError,
+    validate_index_reference_evidence,
+)
 from jurisnexo.ingestion.sdk_structure_auditor import (
     StructureAuditCheck,
     StructureAuditResult,
