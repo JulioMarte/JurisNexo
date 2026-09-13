@@ -1,0 +1,130 @@
+name: SCJ bulletin ingestion smoke
+
+on:
+  push:
+    branches:
+      - test/scj-bulletin-ingestion-smoke
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-bulletin-ingestion-smoke
+  cancel-in-progress: true
+
+env:
+  UV_PYTHON: '3.13'
+  SOURCE_URL: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
+
+jobs:
+  smoke:
+    name: Ingest one real SCJ bulletin through Structure Agent
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Require model secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GEMINI_API_KEY:-}" || { echo 'GEMINI_API_KEY is required' >&2; exit 2; }
+
+      - name: Install PDF tools
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: 0.12.4
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Install locked backend
+        working-directory: backend
+        run: uv sync --frozen --group dev
+
+      - name: Acquire one official bulletin and materialize workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ingestion-smoke
+          curl --fail --location --show-error --silent \
+            --retry 3 --retry-all-errors --connect-timeout 30 --max-time 600 \
+            "$SOURCE_URL" -o ingestion-smoke/source.pdf
+          test "$(head -c 4 ingestion-smoke/source.pdf)" = '%PDF'
+          sha256sum ingestion-smoke/source.pdf | tee ingestion-smoke/sha256.txt
+          pdfinfo ingestion-smoke/source.pdf | tee ingestion-smoke/pdfinfo.txt
+          pdftotext -bbox-layout ingestion-smoke/source.pdf ingestion-smoke/bbox-layout.html
+
+      - name: Run production Structure Agent
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python ../benchmark/ingestion/run_sdk_structure_agent_benchmark.py \
+            --bbox ../ingestion-smoke/bbox-layout.html \
+            --output ../ingestion-smoke/structure-result.json \
+            --artifact-label 'Official SCJ Boletín Judicial Núm. 831, Febrero 1980. Treat this as an ingestion candidate: identify document boundaries conservatively, verify the SUMARIO, and investigate mismatched printed-page destinations.' \
+            --provider gemini \
+            --model gemini-3.8-flash \
+            --max-turns 16
+
+      - name: Validate against frozen historical truth
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python ../benchmark/ingestion/evaluate_historical_bulletin_agent.py \
+            --result ../ingestion-smoke/structure-result.json \
+            --gold ../benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
+            --sha256 ../ingestion-smoke/sha256.txt \
+            --output ../ingestion-smoke/structure-score.json
+
+      - name: Emit ingestion smoke summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('ingestion-smoke')
+          result = json.loads((root / 'structure-result.json').read_text())
+          score = json.loads((root / 'structure-score.json').read_text())
+          hypothesis = result.get('hypothesis', {})
+          payload = {
+              'status': 'PASS' if score.get('status') == 'PASS' else 'FAIL',
+              'source_sha256': (root / 'sha256.txt').read_text().split()[0],
+              'provider': result.get('provider'),
+              'model': result.get('model'),
+              'document_view': result.get('document_view'),
+              'usage': result.get('usage'),
+              'hypothesis_keys': sorted(hypothesis.keys()) if isinstance(hypothesis, dict) else [],
+              'score': score,
+              'canonical_commit_performed': False,
+              'purpose': 'production-like structure ingestion smoke; no canonical DB writes',
+          }
+          (root / 'summary.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+          print(json.dumps(payload, ensure_ascii=False, indent=2))
+          if payload['status'] != 'PASS':
+              raise SystemExit(2)
+          PY
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-bulletin-ingestion-smoke-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ingestion-smoke/sha256.txt
+            ingestion-smoke/pdfinfo.txt
+            ingestion-smoke/structure-result.json
+            ingestion-smoke/structure-score.json
+            ingestion-smoke/sdk-structure-agent-error.json
+            ingestion-smoke/summary.json
