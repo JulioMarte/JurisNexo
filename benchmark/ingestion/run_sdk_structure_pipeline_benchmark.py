@@ -37,7 +37,9 @@ from jurisnexo.model_providers.agents_sdk_compatible import (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the production Structure Agent and adversarial auditor over one real artifact"
+        description=(
+            "Run the production Structure Agent and adversarial auditor over one real artifact"
+        )
     )
     parser.add_argument("--bbox", type=Path, required=True)
     parser.add_argument("--pdfimages-list", type=Path, required=True)
