@@ -58,7 +58,10 @@ def _focused_reinvestigation_label(
     follow_up = previous.audit.audit.required_follow_up
     amendments = previous.audit.audit.amendments
     directives = [*follow_up, *amendments]
-    rendered_directives = "\n".join(f"- {item}" for item in directives) or "- Re-check audit findings."
+    rendered_directives = (
+        "\n".join(f"- {item}" for item in directives)
+        or "- Re-check audit findings."
+    )
     return (
         f"{artifact_label}\n\n"
         f"This is bounded structure reinvestigation round {round_number}. The prior candidate is "
