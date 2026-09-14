@@ -26,9 +26,8 @@ from jurisnexo.ingestion.scanned_page_materialization import (
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureInvestigationBudgetExceeded,
     StructureInvestigationFailed,
-    run_structure_agent,
 )
-from jurisnexo.ingestion.sdk_structure_auditor import run_structure_auditor
+from jurisnexo.ingestion.sdk_structure_pipeline import run_structure_pipeline
 from jurisnexo.ingestion.structure_trace import ArtifactInspectionProfile, StructureToolTraceEvent
 from jurisnexo.model_providers.agents_sdk_compatible import (
     CompatibleProviderName,
@@ -52,6 +51,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True)
     parser.add_argument("--structure-max-turns", type=int, default=128)
     parser.add_argument("--audit-max-turns", type=int, default=96)
+    parser.add_argument("--max-reinvestigation-rounds", type=int, default=2)
     parser.add_argument("--max-tool-output-chars", type=int, default=60_000)
     parser.add_argument("--search-max-hits", type=int, default=20)
     parser.add_argument("--minimum-region-characters", type=int, default=80)
@@ -165,11 +165,13 @@ async def _run(args: argparse.Namespace) -> None:
     journal_path.unlink(missing_ok=True)
 
     try:
-        structure = await run_structure_agent(
+        pipeline = await run_structure_pipeline(
             environment=environment,
             artifact_label=args.artifact_label,
             model=args.model,
-            max_turns=args.structure_max_turns,
+            structure_max_turns=args.structure_max_turns,
+            audit_max_turns=args.audit_max_turns,
+            max_reinvestigation_rounds=args.max_reinvestigation_rounds,
             max_tool_output_chars=args.max_tool_output_chars,
             search_max_hits=args.search_max_hits,
             artifact_profile=profile,
@@ -183,6 +185,8 @@ async def _run(args: argparse.Namespace) -> None:
         _write_runtime_failure(args=args, exc=exc, profile=profile)
         raise
 
+    structure = pipeline.structure
+    audit = pipeline.audit
     structure_payload = {
         "provider": provider_name,
         "model": args.model,
@@ -193,6 +197,9 @@ async def _run(args: argparse.Namespace) -> None:
             "description": environment.describe(),
             "supports_printed_page_lookup": environment.supports_printed_page_lookup,
         },
+        "pipeline_round_count": len(pipeline.rounds),
+        "extraction_allowed": pipeline.extraction_allowed,
+        "reinvestigation_exhausted": pipeline.exhausted_reinvestigation,
         "usage": {"total_tokens": structure.usage_total_tokens},
         "last_agent_name": structure.last_agent_name,
         "tool_call_count": len(structure.tool_trace),
@@ -200,30 +207,11 @@ async def _run(args: argparse.Namespace) -> None:
     }
     _write_json(args.structure_output, structure_payload)
 
-    try:
-        audit = await run_structure_auditor(
-            environment=environment,
-            hypothesis=structure.hypothesis,
-            artifact_label=args.artifact_label,
-            model=args.model,
-            structure_agent_trace=structure.tool_trace,
-            max_turns=args.audit_max_turns,
-            max_tool_output_chars=args.max_tool_output_chars,
-            search_max_hits=args.search_max_hits,
-            artifact_profile=profile,
-            model_provider=provider,
-            trace_journal_path=journal_path,
-        )
-    except StructureInvestigationBudgetExceeded as exc:
-        _write_budget_failure(args=args, exc=exc, profile=profile)
-        raise
-    except StructureInvestigationFailed as exc:
-        _write_runtime_failure(args=args, exc=exc, profile=profile)
-        raise
-
     audit_payload = {
         "provider": provider_name,
         "model": args.model,
+        "pipeline_round_count": len(pipeline.rounds),
+        "extraction_allowed": pipeline.extraction_allowed,
         "usage": {"total_tokens": audit.usage_total_tokens},
         "last_agent_name": audit.last_agent_name,
         "tool_call_count": len(audit.tool_trace),
@@ -236,14 +224,23 @@ async def _run(args: argparse.Namespace) -> None:
             "status": "COMPLETE",
             "artifact_profile": profile.model_dump(mode="json"),
             "journal_path": str(journal_path),
-            "structure_agent": {
-                "tool_call_count": len(structure.tool_trace),
-                "tool_trace": _serialize_trace(structure.tool_trace),
-            },
-            "structure_auditor": {
-                "tool_call_count": len(audit.tool_trace),
-                "tool_trace": _serialize_trace(audit.tool_trace),
-            },
+            "pipeline_round_count": len(pipeline.rounds),
+            "extraction_allowed": pipeline.extraction_allowed,
+            "rounds": [
+                {
+                    "round_number": round_result.round_number,
+                    "structure_agent": {
+                        "tool_call_count": len(round_result.structure.tool_trace),
+                        "tool_trace": _serialize_trace(round_result.structure.tool_trace),
+                    },
+                    "structure_auditor": {
+                        "state": round_result.audit.audit.state,
+                        "tool_call_count": len(round_result.audit.tool_trace),
+                        "tool_trace": _serialize_trace(round_result.audit.tool_trace),
+                    },
+                }
+                for round_result in pipeline.rounds
+            ],
         },
     )
 
