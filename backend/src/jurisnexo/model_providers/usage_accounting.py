@@ -361,10 +361,7 @@ def _json_char_count(value: object) -> int:
 
 
 def _item_type(value: object) -> str:
-    if isinstance(value, dict):
-        item_type = value.get("type")
-    else:
-        item_type = getattr(value, "type", None)
+    item_type = value.get("type") if isinstance(value, dict) else getattr(value, "type", None)
     return item_type if isinstance(item_type, str) else ""
 
 
