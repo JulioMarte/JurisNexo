@@ -17,9 +17,18 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE corpus.agent_runs
-            ADD COLUMN model_time_seconds numeric(20, 6) NOT NULL DEFAULT 0,
-            ADD COLUMN output_tokens_per_second numeric(20, 6),
-            ADD COLUMN total_tokens_per_second numeric(20, 6),
+            ADD COLUMN model_time_seconds numeric(20, 6)
+                GENERATED ALWAYS AS (
+                    COALESCE((usage ->> 'model_time_seconds')::numeric, 0)
+                ) STORED,
+            ADD COLUMN output_tokens_per_second numeric(20, 6)
+                GENERATED ALWAYS AS (
+                    (usage ->> 'output_tokens_per_second')::numeric
+                ) STORED,
+            ADD COLUMN total_tokens_per_second numeric(20, 6)
+                GENERATED ALWAYS AS (
+                    (usage ->> 'total_tokens_per_second')::numeric
+                ) STORED,
             ADD CONSTRAINT agent_runs_model_time_nonnegative_check
                 CHECK (model_time_seconds >= 0),
             ADD CONSTRAINT agent_runs_output_tps_nonnegative_check
@@ -31,9 +40,18 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE corpus.structure_pipeline_runs
-            ADD COLUMN model_time_seconds numeric(20, 6) NOT NULL DEFAULT 0,
-            ADD COLUMN output_tokens_per_second numeric(20, 6),
-            ADD COLUMN total_tokens_per_second numeric(20, 6),
+            ADD COLUMN model_time_seconds numeric(20, 6)
+                GENERATED ALWAYS AS (
+                    COALESCE((usage ->> 'model_time_seconds')::numeric, 0)
+                ) STORED,
+            ADD COLUMN output_tokens_per_second numeric(20, 6)
+                GENERATED ALWAYS AS (
+                    (usage ->> 'output_tokens_per_second')::numeric
+                ) STORED,
+            ADD COLUMN total_tokens_per_second numeric(20, 6)
+                GENERATED ALWAYS AS (
+                    (usage ->> 'total_tokens_per_second')::numeric
+                ) STORED,
             ADD CONSTRAINT structure_pipeline_runs_model_time_nonnegative_check
                 CHECK (model_time_seconds >= 0),
             ADD CONSTRAINT structure_pipeline_runs_output_tps_nonnegative_check
