@@ -291,6 +291,13 @@ def main() -> None:
         and len(confirmed_gold) >= minimum_verified
         and (has_index or not require_index)
     )
+    semantic_status = (
+        "PASS"
+        if semantic_passed
+        else "FAIL"
+        if semantic_available
+        else "NOT_AVAILABLE"
+    )
 
     payload = {
         "schema_version": 3,
@@ -298,7 +305,7 @@ def main() -> None:
         "source_sha256": observed_sha256,
         "status": "PASS" if navigation_passed else "FAIL",
         "navigation_status": "PASS" if navigation_passed else "FAIL",
-        "semantic_status": "PASS" if semantic_passed else "FAIL" if semantic_available else "NOT_AVAILABLE",
+        "semantic_status": semantic_status,
         "metrics": {
             "gold_reference_count": len(gold_pages),
             "attempted_printed_pages": sorted(attempted),
@@ -330,7 +337,10 @@ def main() -> None:
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
