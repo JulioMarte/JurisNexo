@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from agents.models.interface import ModelProvider
@@ -25,6 +27,9 @@ from jurisnexo.model_providers.usage_accounting import (
     ModelUsageSummary,
     ModelUsageTracker,
 )
+
+PersistedEventKind = Literal["tool", "model"]
+PersistedEvent = StructureToolTraceEvent | ModelTurnUsage
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,18 +126,11 @@ def _persist_events(
     tool_trace: tuple[StructureToolTraceEvent, ...],
     model_turns: tuple[ModelTurnUsage, ...],
 ) -> None:
-    combined: list[tuple[object, str]] = [
-        *((event, "tool") for event in tool_trace),
-        *((event, "model") for event in model_turns),
-    ]
-    combined.sort(
-        key=lambda item: (
-            item[0].occurred_at
-            if isinstance(item[0], StructureToolTraceEvent)
-            else item[0].response_completed_at
-        )
-    )
-    for event, kind in combined:
+    combined: list[tuple[datetime, PersistedEventKind, PersistedEvent]] = []
+    combined.extend((event.occurred_at, "tool", event) for event in tool_trace)
+    combined.extend((event.response_completed_at, "model", event) for event in model_turns)
+    combined.sort(key=lambda item: item[0])
+    for _occurred_at, kind, event in combined:
         if kind == "tool":
             assert isinstance(event, StructureToolTraceEvent)
             ledger.append_trace_event(run_id=run_id, event=event)
