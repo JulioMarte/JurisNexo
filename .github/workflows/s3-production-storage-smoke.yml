@@ -41,6 +41,17 @@ jobs:
             printf 'Missing required S3 secrets: %s\n' "${missing[*]}" >&2
             exit 2
           fi
+          case "$JURISNEXO_S3_ENDPOINT_URL" in
+            https://*) ;;
+            *)
+              echo 'JURISNEXO_S3_ENDPOINT_URL must be an absolute HTTPS URL such as https://s3.us-east-005.backblazeb2.com.' >&2
+              exit 2
+              ;;
+          esac
+          if [[ "$JURISNEXO_S3_REGION" == *"://"* || "$JURISNEXO_S3_REGION" == */* ]]; then
+            echo 'JURISNEXO_S3_REGION must contain only the provider region identifier, not an endpoint URL.' >&2
+            exit 2
+          fi
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
