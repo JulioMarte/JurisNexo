@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,7 +26,7 @@ class ApprovedStructureContext(BaseModel):
 
     work_unit_id: str | None = None
     findings: list[StructureFinding] = Field(default_factory=_empty_findings)
-    audit_state: str = "APPROVED"
+    audit_state: Literal["APPROVED"] = "APPROVED"
 
 
 def build_approved_structure_context(
