@@ -1,11 +1,7 @@
 name: SCJ bulletin structure pipeline smoke
 
-# one-shot trigger; removed by the following cleanup commit
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - ingestion/structure-agent-adversarial-trace
 
 permissions:
   contents: read
@@ -20,7 +16,6 @@ env:
 
 jobs:
   smoke:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Run one-shot DeepSeek structure smoke'
     name: Investigate and adversarially audit one real SCJ bulletin
     runs-on: ubuntu-24.04
     timeout-minutes: 180
