@@ -133,6 +133,26 @@ The SHA-256 digest, source URL, source identifier, byte count, acquisition manif
 
 Bucket versioning is not assumed. JurisNexo detects changed content by digest and preserves new bytes under a new content-addressed key rather than overwriting canonical historical evidence.
 
+## Production connectivity smoke
+
+The full official-corpus workflow validates the configured object store before database validation, inventory work or mass acquisition. The smoke probe exercises only the S3 operations required by the current corpus storage path:
+
+```text
+PutObject
+HeadObject
+ListObjectsV2
+```
+
+Operational probes are isolated from legal evidence under a reserved namespace:
+
+```text
+_system/smoke-tests/<run-id>.txt
+```
+
+They must never be written beneath `jurisdictions/`. The probe attempts `DeleteObject` only as best-effort cleanup; delete permission is not part of the current corpus write/read contract and a cleanup denial does not make an otherwise valid storage probe fail.
+
+The workflow exposes a manual `s3-smoke` scope so production S3 credentials and provider compatibility can be checked without starting the SCJ or TC backfill. The normal `full` scope runs the same storage probe before continuing. The bucket name itself is deployment configuration and is not required to be `official-corpus` or any other hard-coded value.
+
 ## Current scope and limits
 
 The generic S3 runtime is implemented for official-corpus acquisition and verification. It does **not** yet mean that every future product storage concern is finished.
