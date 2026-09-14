@@ -3,15 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time
 from decimal import Decimal
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Literal
 
-from agents import Agent, RunContextWrapper, RunHooks
 from agents.items import ModelResponse
 
 ProviderName = Literal["gemini", "deepseek"]
 PricingBand = Literal["peak", "off_peak"]
 ExecutionMode = Literal["realtime", "batch"]
-TContext = TypeVar("TContext")
 
 _MILLION = Decimal(1_000_000)
 
@@ -44,12 +42,8 @@ class PricingSnapshot:
             "effective_from_utc": self.effective_from_utc.isoformat(),
             "pricing_band": self.pricing_band,
             "execution_mode": self.execution_mode,
-            "input_cache_hit_per_million_usd": str(
-                self.input_cache_hit_per_million_usd
-            ),
-            "input_cache_miss_per_million_usd": str(
-                self.input_cache_miss_per_million_usd
-            ),
+            "input_cache_hit_per_million_usd": str(self.input_cache_hit_per_million_usd),
+            "input_cache_miss_per_million_usd": str(self.input_cache_miss_per_million_usd),
             "output_per_million_usd": str(self.output_per_million_usd),
             "source": self.source,
         }
@@ -72,6 +66,8 @@ class ModelTurnUsage:
     input_cache_miss_tokens: int
     reasoning_tokens: int
     estimated_cost_usd: Decimal | None
+    session_total_tokens_after_turn: int
+    session_estimated_cost_usd_after_turn: Decimal | None
     pricing: PricingSnapshot | None
     response_id: str | None
     request_id: str | None
@@ -93,8 +89,12 @@ class ModelTurnUsage:
             "input_cache_miss_tokens": self.input_cache_miss_tokens,
             "reasoning_tokens": self.reasoning_tokens,
             "estimated_cost_usd": (
-                str(self.estimated_cost_usd)
-                if self.estimated_cost_usd is not None
+                str(self.estimated_cost_usd) if self.estimated_cost_usd is not None else None
+            ),
+            "session_total_tokens_after_turn": self.session_total_tokens_after_turn,
+            "session_estimated_cost_usd_after_turn": (
+                str(self.session_estimated_cost_usd_after_turn)
+                if self.session_estimated_cost_usd_after_turn is not None
                 else None
             ),
             "pricing": self.pricing.as_dict() if self.pricing is not None else None,
@@ -124,9 +124,7 @@ class ModelUsageSummary:
             "input_cache_miss_tokens": self.input_cache_miss_tokens,
             "reasoning_tokens": self.reasoning_tokens,
             "estimated_cost_usd": (
-                str(self.estimated_cost_usd)
-                if self.estimated_cost_usd is not None
-                else None
+                str(self.estimated_cost_usd) if self.estimated_cost_usd is not None else None
             ),
         }
 
@@ -200,12 +198,8 @@ class DeepSeekPricingCatalog:
             effective_from_utc=self.effective_from_utc,
             pricing_band=band,
             execution_mode=execution_mode,
-            input_cache_hit_per_million_usd=(
-                peak.input_cache_hit_per_million_usd / divisor
-            ),
-            input_cache_miss_per_million_usd=(
-                peak.input_cache_miss_per_million_usd / divisor
-            ),
+            input_cache_hit_per_million_usd=peak.input_cache_hit_per_million_usd / divisor,
+            input_cache_miss_per_million_usd=peak.input_cache_miss_per_million_usd / divisor,
             output_per_million_usd=peak.output_per_million_usd / divisor,
             source=self.source,
         )
@@ -219,10 +213,8 @@ class DeepSeekPricingCatalog:
         output_tokens: int,
     ) -> Decimal:
         return (
-            Decimal(input_cache_hit_tokens)
-            * pricing.input_cache_hit_per_million_usd
-            + Decimal(input_cache_miss_tokens)
-            * pricing.input_cache_miss_per_million_usd
+            Decimal(input_cache_hit_tokens) * pricing.input_cache_hit_per_million_usd
+            + Decimal(input_cache_miss_tokens) * pricing.input_cache_miss_per_million_usd
             + Decimal(output_tokens) * pricing.output_per_million_usd
         ) / _MILLION
 
@@ -288,14 +280,22 @@ class ModelUsageTracker:
                 output_tokens=output_tokens,
             )
 
-        completed_at = datetime.now(UTC)
+        prior_total_tokens = sum(turn.total_tokens for turn in self.turns)
+        prior_costs = [turn.estimated_cost_usd for turn in self.turns]
+        if estimated_cost is not None and all(cost is not None for cost in prior_costs):
+            session_cost: Decimal | None = sum(
+                (cost for cost in prior_costs if cost is not None), Decimal(0)
+            ) + estimated_cost
+        else:
+            session_cost = None
+
         turn = ModelTurnUsage(
             session_turn=len(self.turns) + 1,
             run_turn=run_turn,
             role=role,
             round_number=round_number,
             request_started_at=request_started_at,
-            response_completed_at=completed_at,
+            response_completed_at=datetime.now(UTC),
             provider=self.provider,
             model=self.model,
             input_tokens=input_tokens,
@@ -305,6 +305,8 @@ class ModelUsageTracker:
             input_cache_miss_tokens=cache_miss,
             reasoning_tokens=reasoning_tokens,
             estimated_cost_usd=estimated_cost,
+            session_total_tokens_after_turn=prior_total_tokens + total_tokens,
+            session_estimated_cost_usd_after_turn=session_cost,
             pricing=pricing,
             response_id=response.response_id,
             request_id=response.request_id,
@@ -327,46 +329,3 @@ class ModelUsageTracker:
             reasoning_tokens=sum(turn.reasoning_tokens for turn in selected),
             estimated_cost_usd=estimated_cost,
         )
-
-
-class ModelUsageHooks(RunHooks[TContext], Generic[TContext]):
-    def __init__(
-        self,
-        *,
-        tracker: ModelUsageTracker,
-        role: str,
-        round_number: int,
-    ) -> None:
-        self._tracker = tracker
-        self._role = role
-        self._round_number = round_number
-        self._request_started_at: datetime | None = None
-        self._run_turn = 0
-
-    async def on_llm_start(
-        self,
-        context: RunContextWrapper[TContext],
-        agent: Agent[TContext],
-        system_prompt: str | None,
-        input_items: list[Any],
-    ) -> None:
-        del context, agent, system_prompt, input_items
-        self._request_started_at = datetime.now(UTC)
-
-    async def on_llm_end(
-        self,
-        context: RunContextWrapper[TContext],
-        agent: Agent[TContext],
-        response: ModelResponse,
-    ) -> None:
-        del context, agent
-        self._run_turn += 1
-        started_at = self._request_started_at or datetime.now(UTC)
-        self._tracker.record_response(
-            role=self._role,
-            round_number=self._round_number,
-            run_turn=self._run_turn,
-            request_started_at=started_at,
-            response=response,
-        )
-        self._request_started_at = None
