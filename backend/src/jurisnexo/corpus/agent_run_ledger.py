@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
 import psycopg
 
+from jurisnexo.ingestion.structure_run_ledger import (
+    AgentRunRole,
+    AgentTerminalState,
+    StructurePipelineState,
+)
 from jurisnexo.ingestion.structure_trace import StructureToolTraceEvent
+from jurisnexo.model_providers.usage_accounting import ModelTurnUsage
 
-AgentRunRole = Literal[
-    "structure_agent",
-    "structure_auditor",
-    "structure_reinvestigation",
-    "extraction_agent",
-    "extraction_auditor",
-]
 AgentRunState = Literal[
     "pending",
     "running",
@@ -25,22 +25,9 @@ AgentRunState = Literal[
     "cancelled",
     "blocked",
 ]
-StructurePipelineState = Literal[
-    "structure_investigating",
-    "structure_candidate",
-    "structure_auditing",
-    "structure_reinvestigating",
-    "structure_verified",
-    "structure_rejected",
-    "source_quality_blocked",
-    "failed",
-    "cancelled",
-]
 
 _ALLOWED_PIPELINE_TRANSITIONS: dict[StructurePipelineState, frozenset[StructurePipelineState]] = {
-    "structure_investigating": frozenset(
-        {"structure_candidate", "failed", "cancelled"}
-    ),
+    "structure_investigating": frozenset({"structure_candidate", "failed", "cancelled"}),
     "structure_candidate": frozenset({"structure_auditing", "failed", "cancelled"}),
     "structure_auditing": frozenset(
         {
@@ -52,9 +39,7 @@ _ALLOWED_PIPELINE_TRANSITIONS: dict[StructurePipelineState, frozenset[StructureP
             "cancelled",
         }
     ),
-    "structure_reinvestigating": frozenset(
-        {"structure_candidate", "failed", "cancelled"}
-    ),
+    "structure_reinvestigating": frozenset({"structure_candidate", "failed", "cancelled"}),
     "structure_verified": frozenset(),
     "structure_rejected": frozenset(),
     "source_quality_blocked": frozenset(),
@@ -67,11 +52,50 @@ class InvalidPipelineTransition(RuntimeError):
     """Raised when an orchestration bug attempts to skip or reverse a durable state gate."""
 
 
+def _json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _usage_int(usage: dict[str, object], key: str) -> int:
+    value = usage.get(key, 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"usage field {key!r} must be a non-negative integer")
+    return value
+
+
+def _usage_cost(usage: dict[str, object]) -> Decimal | None:
+    value = usage.get("estimated_cost_usd")
+    if value is None:
+        return None
+    cost = Decimal(str(value))
+    if cost < 0:
+        raise ValueError("estimated_cost_usd must be non-negative")
+    return cost
+
+
 @dataclass(slots=True)
 class PostgresAgentRunLedger:
     """Durable observable ledger for agent execution and structure-pipeline checkpoints."""
 
     connection: psycopg.Connection[Any]
+
+    @staticmethod
+    def _allocate_event_sequence(cursor: psycopg.Cursor[Any], *, run_id: UUID) -> int:
+        cursor.execute(
+            """
+            update corpus.agent_runs
+            set next_event_sequence = next_event_sequence + 1,
+                updated_at = now()
+            where id = %s
+            returning next_event_sequence - 1
+            """,
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise KeyError(f"agent run {run_id} does not exist")
+        sequence: int = row[0]
+        return sequence
 
     def create_agent_run(
         self,
@@ -114,7 +138,7 @@ class PostgresAgentRunLedger:
                     provider,
                     model,
                     prompt_sha256,
-                    json.dumps(tool_budget, sort_keys=True),
+                    _json(tool_budget),
                 ),
             )
             row = cursor.fetchone()
@@ -126,6 +150,7 @@ class PostgresAgentRunLedger:
     def append_trace_event(self, *, run_id: UUID, event: StructureToolTraceEvent) -> None:
         event_type = "tool_result" if event.status == "success" else "tool_error"
         with self.connection.transaction(), self.connection.cursor() as cursor:
+            sequence = self._allocate_event_sequence(cursor, run_id=run_id)
             cursor.execute(
                 """
                 insert into corpus.agent_run_events (
@@ -140,23 +165,48 @@ class PostgresAgentRunLedger:
                     result_sha256,
                     result_excerpt,
                     error_type,
-                    error_message
+                    error_message,
+                    payload
                 )
-                values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     run_id,
-                    event.sequence,
+                    sequence,
                     event.occurred_at,
                     event_type,
                     event.status,
                     event.tool_name,
-                    json.dumps(event.arguments, ensure_ascii=False, sort_keys=True),
+                    _json(event.arguments),
                     event.result_char_count,
                     event.result_sha256,
                     event.result_excerpt,
                     event.error_type,
                     event.error_message,
+                    _json({"source_trace_sequence": event.sequence, "stage": event.stage}),
+                ),
+            )
+
+    def append_model_turn(self, *, run_id: UUID, event: ModelTurnUsage) -> None:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            sequence = self._allocate_event_sequence(cursor, run_id=run_id)
+            cursor.execute(
+                """
+                insert into corpus.agent_run_events (
+                    run_id,
+                    sequence,
+                    occurred_at,
+                    event_type,
+                    status,
+                    payload
+                )
+                values (%s, %s, %s, 'model_turn', 'success', %s::jsonb)
+                """,
+                (
+                    run_id,
+                    sequence,
+                    event.response_completed_at,
+                    _json(event.as_dict()),
                 ),
             )
 
@@ -164,7 +214,7 @@ class PostgresAgentRunLedger:
         self,
         *,
         run_id: UUID,
-        usage: dict[str, int],
+        usage: dict[str, object],
         trace_object_ref: str | None = None,
         result_object_ref: str | None = None,
     ) -> None:
@@ -180,15 +230,16 @@ class PostgresAgentRunLedger:
         self,
         *,
         run_id: UUID,
-        state: Literal["failed", "budget_exhausted", "blocked"],
+        state: AgentTerminalState,
         error_type: str,
         error_message: str,
+        usage: dict[str, object],
         trace_object_ref: str | None = None,
     ) -> None:
         self._finish_agent_run(
             run_id=run_id,
             state=state,
-            usage={},
+            usage=usage,
             trace_object_ref=trace_object_ref,
             error_type=error_type,
             error_message=error_message,
@@ -199,18 +250,34 @@ class PostgresAgentRunLedger:
         *,
         run_id: UUID,
         state: AgentRunState,
-        usage: dict[str, int],
+        usage: dict[str, object],
         trace_object_ref: str | None = None,
         result_object_ref: str | None = None,
         error_type: str | None = None,
         error_message: str | None = None,
     ) -> None:
+        request_count = _usage_int(usage, "request_count")
+        input_tokens = _usage_int(usage, "input_tokens")
+        output_tokens = _usage_int(usage, "output_tokens")
+        total_tokens = _usage_int(usage, "total_tokens")
+        cache_hit = _usage_int(usage, "input_cache_hit_tokens")
+        cache_miss = _usage_int(usage, "input_cache_miss_tokens")
+        reasoning = _usage_int(usage, "reasoning_tokens")
+        cost = _usage_cost(usage)
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
                 """
                 update corpus.agent_runs
                 set state = %s,
                     usage = %s::jsonb,
+                    request_count = %s,
+                    input_tokens = %s,
+                    output_tokens = %s,
+                    total_tokens = %s,
+                    input_cache_hit_tokens = %s,
+                    input_cache_miss_tokens = %s,
+                    reasoning_tokens = %s,
+                    estimated_cost_usd = %s,
                     trace_object_ref = coalesce(%s, trace_object_ref),
                     result_object_ref = coalesce(%s, result_object_ref),
                     error_type = %s,
@@ -221,7 +288,15 @@ class PostgresAgentRunLedger:
                 """,
                 (
                     state,
-                    json.dumps(usage, sort_keys=True),
+                    _json(usage),
+                    request_count,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    cache_hit,
+                    cache_miss,
+                    reasoning,
+                    cost,
                     trace_object_ref,
                     result_object_ref,
                     error_type,
@@ -261,6 +336,31 @@ class PostgresAgentRunLedger:
                 raise RuntimeError("structure pipeline upsert did not return an identifier")
             pipeline_run_id: UUID = row[0]
             return pipeline_run_id
+
+    def record_structure_pipeline_usage(
+        self,
+        *,
+        pipeline_run_id: UUID,
+        usage: dict[str, object],
+    ) -> None:
+        request_count = _usage_int(usage, "request_count")
+        total_tokens = _usage_int(usage, "total_tokens")
+        cost = _usage_cost(usage)
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                update corpus.structure_pipeline_runs
+                set usage = %s::jsonb,
+                    request_count = %s,
+                    total_tokens = %s,
+                    estimated_cost_usd = %s,
+                    updated_at = now()
+                where id = %s
+                """,
+                (_json(usage), request_count, total_tokens, cost, pipeline_run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"structure pipeline run {pipeline_run_id} does not exist")
 
     def transition_structure_pipeline(
         self,
