@@ -5,12 +5,19 @@ from typing import Literal
 
 from agents import OpenAIChatCompletionsModel
 from agents.models.interface import Model, ModelProvider
+from agents.models.reasoning_content_replay import ReasoningContentReplayContext
 from openai import AsyncOpenAI
 
 CompatibleProviderName = Literal["gemini", "deepseek"]
 
 _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+
+def _replay_provider_reasoning(_context: ReasoningContentReplayContext) -> bool:
+    """Replay provider-exposed reasoning needed by DeepSeek tool-use turns."""
+
+    return True
 
 
 @dataclass(slots=True)
@@ -32,10 +39,13 @@ class CompatibleEndpointModelProvider(ModelProvider):
     def get_model(self, model_name: str | None) -> Model:
         if model_name is None or not model_name.strip():
             raise ValueError("an explicit model name is required")
+        replay_reasoning = (
+            _replay_provider_reasoning if self.provider_name == "deepseek" else None
+        )
         return OpenAIChatCompletionsModel(
             model=model_name,
             openai_client=self._client,
-            should_replay_reasoning_content=self.provider_name == "deepseek",
+            should_replay_reasoning_content=replay_reasoning,
         )
 
 
