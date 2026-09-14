@@ -76,7 +76,8 @@ jobs:
             --provider gemini \
             --model gemini-3.8-flash \
             --structure-max-turns 128 \
-            --audit-max-turns 96
+            --audit-max-turns 96 \
+            --max-reinvestigation-rounds 2
 
       - name: Score Structure Agent against frozen historical truth
         working-directory: backend
@@ -103,7 +104,7 @@ jobs:
           score = json.loads((root / 'structure-score.json').read_text())
           trace = json.loads((root / 'structure-trace.json').read_text())
           audit_state = audit['audit']['state']
-          approved = audit_state in {'APPROVED', 'APPROVED_WITH_AMENDMENTS'}
+          approved = audit_state == 'APPROVED' and audit.get('extraction_allowed') is True
           payload = {
               'status': 'PASS' if score.get('status') == 'PASS' and approved else 'FAIL',
               'source_sha256': (root / 'sha256.txt').read_text().split()[0],
@@ -111,6 +112,8 @@ jobs:
               'model': result.get('model'),
               'artifact_profile': result.get('artifact_profile'),
               'document_view': result.get('document_view'),
+              'pipeline_round_count': result.get('pipeline_round_count'),
+              'reinvestigation_exhausted': result.get('reinvestigation_exhausted'),
               'structure_usage': result.get('usage'),
               'structure_tool_calls': result.get('tool_call_count'),
               'audit_state': audit_state,
