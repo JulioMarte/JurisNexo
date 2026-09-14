@@ -5,9 +5,10 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from agents.items import ModelResponse
+from pydantic import BaseModel
 
 ProviderName = Literal["gemini", "deepseek"]
 PricingBand = Literal["peak", "off_peak"]
@@ -348,20 +349,29 @@ def _rate(tokens: int, seconds: float) -> float | None:
     return tokens / seconds
 
 
+def _as_object_dict(value: object) -> dict[str, object] | None:
+    if isinstance(value, BaseModel):
+        return cast(dict[str, object], value.model_dump(mode="json", exclude_none=False))
+    if isinstance(value, dict):
+        return cast(dict[str, object], value)
+    return None
+
+
 def _json_char_count(value: object) -> int:
     if isinstance(value, str):
         return len(value)
-    model_dump = getattr(value, "model_dump", None)
-    if callable(model_dump):
-        value = model_dump(mode="json", exclude_none=False)
+    payload: object = _as_object_dict(value) or value
     try:
-        return len(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
+        return len(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
     except (TypeError, ValueError):
-        return len(str(value))
+        return len(str(payload))
 
 
 def _item_type(value: object) -> str:
-    item_type = value.get("type") if isinstance(value, dict) else getattr(value, "type", None)
+    payload = _as_object_dict(value)
+    if payload is None:
+        return ""
+    item_type = payload.get("type")
     return item_type if isinstance(item_type, str) else ""
 
 
@@ -374,10 +384,7 @@ def summarize_request_context(
     """Describe observable request shape without pretending chars are provider token counts."""
 
     system_chars = len(system_instructions or "")
-    if isinstance(input_value, str):
-        items: list[object] = [input_value]
-    else:
-        items = list(input_value)
+    items: list[object] = [input_value] if isinstance(input_value, str) else list(input_value)
 
     message_chars = 0
     tool_result_chars = 0
@@ -414,33 +421,26 @@ def summarize_request_context(
     )
 
 
+def _text_from_nested_item(value: object) -> str | None:
+    payload = _as_object_dict(value)
+    if payload is None:
+        return None
+    text = payload.get("text")
+    return text if isinstance(text, str) else None
+
+
 def _provider_reasoning_text(response: ModelResponse) -> str:
     parts: list[str] = []
     for item in response.output:
-        if _item_type(item) != "reasoning":
+        payload = _as_object_dict(item)
+        if payload is None or payload.get("type") != "reasoning":
             continue
-        summary = getattr(item, "summary", None)
-        if summary is None and isinstance(item, dict):
-            summary = item.get("summary")
-        if isinstance(summary, list):
-            for summary_item in summary:
-                text = (
-                    summary_item.get("text")
-                    if isinstance(summary_item, dict)
-                    else getattr(summary_item, "text", None)
-                )
-                if isinstance(text, str) and text:
-                    parts.append(text)
-        content = getattr(item, "content", None)
-        if content is None and isinstance(item, dict):
-            content = item.get("content")
-        if isinstance(content, list):
-            for content_item in content:
-                text = (
-                    content_item.get("text")
-                    if isinstance(content_item, dict)
-                    else getattr(content_item, "text", None)
-                )
+        for key in ("summary", "content"):
+            nested = payload.get(key)
+            if not isinstance(nested, list):
+                continue
+            for nested_item in cast(list[object], nested):
+                text = _text_from_nested_item(nested_item)
                 if isinstance(text, str) and text and text not in parts:
                     parts.append(text)
     return "\n".join(parts)
