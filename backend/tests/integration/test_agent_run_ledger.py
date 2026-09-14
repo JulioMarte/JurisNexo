@@ -130,7 +130,7 @@ def test_agent_run_event_sequence_and_pipeline_state_are_durable(
     )
     turn = _usage_turn()
     ledger.append_model_turn(run_id=run_id, event=turn)
-    usage = {
+    usage: dict[str, object] = {
         "request_count": 1,
         "input_tokens": 1_500,
         "output_tokens": 500,
