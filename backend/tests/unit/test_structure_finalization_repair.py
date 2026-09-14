@@ -63,14 +63,16 @@ def test_raw_malformed_structure_finalizer_json_is_repairable_before_sdk_parsing
     context = StructureAgentContext(environment=DocumentEnvironment(pages=("page one",)))
     wrapper = cast(Any, SimpleNamespace(context=context))
 
-    feedback = asyncio.run(
-        finalize_structure_hypothesis.on_invoke_tool(
+    async def invoke_finalizer() -> str:
+        result = await finalize_structure_hypothesis.on_invoke_tool(
             wrapper,
             '{"hypothesis":',
         )
-    )
+        return cast(str, result)
 
-    assert "FINALIZATION_REJECTED" in str(feedback)
+    feedback = asyncio.run(invoke_finalizer())
+
+    assert "FINALIZATION_REJECTED" in feedback
     assert context.finalized_output == []
     behavior = _structure_tool_use_behavior(wrapper, [])
     assert behavior.is_final_output is False
