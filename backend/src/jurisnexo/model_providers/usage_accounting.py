@@ -57,6 +57,7 @@ class ModelTurnUsage:
     round_number: int
     request_started_at: datetime
     response_completed_at: datetime
+    request_latency_seconds: float
     provider: str
     model: str
     input_tokens: int
@@ -65,8 +66,13 @@ class ModelTurnUsage:
     input_cache_hit_tokens: int
     input_cache_miss_tokens: int
     reasoning_tokens: int
+    output_tokens_per_second: float | None
+    total_tokens_per_second: float | None
     estimated_cost_usd: Decimal | None
     session_total_tokens_after_turn: int
+    session_model_time_seconds_after_turn: float
+    session_output_tokens_per_second_after_turn: float | None
+    session_total_tokens_per_second_after_turn: float | None
     session_estimated_cost_usd_after_turn: Decimal | None
     pricing: PricingSnapshot | None
     response_id: str | None
@@ -80,6 +86,7 @@ class ModelTurnUsage:
             "round_number": self.round_number,
             "request_started_at": self.request_started_at.isoformat(),
             "response_completed_at": self.response_completed_at.isoformat(),
+            "request_latency_seconds": self.request_latency_seconds,
             "provider": self.provider,
             "model": self.model,
             "input_tokens": self.input_tokens,
@@ -88,10 +95,19 @@ class ModelTurnUsage:
             "input_cache_hit_tokens": self.input_cache_hit_tokens,
             "input_cache_miss_tokens": self.input_cache_miss_tokens,
             "reasoning_tokens": self.reasoning_tokens,
+            "output_tokens_per_second": self.output_tokens_per_second,
+            "total_tokens_per_second": self.total_tokens_per_second,
             "estimated_cost_usd": (
                 str(self.estimated_cost_usd) if self.estimated_cost_usd is not None else None
             ),
             "session_total_tokens_after_turn": self.session_total_tokens_after_turn,
+            "session_model_time_seconds_after_turn": self.session_model_time_seconds_after_turn,
+            "session_output_tokens_per_second_after_turn": (
+                self.session_output_tokens_per_second_after_turn
+            ),
+            "session_total_tokens_per_second_after_turn": (
+                self.session_total_tokens_per_second_after_turn
+            ),
             "session_estimated_cost_usd_after_turn": (
                 str(self.session_estimated_cost_usd_after_turn)
                 if self.session_estimated_cost_usd_after_turn is not None
@@ -112,6 +128,9 @@ class ModelUsageSummary:
     input_cache_hit_tokens: int
     input_cache_miss_tokens: int
     reasoning_tokens: int
+    model_time_seconds: float
+    output_tokens_per_second: float | None
+    total_tokens_per_second: float | None
     estimated_cost_usd: Decimal | None
 
     def as_dict(self) -> dict[str, object]:
@@ -123,6 +142,9 @@ class ModelUsageSummary:
             "input_cache_hit_tokens": self.input_cache_hit_tokens,
             "input_cache_miss_tokens": self.input_cache_miss_tokens,
             "reasoning_tokens": self.reasoning_tokens,
+            "model_time_seconds": self.model_time_seconds,
+            "output_tokens_per_second": self.output_tokens_per_second,
+            "total_tokens_per_second": self.total_tokens_per_second,
             "estimated_cost_usd": (
                 str(self.estimated_cost_usd) if self.estimated_cost_usd is not None else None
             ),
@@ -232,6 +254,12 @@ def _normalized_reasoning_tokens(response: ModelResponse) -> int:
     return max(response.usage.output_tokens_details.reasoning_tokens, 0)
 
 
+def _rate(tokens: int, seconds: float) -> float | None:
+    if seconds <= 0:
+        return None
+    return tokens / seconds
+
+
 def _empty_turns() -> list[ModelTurnUsage]:
     return []
 
@@ -253,6 +281,11 @@ class ModelUsageTracker:
         request_started_at: datetime,
         response: ModelResponse,
     ) -> ModelTurnUsage:
+        response_completed_at = datetime.now(UTC)
+        request_latency_seconds = max(
+            (response_completed_at - request_started_at).total_seconds(),
+            0.0,
+        )
         raw = response.raw_usage if isinstance(response.raw_usage, dict) else {}
         input_tokens = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
@@ -281,6 +314,9 @@ class ModelUsageTracker:
             )
 
         prior_total_tokens = sum(turn.total_tokens for turn in self.turns)
+        prior_output_tokens = sum(turn.output_tokens for turn in self.turns)
+        prior_model_time = sum(turn.request_latency_seconds for turn in self.turns)
+        session_model_time = prior_model_time + request_latency_seconds
         prior_costs = [turn.estimated_cost_usd for turn in self.turns]
         if estimated_cost is not None and all(cost is not None for cost in prior_costs):
             session_cost: Decimal | None = sum(
@@ -295,7 +331,8 @@ class ModelUsageTracker:
             role=role,
             round_number=round_number,
             request_started_at=request_started_at,
-            response_completed_at=datetime.now(UTC),
+            response_completed_at=response_completed_at,
+            request_latency_seconds=request_latency_seconds,
             provider=self.provider,
             model=self.model,
             input_tokens=input_tokens,
@@ -304,8 +341,19 @@ class ModelUsageTracker:
             input_cache_hit_tokens=cache_hit,
             input_cache_miss_tokens=cache_miss,
             reasoning_tokens=reasoning_tokens,
+            output_tokens_per_second=_rate(output_tokens, request_latency_seconds),
+            total_tokens_per_second=_rate(total_tokens, request_latency_seconds),
             estimated_cost_usd=estimated_cost,
             session_total_tokens_after_turn=prior_total_tokens + total_tokens,
+            session_model_time_seconds_after_turn=session_model_time,
+            session_output_tokens_per_second_after_turn=_rate(
+                prior_output_tokens + output_tokens,
+                session_model_time,
+            ),
+            session_total_tokens_per_second_after_turn=_rate(
+                prior_total_tokens + total_tokens,
+                session_model_time,
+            ),
             session_estimated_cost_usd_after_turn=session_cost,
             pricing=pricing,
             response_id=response.response_id,
@@ -319,13 +367,19 @@ class ModelUsageTracker:
         costs = [turn.estimated_cost_usd for turn in selected]
         known_costs = [cost for cost in costs if cost is not None]
         estimated_cost = sum(known_costs, Decimal(0)) if len(known_costs) == len(costs) else None
+        output_tokens = sum(turn.output_tokens for turn in selected)
+        total_tokens = sum(turn.total_tokens for turn in selected)
+        model_time_seconds = sum(turn.request_latency_seconds for turn in selected)
         return ModelUsageSummary(
             request_count=len(selected),
             input_tokens=sum(turn.input_tokens for turn in selected),
-            output_tokens=sum(turn.output_tokens for turn in selected),
-            total_tokens=sum(turn.total_tokens for turn in selected),
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
             input_cache_hit_tokens=sum(turn.input_cache_hit_tokens for turn in selected),
             input_cache_miss_tokens=sum(turn.input_cache_miss_tokens for turn in selected),
             reasoning_tokens=sum(turn.reasoning_tokens for turn in selected),
+            model_time_seconds=model_time_seconds,
+            output_tokens_per_second=_rate(output_tokens, model_time_seconds),
+            total_tokens_per_second=_rate(total_tokens, model_time_seconds),
             estimated_cost_usd=estimated_cost,
         )
