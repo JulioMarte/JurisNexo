@@ -108,7 +108,7 @@ def _with_runtime_status(system_instructions: str | None, scope: UsageScope) -> 
     return f"# Runtime budget\n{status}"
 
 
-def _bounded_model_settings(model_settings: ModelSettings) -> ModelSettings:
+def bounded_model_settings(model_settings: ModelSettings) -> ModelSettings:
     """Apply shared per-attempt timeout/retry policy without changing agent reasoning budgets."""
 
     return model_settings.resolve(
@@ -158,7 +158,7 @@ class UsageTrackingModel(Model):
             ),
             tools=cast(list[object], tools),
         )
-        settings = _bounded_model_settings(model_settings)
+        settings = bounded_model_settings(model_settings)
         response = await self._inner.get_response(
             effective_system_instructions,
             input,
@@ -197,7 +197,7 @@ class UsageTrackingModel(Model):
         prompt: ResponsePromptParam | None,
     ) -> AsyncIterator[TResponseStreamEvent]:
         effective_system_instructions = _with_runtime_status(system_instructions, self._scope)
-        settings = _bounded_model_settings(model_settings).resolve({"include_usage": True})
+        settings = bounded_model_settings(model_settings).resolve({"include_usage": True})
         return self._inner.stream_response(
             effective_system_instructions,
             input,
