@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from agents import ModelSettings
 from agents.agent_output import AgentOutputSchemaBase
@@ -12,7 +13,10 @@ from agents.models.interface import Model, ModelProvider, ModelTracing
 from agents.tool import Tool
 from openai.types.responses import ResponsePromptParam
 
-from jurisnexo.model_providers.usage_accounting import ModelUsageTracker
+from jurisnexo.model_providers.usage_accounting import (
+    ModelUsageTracker,
+    summarize_request_context,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,13 @@ class UsageTrackingModel(Model):
         prompt: ResponsePromptParam | None,
     ) -> ModelResponse:
         started_at = datetime.now(UTC)
+        context_composition = summarize_request_context(
+            system_instructions=system_instructions,
+            input_value=(
+                input if isinstance(input, str) else cast(list[object], input)
+            ),
+            tools=cast(list[object], tools),
+        )
         settings = model_settings.resolve({"preserve_raw_usage": True})
         response = await self._inner.get_response(
             system_instructions,
@@ -71,6 +82,7 @@ class UsageTrackingModel(Model):
             run_turn=self._run_turn,
             request_started_at=started_at,
             response=response,
+            context_composition=context_composition,
         )
         return response
 
@@ -88,9 +100,6 @@ class UsageTrackingModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> AsyncIterator[TResponseStreamEvent]:
-        # JurisNexo structure ingestion deliberately uses Runner.run, not run_streamed.
-        # Preserve raw usage if a future caller streams, but do not pretend we can
-        # account a turn until a terminal ModelResponse is available.
         settings = model_settings.resolve({"preserve_raw_usage": True, "include_usage": True})
         return self._inner.stream_response(
             system_instructions,
