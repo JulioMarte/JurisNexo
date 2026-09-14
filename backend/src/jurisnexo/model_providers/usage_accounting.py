@@ -49,6 +49,12 @@ class PricingSnapshot:
         }
 
 
+def _rate(tokens: int, seconds: float) -> float | None:
+    if seconds <= 0:
+        return None
+    return tokens / seconds
+
+
 @dataclass(frozen=True, slots=True)
 class ModelTurnUsage:
     session_turn: int
@@ -57,7 +63,6 @@ class ModelTurnUsage:
     round_number: int
     request_started_at: datetime
     response_completed_at: datetime
-    request_latency_seconds: float
     provider: str
     model: str
     input_tokens: int
@@ -66,17 +71,27 @@ class ModelTurnUsage:
     input_cache_hit_tokens: int
     input_cache_miss_tokens: int
     reasoning_tokens: int
-    output_tokens_per_second: float | None
-    total_tokens_per_second: float | None
     estimated_cost_usd: Decimal | None
     session_total_tokens_after_turn: int
-    session_model_time_seconds_after_turn: float
-    session_output_tokens_per_second_after_turn: float | None
-    session_total_tokens_per_second_after_turn: float | None
     session_estimated_cost_usd_after_turn: Decimal | None
     pricing: PricingSnapshot | None
     response_id: str | None
     request_id: str | None
+    session_model_time_seconds_after_turn: float = 0.0
+    session_output_tokens_per_second_after_turn: float | None = None
+    session_total_tokens_per_second_after_turn: float | None = None
+
+    @property
+    def request_latency_seconds(self) -> float:
+        return max((self.response_completed_at - self.request_started_at).total_seconds(), 0.0)
+
+    @property
+    def output_tokens_per_second(self) -> float | None:
+        return _rate(self.output_tokens, self.request_latency_seconds)
+
+    @property
+    def total_tokens_per_second(self) -> float | None:
+        return _rate(self.total_tokens, self.request_latency_seconds)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -254,12 +269,6 @@ def _normalized_reasoning_tokens(response: ModelResponse) -> int:
     return max(response.usage.output_tokens_details.reasoning_tokens, 0)
 
 
-def _rate(tokens: int, seconds: float) -> float | None:
-    if seconds <= 0:
-        return None
-    return tokens / seconds
-
-
 def _empty_turns() -> list[ModelTurnUsage]:
     return []
 
@@ -332,7 +341,6 @@ class ModelUsageTracker:
             round_number=round_number,
             request_started_at=request_started_at,
             response_completed_at=response_completed_at,
-            request_latency_seconds=request_latency_seconds,
             provider=self.provider,
             model=self.model,
             input_tokens=input_tokens,
@@ -341,10 +349,12 @@ class ModelUsageTracker:
             input_cache_hit_tokens=cache_hit,
             input_cache_miss_tokens=cache_miss,
             reasoning_tokens=reasoning_tokens,
-            output_tokens_per_second=_rate(output_tokens, request_latency_seconds),
-            total_tokens_per_second=_rate(total_tokens, request_latency_seconds),
             estimated_cost_usd=estimated_cost,
             session_total_tokens_after_turn=prior_total_tokens + total_tokens,
+            session_estimated_cost_usd_after_turn=session_cost,
+            pricing=pricing,
+            response_id=response.response_id,
+            request_id=response.request_id,
             session_model_time_seconds_after_turn=session_model_time,
             session_output_tokens_per_second_after_turn=_rate(
                 prior_output_tokens + output_tokens,
@@ -354,10 +364,6 @@ class ModelUsageTracker:
                 prior_total_tokens + total_tokens,
                 session_model_time,
             ),
-            session_estimated_cost_usd_after_turn=session_cost,
-            pricing=pricing,
-            response_id=response.response_id,
-            request_id=response.request_id,
         )
         self.turns.append(turn)
         return turn
