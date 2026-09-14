@@ -9,7 +9,7 @@ from typing import Any
 import psycopg
 import pytest
 
-from jurisnexo.corpus.agent_run_ledger import PostgresAgentRunLedger
+from jurisnexo.corpus.structure_run_persistence import PostgresAgentRunLedger
 from jurisnexo.model_providers.usage_accounting import ModelTurnUsage, PricingSnapshot
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.provenance]
