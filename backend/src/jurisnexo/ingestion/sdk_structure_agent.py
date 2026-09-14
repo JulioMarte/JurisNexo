@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,10 +19,12 @@ from jurisnexo.ingestion.document_environment import (
     TextSearchHit,
 )
 from jurisnexo.ingestion.evidence_validation import validate_index_reference_evidence
+from jurisnexo.ingestion.structure_budget import StructureToolBudget
 from jurisnexo.ingestion.structure_trace import (
     ArtifactInspectionProfile,
     StructureToolTraceEvent,
     StructureToolTraceRecorder,
+    StructureTraceStage,
     render_artifact_profile,
 )
 
@@ -37,6 +40,7 @@ class StructureAgentContext:
     search_max_hits: int = 20
     artifact_profile: ArtifactInspectionProfile | None = None
     trace_recorder: StructureToolTraceRecorder = field(default_factory=StructureToolTraceRecorder)
+    tool_budget: StructureToolBudget = field(default_factory=StructureToolBudget)
     finalized_output: list[object] = field(default_factory=_empty_finalized_output, repr=False)
 
     def __post_init__(self) -> None:
@@ -168,7 +172,7 @@ def _search_text(query: str, hits: tuple[TextSearchHit, ...]) -> str:
 
 
 def bound_tool_output(context: StructureAgentContext, output: str) -> str:
-    """Enforce the deterministic output budget for document-inspection tools."""
+    """Enforce the deterministic per-call output budget for inspection tools."""
 
     if len(output) > context.max_tool_output_chars:
         raise DocumentEnvironmentError(
@@ -188,6 +192,11 @@ def _trace_success(
         tool_name=tool_name,
         arguments=arguments,
         result=result,
+    )
+    context.tool_budget.observe_success(
+        tool_name=tool_name,
+        arguments=arguments,
+        result_char_count=len(result),
     )
     return result
 
@@ -362,16 +371,23 @@ async def run_structure_agent(
     artifact_label: str,
     model: str,
     max_turns: int = 128,
+    max_runtime_seconds: int = 600,
     max_tool_output_chars: int = 60_000,
+    max_total_tool_result_chars: int = 750_000,
+    max_identical_tool_calls: int = 4,
     search_max_hits: int = 20,
     artifact_profile: ArtifactInspectionProfile | None = None,
     model_provider: ModelProvider | None = None,
     trace_journal_path: Path | None = None,
+    trace_stage: StructureTraceStage = "structure_agent",
+    investigation_context: str | None = None,
 ) -> StructureAgentRunResult:
     """Run structure discovery and reject source-unsupported page identities."""
 
+    if max_runtime_seconds < 1:
+        raise ValueError("max_runtime_seconds must be positive")
     recorder = StructureToolTraceRecorder(
-        stage="structure_agent",
+        stage=trace_stage,
         journal_path=trace_journal_path,
     )
     context = StructureAgentContext(
@@ -380,12 +396,22 @@ async def run_structure_agent(
         search_max_hits=search_max_hits,
         artifact_profile=artifact_profile,
         trace_recorder=recorder,
+        tool_budget=StructureToolBudget(
+            max_total_result_chars=max_total_tool_result_chars,
+            max_identical_calls=max_identical_tool_calls,
+        ),
     )
     agent = build_structure_agent(model=model)
     initial_page = _page_text(environment.get_page(1))
+    focused_context = (
+        f"Focused investigation context:\n{investigation_context}\n\n"
+        if investigation_context
+        else ""
+    )
     prompt = (
         f"Artifact: {artifact_label}\n"
         f"Environment: {environment.describe()}\n\n"
+        f"{focused_context}"
         f"Initial page preview:\n{initial_page}\n\n"
         "Investigate the complete structural problem conservatively. Use tools whenever "
         "needed, record unresolved uncertainty explicitly, and finish only by calling "
@@ -398,28 +424,29 @@ async def run_structure_agent(
     if model_provider is not None:
         run_config.model_provider = model_provider
     try:
-        result = await Runner.run(
-            starting_agent=agent,
-            input=prompt,
-            context=context,
-            max_turns=max_turns,
-            run_config=run_config,
-        )
+        async with asyncio.timeout(max_runtime_seconds):
+            result = await Runner.run(
+                starting_agent=agent,
+                input=prompt,
+                context=context,
+                max_turns=max_turns,
+                run_config=run_config,
+            )
     except MaxTurnsExceeded as exc:
         raise StructureInvestigationBudgetExceeded(
-            stage="structure_agent",
+            stage=trace_stage,
             max_turns=max_turns,
             tool_trace=context.trace_recorder.events,
         ) from exc
     except ModelBehaviorError as exc:
         raise StructureInvestigationFailed(
-            stage="structure_agent",
+            stage=trace_stage,
             error=exc,
             tool_trace=context.trace_recorder.events,
         ) from exc
     except Exception as exc:
         raise StructureInvestigationFailed(
-            stage="structure_agent",
+            stage=trace_stage,
             error=exc,
             tool_trace=context.trace_recorder.events,
         ) from exc
@@ -429,7 +456,7 @@ async def run_structure_agent(
     ):
         error = RuntimeError("structure agent ended without a validated finalization tool call")
         raise StructureInvestigationFailed(
-            stage="structure_agent",
+            stage=trace_stage,
             error=error,
             tool_trace=context.trace_recorder.events,
         )
