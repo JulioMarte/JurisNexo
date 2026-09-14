@@ -293,7 +293,7 @@ def _document_tool_error_feedback(
 def _structure_finalization_error_feedback(
     ctx: RunContextWrapper[StructureAgentContext], error: Exception
 ) -> str:
-    """Return schema/JSON failures to the model so completed research is not discarded."""
+    """Return schema/JSON/evidence failures so completed research is not discarded."""
 
     ctx.context.finalization_errors.append(f"{type(error).__name__}: {error}")
     attempt = len(ctx.context.finalization_errors)
@@ -307,10 +307,11 @@ def _structure_finalization_error_feedback(
         raise error
     return (
         "FINALIZATION_REJECTED. Your finalize_structure_hypothesis arguments were not valid "
-        "JSON or did not satisfy the required schema. The document investigation is still valid; "
-        "DO NOT repeat searches or page reads. Repair only the final tool payload, preserving "
-        "source-backed facts and explicit unknowns, then call finalize_structure_hypothesis "
-        f"again. Repair attempt {attempt} of {ctx.context.max_finalization_repair_attempts}. "
+        "JSON, did not satisfy the required schema, or cited invalid source provenance. The "
+        "document investigation is still valid; DO NOT repeat searches or page reads. Repair only "
+        "the final tool payload, preserving source-backed facts and explicit unknowns, then call "
+        "finalize_structure_hypothesis again. "
+        f"Repair attempt {attempt} of {ctx.context.max_finalization_repair_attempts}. "
         f"Validation summary: {type(error).__name__}: {error}"
     )
 
@@ -432,10 +433,14 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
 def finalize_structure_hypothesis(
     ctx: RunContextWrapper[StructureAgentContext], hypothesis: DocumentStructureHypothesis
 ) -> str:
-    """Finalize the complete candidate structure after investigation is materially complete."""
+    """Finalize the complete candidate structure after deterministic provenance validation."""
 
     if ctx.context.finalized_output:
         raise ValueError("structure hypothesis was already finalized")
+    validate_index_reference_evidence(
+        hypothesis=hypothesis,
+        environment=ctx.context.environment,
+    )
     ctx.context.finalized_output.append(hypothesis)
     rendered = hypothesis.model_dump_json()
     return _trace_success(
@@ -570,7 +575,6 @@ async def run_structure_agent(
         )
 
     hypothesis = context.finalized_output[0]
-    validate_index_reference_evidence(hypothesis=hypothesis, environment=environment)
     return StructureAgentRunResult(
         hypothesis=hypothesis,
         usage_total_tokens=result.context_wrapper.usage.total_tokens,
