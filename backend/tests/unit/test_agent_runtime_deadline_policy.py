@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from agents import ModelSettings
 
-from jurisnexo.model_providers.agents_sdk_usage_provider import (
-    UsageScope,
+from jurisnexo.model_providers.agents_sdk_runtime_provider import (
+    RuntimeScope,
     bounded_model_settings,
 )
 
@@ -12,7 +12,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_runtime_status_exposes_hard_and_soft_remaining_time() -> None:
-    scope = UsageScope(
+    scope = RuntimeScope(
         role="structure_agent",
         round_number=0,
         started_monotonic=100.0,
@@ -30,7 +30,7 @@ def test_runtime_status_exposes_hard_and_soft_remaining_time() -> None:
 
 
 def test_runtime_status_switches_to_soft_deadline_without_forcing_guesswork() -> None:
-    scope = UsageScope(
+    scope = RuntimeScope(
         role="structure_auditor",
         round_number=1,
         started_monotonic=100.0,
@@ -46,7 +46,7 @@ def test_runtime_status_switches_to_soft_deadline_without_forcing_guesswork() ->
 
 
 def test_runtime_status_reserves_finalization_window() -> None:
-    scope = UsageScope(
+    scope = RuntimeScope(
         role="structure_agent",
         round_number=0,
         started_monotonic=100.0,
@@ -73,7 +73,7 @@ def test_model_attempt_policy_is_shorter_than_stage_budget_and_retry_safe() -> N
 
 def test_runtime_scope_rejects_invalid_budget_configuration() -> None:
     with pytest.raises(ValueError, match="runtime_budget_seconds"):
-        UsageScope(
+        RuntimeScope(
             role="structure_agent",
             round_number=0,
             started_monotonic=100.0,
@@ -81,7 +81,7 @@ def test_runtime_scope_rejects_invalid_budget_configuration() -> None:
         )
 
     with pytest.raises(ValueError, match="soft_deadline_fraction"):
-        UsageScope(
+        RuntimeScope(
             role="structure_agent",
             round_number=0,
             started_monotonic=100.0,
