@@ -49,9 +49,8 @@ class StructurePipelineRunResult:
         }
 
 
-def _focused_reinvestigation_label(
+def _focused_reinvestigation_context(
     *,
-    artifact_label: str,
     previous: StructurePipelineRound,
     round_number: int,
 ) -> str:
@@ -63,7 +62,6 @@ def _focused_reinvestigation_label(
         or "- Re-check audit findings."
     )
     return (
-        f"{artifact_label}\n\n"
         f"This is bounded structure reinvestigation round {round_number}. The prior candidate is "
         "not authoritative and must be revised only where source evidence supports revision.\n\n"
         "Prior candidate hypothesis:\n"
@@ -83,9 +81,12 @@ async def run_structure_pipeline(
     artifact_label: str,
     model: str,
     structure_max_turns: int = 128,
+    structure_max_runtime_seconds: int = 600,
     audit_max_turns: int = 96,
     max_reinvestigation_rounds: int = 2,
     max_tool_output_chars: int = 60_000,
+    max_total_tool_result_chars: int = 750_000,
+    max_identical_tool_calls: int = 4,
     search_max_hits: int = 20,
     artifact_profile: ArtifactInspectionProfile | None = None,
     model_provider: ModelProvider | None = None,
@@ -102,7 +103,10 @@ async def run_structure_pipeline(
         artifact_label=artifact_label,
         model=model,
         max_turns=structure_max_turns,
+        max_runtime_seconds=structure_max_runtime_seconds,
         max_tool_output_chars=max_tool_output_chars,
+        max_total_tool_result_chars=max_total_tool_result_chars,
+        max_identical_tool_calls=max_identical_tool_calls,
         search_max_hits=search_max_hits,
         artifact_profile=artifact_profile,
         model_provider=model_provider,
@@ -131,21 +135,25 @@ async def run_structure_pipeline(
         }:
             break
 
-        focused_label = _focused_reinvestigation_label(
-            artifact_label=artifact_label,
+        focused_context = _focused_reinvestigation_context(
             previous=previous,
             round_number=round_number,
         )
         structure = await run_structure_agent(
             environment=environment,
-            artifact_label=focused_label,
+            artifact_label=artifact_label,
             model=model,
             max_turns=structure_max_turns,
+            max_runtime_seconds=structure_max_runtime_seconds,
             max_tool_output_chars=max_tool_output_chars,
+            max_total_tool_result_chars=max_total_tool_result_chars,
+            max_identical_tool_calls=max_identical_tool_calls,
             search_max_hits=search_max_hits,
             artifact_profile=artifact_profile,
             model_provider=model_provider,
             trace_journal_path=trace_journal_path,
+            trace_stage="structure_reinvestigation",
+            investigation_context=focused_context,
         )
         combined_prior_trace = tuple(
             event
