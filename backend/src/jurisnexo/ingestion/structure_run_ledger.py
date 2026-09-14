@@ -74,6 +74,13 @@ class StructureRunLedger(Protocol):
         trace_object_ref: str | None = None,
     ) -> None: ...
 
+    def record_structure_pipeline_usage(
+        self,
+        *,
+        pipeline_run_id: UUID,
+        usage: dict[str, object],
+    ) -> None: ...
+
     def transition_structure_pipeline(
         self,
         *,
