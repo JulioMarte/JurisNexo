@@ -10,6 +10,7 @@ from jurisnexo.model_providers.usage_accounting import (
     ModelTurnUsage,
     ModelUsageTracker,
     UnsupportedPricingMode,
+    summarize_request_context,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -19,7 +20,7 @@ def test_deepseek_v4_flash_peak_and_off_peak_prices_are_versioned() -> None:
     catalog = DeepSeekPricingCatalog()
     peak = catalog.snapshot(
         model="deepseek-v4-flash",
-        at=datetime(2026, 9, 14, 2, 30, tzinfo=UTC),  # Monday peak window.
+        at=datetime(2026, 9, 14, 2, 30, tzinfo=UTC),
     )
     off_peak = catalog.snapshot(
         model="deepseek-v4-flash",
@@ -88,6 +89,7 @@ def _turn(
         round_number=0,
         request_started_at=started,
         response_completed_at=started + timedelta(seconds=seconds),
+        request_latency_seconds=seconds,
         provider="deepseek",
         model="deepseek-v4-flash",
         input_tokens=total_tokens - output_tokens,
@@ -132,3 +134,24 @@ def test_session_throughput_is_weighted_by_model_time_not_mean_of_turn_rates() -
     assert summary.output_tokens_per_second == pytest.approx(19.0)
     assert summary.total_tokens_per_second == pytest.approx(110.0)
     assert summary.output_tokens_per_second != pytest.approx((100.0 + 10.0) / 2)
+
+
+def test_context_composition_separates_reasoning_and_tool_results_without_fake_tokens() -> None:
+    composition = summarize_request_context(
+        system_instructions="system rules",
+        input_value=[
+            {"type": "message", "role": "user", "content": "find the index"},
+            {"type": "reasoning", "summary": [{"text": "prior reasoning"}]},
+            {"type": "function_call_output", "output": "page evidence"},
+            {"type": "function_call", "name": "get_page", "arguments": "{\"page\": 3}"},
+        ],
+        tools=[{"name": "get_page", "parameters": {"type": "object"}}],
+    )
+
+    assert composition.system_instruction_chars > 0
+    assert composition.message_chars > 0
+    assert composition.reasoning_replay_chars > 0
+    assert composition.tool_result_chars > 0
+    assert composition.tool_call_chars > 0
+    assert composition.tool_schema_chars > 0
+    assert composition.approximate_total_context_chars > composition.input_chars
