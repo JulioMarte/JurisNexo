@@ -6,6 +6,7 @@ from agents import ModelSettings
 from jurisnexo.model_providers.agents_sdk_runtime_provider import (
     RuntimeScope,
     bounded_model_settings,
+    deadline_aware_model_settings,
 )
 
 pytestmark = pytest.mark.unit
@@ -69,6 +70,64 @@ def test_model_attempt_policy_is_shorter_than_stage_budget_and_retry_safe() -> N
     assert settings.retry is not None
     assert settings.retry.max_retries == 2
     assert settings.retry.policy is not None
+
+
+def test_deadline_aware_policy_keeps_normal_attempt_budget_when_time_is_plentiful() -> None:
+    scope = RuntimeScope(
+        role="structure_agent",
+        round_number=0,
+        started_monotonic=100.0,
+        runtime_budget_seconds=600.0,
+    )
+
+    settings = deadline_aware_model_settings(
+        ModelSettings(),
+        scope=scope,
+        now_monotonic=200.0,
+    )
+
+    assert settings.timeout == 90.0
+    assert settings.retry is not None
+    assert settings.retry.max_retries == 2
+
+
+def test_deadline_aware_policy_reduces_retries_as_hard_deadline_approaches() -> None:
+    scope = RuntimeScope(
+        role="structure_auditor",
+        round_number=0,
+        started_monotonic=100.0,
+        runtime_budget_seconds=600.0,
+    )
+
+    settings = deadline_aware_model_settings(
+        ModelSettings(),
+        scope=scope,
+        now_monotonic=550.0,
+    )
+
+    assert settings.retry is not None
+    assert settings.retry.max_retries == 1
+    assert settings.timeout is not None
+    assert settings.timeout < 90.0
+
+
+def test_finalization_window_disables_retries_and_leaves_hard_deadline_reserve() -> None:
+    scope = RuntimeScope(
+        role="structure_agent",
+        round_number=0,
+        started_monotonic=100.0,
+        runtime_budget_seconds=600.0,
+    )
+
+    settings = deadline_aware_model_settings(
+        ModelSettings(),
+        scope=scope,
+        now_monotonic=650.0,
+    )
+
+    assert settings.retry is not None
+    assert settings.retry.max_retries == 0
+    assert settings.timeout == pytest.approx(45.0)
 
 
 def test_runtime_scope_rejects_invalid_budget_configuration() -> None:
