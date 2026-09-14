@@ -8,6 +8,10 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 
+def _source_root() -> Path:
+    return Path(__file__).parents[2] / "src" / "jurisnexo"
+
+
 def _tool_decorator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Call | None:
     for decorator in function.decorator_list:
         if (
@@ -20,7 +24,7 @@ def _tool_decorator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Cal
 
 
 def test_every_agents_sdk_tool_declares_non_null_failure_policy() -> None:
-    source_root = Path(__file__).parents[2] / "src" / "jurisnexo"
+    source_root = _source_root()
     violations: list[str] = []
 
     for path in source_root.rglob("*.py"):
@@ -48,4 +52,25 @@ def test_every_agents_sdk_tool_declares_non_null_failure_policy() -> None:
         "Every @tool must explicitly classify failures. Recoverable domain/request errors should "
         "be returned to the model; unexpected runtime/invariant failures should re-raise. Unsafe "
         f"tools: {violations}"
+    )
+
+
+def test_source_grounded_ingestion_agents_use_repairable_finalizer_tools() -> None:
+    ingestion_root = _source_root() / "ingestion"
+    violations: list[str] = []
+
+    for path in ingestion_root.glob("sdk_*agent.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "Agent":
+                continue
+            if any(keyword.arg == "output_type" for keyword in node.keywords):
+                violations.append(str(path.relative_to(ingestion_root)))
+
+    assert violations == [], (
+        "Source-grounded ingestion agents must finalize through an explicit tool so deterministic "
+        "schema/provenance failures can be returned to the model for bounded repair. Native "
+        f"output_type terminal agents bypass that repair loop: {violations}"
     )
