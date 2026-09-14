@@ -33,7 +33,7 @@ from jurisnexo.model_providers.agents_sdk_compatible import (
     CompatibleProviderName,
     build_compatible_model_provider,
 )
-from jurisnexo.model_providers.usage_accounting import ModelTurnUsage, ModelUsageTracker
+from jurisnexo.model_providers.usage_accounting import ModelUsageTracker
 
 
 def _parse_args() -> argparse.Namespace:
