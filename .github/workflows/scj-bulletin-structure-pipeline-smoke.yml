@@ -2,6 +2,9 @@ name: SCJ bulletin structure pipeline smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ingestion/structure-agent-adversarial-trace
 
 permissions:
   contents: read
