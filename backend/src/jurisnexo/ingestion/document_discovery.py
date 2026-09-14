@@ -92,6 +92,65 @@ def _empty_investigation_page_evidence() -> list[InvestigationPageEvidence]:
     return []
 
 
+class StructureFindingAttribute(BaseModel):
+    """Machine-readable attribute attached to a durable structural finding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
+def _empty_finding_attributes() -> list[StructureFindingAttribute]:
+    return []
+
+
+class StructureFinding(BaseModel):
+    """Source-backed document-level knowledge that downstream agents should inherit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str = Field(min_length=1)
+    kind: Literal[
+        "source_completeness",
+        "pagination_transform",
+        "scan_composition",
+        "missing_or_unresolved_pages",
+        "duplicate_scan",
+        "index_anomaly",
+        "boundary_pattern",
+        "ocr_quality",
+        "source_identity",
+        "other",
+    ]
+    statement: str = Field(min_length=1)
+    operational_impact: str = Field(min_length=1)
+    evidence_basis: Literal["page", "artifact_profile", "tool_behavior", "mixed"]
+    evidence_pages: list[InvestigationPageEvidence] = Field(
+        default_factory=_empty_investigation_page_evidence
+    )
+    attributes: list[StructureFindingAttribute] = Field(default_factory=_empty_finding_attributes)
+    applies_to_work_unit_ids: list[str] = Field(default_factory=_empty_strings)
+    downstream_instructions: list[str] = Field(default_factory=_empty_strings)
+    confidence: float = Field(ge=0.0, le=1.0)
+    material: bool = True
+
+    @model_validator(mode="after")
+    def validate_evidence_contract(self) -> StructureFinding:
+        if self.evidence_basis in {"page", "mixed"} and not self.evidence_pages:
+            raise ValueError("page-backed structure findings require evidence_pages")
+        keys = [attribute.key for attribute in self.attributes]
+        if len(keys) != len(set(keys)):
+            raise ValueError("structure finding attribute keys must be unique")
+        if len(self.applies_to_work_unit_ids) != len(set(self.applies_to_work_unit_ids)):
+            raise ValueError("structure finding work-unit references must be unique")
+        return self
+
+
+def _empty_structure_findings() -> list[StructureFinding]:
+    return []
+
+
 class DecisionWorkUnit(BaseModel):
     """A structure-stage handoff for one indexed decision, not extracted legal content."""
 
@@ -255,6 +314,7 @@ class DocumentStructureHypothesis(BaseModel):
     index_reference_investigations: list[IndexReferenceInvestigation] = Field(
         default_factory=_empty_index_reference_investigations
     )
+    structure_findings: list[StructureFinding] = Field(default_factory=_empty_structure_findings)
     anomalies: list[str] = Field(default_factory=_empty_strings)
     recommended_next_actions: list[str] = Field(default_factory=_empty_strings)
     status: Literal[
@@ -262,6 +322,21 @@ class DocumentStructureHypothesis(BaseModel):
         "review_required",
         "insufficient_structure_confidence",
     ]
+
+    @model_validator(mode="after")
+    def validate_cross_references(self) -> DocumentStructureHypothesis:
+        finding_ids = [finding.finding_id for finding in self.structure_findings]
+        if len(finding_ids) != len(set(finding_ids)):
+            raise ValueError("structure finding IDs must be unique")
+        work_unit_ids = {unit.work_unit_id for unit in self.decision_work_units}
+        for finding in self.structure_findings:
+            unknown_units = set(finding.applies_to_work_unit_ids) - work_unit_ids
+            if unknown_units:
+                raise ValueError(
+                    "structure finding references unknown work units: "
+                    + ", ".join(sorted(unknown_units))
+                )
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +369,14 @@ pages, together with the physical evidence pages. Typical useful fields include 
 decision_date, decision_number, docket_number, and parties. Leave an end page or field unknown
 rather than guessing it. Prefer an explicit unknown/review-required conclusion over unsupported
 certainty.
+
+Capture durable document-level knowledge in structure_findings, not only free-text anomalies. Use
+findings for source completeness, pagination transforms or offsets, scan composition, unresolved or
+missing pages, duplicate scans, index anomalies, boundary patterns, OCR quality, and source identity.
+Each finding needs a stable finding_id, an operational impact for downstream agents, confidence,
+and typed evidence when page-backed. Put machine-readable facts such as a pagination offset in
+attributes (for example key='view_to_printed_offset', value='177'). Use downstream_instructions for
+cautions or routing guidance that later per-decision agents should inherit.
 
 For index-reference investigations, evidence_pages is the canonical evidence contract. Each
 entry must bind a document-view page to its printed/editorial page when that printed identity is
