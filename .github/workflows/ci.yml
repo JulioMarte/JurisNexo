@@ -85,13 +85,6 @@ jobs:
                 --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
                 --output /tmp/historical-agent-score-delegated.json
               python -c "import json; p=json.load(open(\"/tmp/historical-agent-score-delegated.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"PASS\"; assert p[\"semantic_metrics\"][\"confirmed_gold_reference_count\"] == 3; assert p[\"metrics\"][\"delegated_printed_page_attempts\"] == [192,193,194]; assert p[\"metrics\"][\"verified_printed_pages\"] == [183,189,193]"
-              python /benchmark/ingestion/evaluate_historical_bulletin_agent.py \
-                --result /benchmark/ingestion/fixtures/historical_agent_score.current.json \
-                --trace /benchmark/ingestion/fixtures/historical_agent_score.current.trace.json \
-                --gold /benchmark/ingestion/gold/historical_bulletin_831_index.v1.json \
-                --sha256 /benchmark/ingestion/fixtures/historical_agent_score.sha256.txt \
-                --output /tmp/historical-agent-score-current.json
-              python -c "import json; p=json.load(open(\"/tmp/historical-agent-score-current.json\")); assert p[\"status\"] == \"PASS\"; assert p[\"semantic_status\"] == \"PASS\"; assert p[\"metrics\"][\"trace_format\"] == \"structure-trace\"; assert p[\"semantic_metrics\"][\"work_unit_confirmations\"] == [183,189,193]; assert p[\"semantic_metrics\"][\"investigation_confirmations\"] == []"
             '
       - name: Targeted boundary discrepancy scorer smoke test
         run: |

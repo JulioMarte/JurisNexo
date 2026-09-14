@@ -185,24 +185,6 @@ def _int_list(value: object) -> list[int] | None:
     return value
 
 
-def _trace_support_errors(
-    *,
-    evidence_printed: list[int],
-    evidence_views: list[int],
-    resolved_pages: dict[int, int],
-) -> list[str]:
-    errors: list[str] = []
-    if not evidence_printed or not evidence_views:
-        errors.append("source-backed printed/view evidence is required")
-    missing = sorted(set(evidence_printed) - set(resolved_pages))
-    if missing:
-        errors.append("printed evidence absent from tool trace: " + ",".join(map(str, missing)))
-    expected_views = {resolved_pages[p] for p in evidence_printed if p in resolved_pages}
-    if set(evidence_views) != expected_views:
-        errors.append("evidence view pages do not match resolved printed-page trace")
-    return errors
-
-
 def _semantic_confirmations(
     result: dict[str, Any], resolved_pages: dict[int, int]
 ) -> tuple[set[int], set[int], list[dict[str, Any]]]:
@@ -231,11 +213,17 @@ def _semantic_confirmations(
         if not isinstance(reference, int) or not isinstance(status, str):
             continue
 
-        errors = _trace_support_errors(
-            evidence_printed=evidence_printed,
-            evidence_views=evidence_views,
-            resolved_pages=resolved_pages,
-        )
+        errors: list[str] = []
+        if not evidence_printed or not evidence_views:
+            errors.append("investigation requires source-backed printed/view evidence")
+        missing = sorted(set(evidence_printed) - set(resolved_pages))
+        if missing:
+            errors.append("printed evidence absent from tool trace: " + ",".join(map(str, missing)))
+        expected_views = {
+            resolved_pages[p] for p in evidence_printed if p in resolved_pages
+        }
+        if set(evidence_views) != expected_views:
+            errors.append("evidence view pages do not match resolved printed-page trace")
         if status in _CONFIRMED_STATUSES:
             if reference not in evidence_printed:
                 errors.append("confirmed reference itself was not cited as inspected evidence")
@@ -254,72 +242,6 @@ def _semantic_confirmations(
                 "evidence_printed_pages": evidence_printed,
                 "evidence_view_pages": evidence_views,
                 "confidence": investigation.get("confidence"),
-                "trace_supported": supported,
-                "trace_support_errors": errors,
-            }
-        )
-    return confirmed, starts, normalized
-
-
-def _work_unit_semantic_confirmations(
-    result: dict[str, Any], resolved_pages: dict[int, int]
-) -> tuple[set[int], set[int], list[dict[str, Any]]]:
-    """Score current typed work-unit boundaries without pretending they resolve mismatches."""
-
-    hypothesis = result.get("hypothesis")
-    if not isinstance(hypothesis, dict):
-        return set(), set(), []
-    work_units = hypothesis.get("decision_work_units")
-    if not isinstance(work_units, list):
-        return set(), set(), []
-
-    confirmed: set[int] = set()
-    starts: set[int] = set()
-    normalized: list[dict[str, Any]] = []
-    for unit in work_units:
-        if not isinstance(unit, dict):
-            continue
-        unit_kind = unit.get("unit_kind", "decision")
-        if unit_kind != "decision":
-            continue
-        reference = unit.get("index_reference_printed_page")
-        start = unit.get("candidate_start_printed_page")
-        status = unit.get("status")
-        if not isinstance(reference, int):
-            continue
-        typed = _typed_evidence(unit.get("boundary_evidence_pages"))
-        evidence_printed, evidence_views = typed if typed is not None else ([], [])
-        errors = _trace_support_errors(
-            evidence_printed=evidence_printed,
-            evidence_views=evidence_views,
-            resolved_pages=resolved_pages,
-        )
-        if status != "candidate":
-            errors.append("only concrete candidate decision work units provide semantic confirmation")
-        if not isinstance(start, int):
-            errors.append("candidate decision work unit requires a printed start page")
-        elif start != reference:
-            errors.append(
-                "work unit start differs from index reference; use an index investigation to "
-                "explain and confirm the mismatch"
-            )
-        if reference not in evidence_printed:
-            errors.append("index reference was not cited in boundary evidence")
-        if isinstance(start, int) and start not in evidence_printed:
-            errors.append("candidate start was not cited in boundary evidence")
-        supported = not errors
-        if supported:
-            confirmed.add(reference)
-            starts.add(start)
-        normalized.append(
-            {
-                "work_unit_id": unit.get("work_unit_id"),
-                "unit_kind": unit_kind,
-                "status": status,
-                "index_reference_printed_page": reference,
-                "candidate_start_printed_page": start,
-                "evidence_printed_pages": evidence_printed,
-                "evidence_view_pages": evidence_views,
                 "trace_supported": supported,
                 "trace_support_errors": errors,
             }
@@ -350,14 +272,7 @@ def main() -> None:
     attempted = direct | ranges
     verified = set(resolved)
     verified_gold = verified & gold_pages
-    investigation_confirmed, investigation_starts, investigations = _semantic_confirmations(
-        result, resolved
-    )
-    work_unit_confirmed, work_unit_starts, work_units = _work_unit_semantic_confirmations(
-        result, resolved
-    )
-    confirmed = investigation_confirmed | work_unit_confirmed
-    starts = investigation_starts | work_unit_starts
+    confirmed, starts, investigations = _semantic_confirmations(result, resolved)
     confirmed_gold = confirmed & gold_pages
     hypothesis = result.get("hypothesis")
     has_index = isinstance(hypothesis, dict) and hypothesis.get("has_index") is True
@@ -370,18 +285,22 @@ def main() -> None:
         raise ValueError("minimum_distinct_verified_index_references must be positive")
     require_index = policy.get("require_index_detected") is True
     navigation_passed = len(verified_gold) >= minimum_verified and (has_index or not require_index)
-    semantic_available = bool(investigations or work_units)
+    semantic_available = bool(investigations)
     semantic_passed = (
         semantic_available
         and len(confirmed_gold) >= minimum_verified
         and (has_index or not require_index)
     )
     semantic_status = (
-        "PASS" if semantic_passed else "FAIL" if semantic_available else "NOT_AVAILABLE"
+        "PASS"
+        if semantic_passed
+        else "FAIL"
+        if semantic_available
+        else "NOT_AVAILABLE"
     )
 
     payload = {
-        "schema_version": 4,
+        "schema_version": 3,
         "dataset_id": gold.get("dataset_id"),
         "source_sha256": observed_sha256,
         "status": "PASS" if navigation_passed else "FAIL",
@@ -406,19 +325,14 @@ def main() -> None:
             "confirmed_gold_references": sorted(confirmed_gold),
             "confirmed_gold_reference_count": len(confirmed_gold),
             "observed_decision_start_printed_pages": sorted(starts),
-            "investigation_confirmations": sorted(investigation_confirmed),
-            "work_unit_confirmations": sorted(work_unit_confirmed),
             "investigations": investigations,
-            "work_units": work_units,
         },
         "policy": {
             "minimum_distinct_verified_index_references": minimum_verified,
             "require_index_detected": require_index,
             "note": (
                 "Navigation is scored from the durable current structure trace when available; "
-                "semantic confirmation accepts trace-backed index investigations and concrete "
-                "decision work-unit boundaries. Mismatched index/start pages still require an "
-                "explicit index investigation rather than inference from routing metadata."
+                "semantic confirmation requires typed evidence that is trace-backed."
             ),
         },
     }
