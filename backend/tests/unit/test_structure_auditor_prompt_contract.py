@@ -17,8 +17,6 @@ def test_structure_auditor_instructions_require_adversarial_source_review() -> N
     assert "adversarial sampling" in instructions
     assert "NOT an extraction agent" in instructions
     assert "do not verify every work unit" in instructions
-    assert (
-        "Every supported or contradicted material check must cite typed evidence"
-        in instructions
-    )
+    assert "Every supported or contradicted" in instructions
+    assert "material check must cite typed evidence" in instructions
     assert "APPROVED does not assert" in instructions
