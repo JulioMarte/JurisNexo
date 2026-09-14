@@ -8,7 +8,10 @@ from agents.exceptions import ModelBehaviorError
 from pydantic import ValidationError
 
 from jurisnexo.ingestion.document_discovery import DecisionWorkUnit
-from jurisnexo.ingestion.sdk_structure_agent import _structure_finalization_error_feedback
+from jurisnexo.ingestion.sdk_structure_agent import (
+    _scope_reminder,
+    _structure_finalization_error_feedback,
+)
 from jurisnexo.ingestion.sdk_structure_auditor import _audit_finalization_error_feedback
 from jurisnexo.ingestion.structure_trace import StructureToolTraceRecorder
 
@@ -55,6 +58,24 @@ def test_audit_finalization_error_returns_repair_feedback() -> None:
     assert "FINALIZATION_REJECTED" in feedback
     assert "DO NOT repeat page reads or searches" in feedback
     assert "Repair attempt 1 of 3" in feedback
+
+
+def test_scope_drift_reminder_warns_without_blocking_search() -> None:
+    context = cast(
+        Any,
+        SimpleNamespace(
+            search_queries=set(),
+            scope_reminder_after_unique_searches=2,
+        ),
+    )
+
+    assert _scope_reminder(context, "SUMARIO", "first result") == "first result"
+    assert _scope_reminder(context, "Panteleón", "second result") == "second result"
+    reminded = _scope_reminder(context, "Arias Lora", "third result")
+
+    assert reminded.startswith("third result")
+    assert "SCOPE_REMINDER" in reminded
+    assert "Continue searching only when" in reminded
 
 
 def test_decision_work_unit_allows_index_only_handoff_without_inventing_boundary() -> None:
