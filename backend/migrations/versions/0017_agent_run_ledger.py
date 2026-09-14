@@ -1,4 +1,4 @@
-"""Persist durable agent runs, events, and structure-pipeline state.
+"""Persist durable agent runs, events, structure state, and model usage.
 
 Revision ID: 0017_agent_run_ledger
 Revises: 0016_source_observation_idempotency
@@ -29,6 +29,15 @@ def upgrade() -> None:
             prompt_sha256 text,
             tool_budget jsonb NOT NULL DEFAULT '{}'::jsonb,
             usage jsonb NOT NULL DEFAULT '{}'::jsonb,
+            request_count integer NOT NULL DEFAULT 0,
+            input_tokens bigint NOT NULL DEFAULT 0,
+            output_tokens bigint NOT NULL DEFAULT 0,
+            total_tokens bigint NOT NULL DEFAULT 0,
+            input_cache_hit_tokens bigint NOT NULL DEFAULT 0,
+            input_cache_miss_tokens bigint NOT NULL DEFAULT 0,
+            reasoning_tokens bigint NOT NULL DEFAULT 0,
+            estimated_cost_usd numeric(20, 10),
+            next_event_sequence integer NOT NULL DEFAULT 1,
             trace_object_ref text,
             result_object_ref text,
             started_at timestamptz,
@@ -62,6 +71,14 @@ def upgrade() -> None:
             CONSTRAINT agent_runs_round_check CHECK (round_number >= 0),
             CONSTRAINT agent_runs_prompt_sha256_check
                 CHECK (prompt_sha256 IS NULL OR prompt_sha256 ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT agent_runs_usage_nonnegative_check CHECK (
+                request_count >= 0 AND input_tokens >= 0 AND output_tokens >= 0
+                AND total_tokens >= 0 AND input_cache_hit_tokens >= 0
+                AND input_cache_miss_tokens >= 0 AND reasoning_tokens >= 0
+                AND next_event_sequence > 0
+            ),
+            CONSTRAINT agent_runs_cost_nonnegative_check
+                CHECK (estimated_cost_usd IS NULL OR estimated_cost_usd >= 0),
             CONSTRAINT agent_runs_finished_after_started_check
                 CHECK (finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at),
             CONSTRAINT agent_runs_ingestion_artifact_id_key
@@ -111,6 +128,11 @@ def upgrade() -> None:
         "CREATE INDEX agent_run_events_run_occurred_idx "
         "ON corpus.agent_run_events (run_id, sequence, occurred_at)"
     )
+    op.execute(
+        "CREATE INDEX agent_run_events_model_turn_idx "
+        "ON corpus.agent_run_events (run_id, event_type, sequence) "
+        "WHERE event_type = 'model_turn'"
+    )
 
     op.execute(
         """
@@ -123,6 +145,10 @@ def upgrade() -> None:
             round_number smallint NOT NULL DEFAULT 0,
             structure_run_id uuid,
             audit_run_id uuid,
+            usage jsonb NOT NULL DEFAULT '{}'::jsonb,
+            request_count integer NOT NULL DEFAULT 0,
+            total_tokens bigint NOT NULL DEFAULT 0,
+            estimated_cost_usd numeric(20, 10),
             page_map_object_ref text,
             structure_result_object_ref text,
             audit_result_object_ref text,
@@ -155,6 +181,10 @@ def upgrade() -> None:
                     'cancelled'
                 )),
             CONSTRAINT structure_pipeline_runs_round_check CHECK (round_number >= 0),
+            CONSTRAINT structure_pipeline_runs_usage_nonnegative_check
+                CHECK (request_count >= 0 AND total_tokens >= 0),
+            CONSTRAINT structure_pipeline_runs_cost_nonnegative_check
+                CHECK (estimated_cost_usd IS NULL OR estimated_cost_usd >= 0),
             CONSTRAINT structure_pipeline_runs_finished_after_started_check
                 CHECK (finished_at IS NULL OR finished_at >= started_at)
         )
@@ -172,19 +202,19 @@ def upgrade() -> None:
     op.execute(
         """
         COMMENT ON TABLE corpus.agent_runs IS
-        'Durable execution ledger for LLM agent stages. Heavy traces/results may live in object storage and are referenced from this table.'
+        'Durable execution ledger for LLM agent stages, including queryable token and cost totals. Heavy traces/results may live in object storage.'
         """
     )
     op.execute(
         """
         COMMENT ON TABLE corpus.agent_run_events IS
-        'Append-only observable event journal for an agent run. It stores evidence/tool metadata, not private chain-of-thought.'
+        'Append-only observable journal. model_turn events contain token/cost telemetry; tool events contain evidence metadata. Private chain-of-thought is never stored.'
         """
     )
     op.execute(
         """
         COMMENT ON TABLE corpus.structure_pipeline_runs IS
-        'Canonical resumable state for structure discovery, adversarial audit, and bounded reinvestigation before extraction is allowed.'
+        'Canonical resumable state and cumulative session usage for structure discovery, adversarial audit, and bounded reinvestigation.'
         """
     )
 
