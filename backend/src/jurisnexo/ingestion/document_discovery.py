@@ -372,11 +372,12 @@ certainty.
 
 Capture durable document-level knowledge in structure_findings, not only free-text anomalies. Use
 findings for source completeness, pagination transforms or offsets, scan composition, unresolved or
-missing pages, duplicate scans, index anomalies, boundary patterns, OCR quality, and source identity.
-Each finding needs a stable finding_id, an operational impact for downstream agents, confidence,
-and typed evidence when page-backed. Put machine-readable facts such as a pagination offset in
-attributes (for example key='view_to_printed_offset', value='177'). Use downstream_instructions for
-cautions or routing guidance that later per-decision agents should inherit.
+missing pages, duplicate scans, index anomalies, boundary patterns, OCR quality, and source
+identity. Each finding needs a stable finding_id, an operational impact for downstream agents,
+confidence, and typed evidence when page-backed. Put machine-readable facts such as a pagination
+offset in attributes (for example key='view_to_printed_offset', value='177'). Use
+downstream_instructions for cautions or routing guidance that later per-decision agents should
+inherit.
 
 For index-reference investigations, evidence_pages is the canonical evidence contract. Each
 entry must bind a document-view page to its printed/editorial page when that printed identity is
