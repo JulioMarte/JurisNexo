@@ -15,7 +15,6 @@ from agents import (
     Runner,
 )
 from agents.agent import ToolsToFinalOutputResult
-from agents.decorators import tool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.models.interface import ModelProvider
 from agents.tool_context import ToolContext
