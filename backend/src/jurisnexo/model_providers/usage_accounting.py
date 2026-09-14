@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time
 from decimal import Decimal
@@ -49,10 +51,79 @@ class PricingSnapshot:
         }
 
 
-def _rate(tokens: int, seconds: float) -> float | None:
-    if seconds <= 0:
-        return None
-    return tokens / seconds
+@dataclass(frozen=True, slots=True)
+class ContextComposition:
+    """Observable request composition in characters, not invented token attribution."""
+
+    system_instruction_chars: int
+    input_chars: int
+    message_chars: int
+    tool_result_chars: int
+    reasoning_replay_chars: int
+    tool_call_chars: int
+    other_input_chars: int
+    tool_schema_chars: int
+    input_item_count: int
+
+    @property
+    def approximate_total_context_chars(self) -> int:
+        return self.system_instruction_chars + self.input_chars + self.tool_schema_chars
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "system_instruction_chars": self.system_instruction_chars,
+            "input_chars": self.input_chars,
+            "message_chars": self.message_chars,
+            "tool_result_chars": self.tool_result_chars,
+            "reasoning_replay_chars": self.reasoning_replay_chars,
+            "tool_call_chars": self.tool_call_chars,
+            "other_input_chars": self.other_input_chars,
+            "tool_schema_chars": self.tool_schema_chars,
+            "input_item_count": self.input_item_count,
+            "approximate_total_context_chars": self.approximate_total_context_chars,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderObservabilityEvent:
+    """Full provider-exposed reasoning plus request-shape metadata for debugging."""
+
+    session_turn: int
+    run_turn: int
+    role: str
+    round_number: int
+    request_started_at: datetime
+    response_completed_at: datetime
+    provider: str
+    model: str
+    reasoning_text: str
+    reasoning_sha256: str | None
+    reasoning_char_count: int
+    context_composition: ContextComposition
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    reasoning_tokens: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "session_turn": self.session_turn,
+            "run_turn": self.run_turn,
+            "role": self.role,
+            "round_number": self.round_number,
+            "request_started_at": self.request_started_at.isoformat(),
+            "response_completed_at": self.response_completed_at.isoformat(),
+            "provider": self.provider,
+            "model": self.model,
+            "reasoning_text": self.reasoning_text,
+            "reasoning_sha256": self.reasoning_sha256,
+            "reasoning_char_count": self.reasoning_char_count,
+            "context_composition": self.context_composition.as_dict(),
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +134,7 @@ class ModelTurnUsage:
     round_number: int
     request_started_at: datetime
     response_completed_at: datetime
+    request_latency_seconds: float
     provider: str
     model: str
     input_tokens: int
@@ -73,17 +145,16 @@ class ModelTurnUsage:
     reasoning_tokens: int
     estimated_cost_usd: Decimal | None
     session_total_tokens_after_turn: int
+    session_model_time_seconds_after_turn: float
+    session_output_tokens_per_second_after_turn: float | None
+    session_total_tokens_per_second_after_turn: float | None
     session_estimated_cost_usd_after_turn: Decimal | None
     pricing: PricingSnapshot | None
     response_id: str | None
     request_id: str | None
-    session_model_time_seconds_after_turn: float = 0.0
-    session_output_tokens_per_second_after_turn: float | None = None
-    session_total_tokens_per_second_after_turn: float | None = None
-
-    @property
-    def request_latency_seconds(self) -> float:
-        return max((self.response_completed_at - self.request_started_at).total_seconds(), 0.0)
+    provider_reasoning_char_count: int = 0
+    provider_reasoning_sha256: str | None = None
+    context_composition: ContextComposition | None = None
 
     @property
     def output_tokens_per_second(self) -> float | None:
@@ -131,6 +202,13 @@ class ModelTurnUsage:
             "pricing": self.pricing.as_dict() if self.pricing is not None else None,
             "response_id": self.response_id,
             "request_id": self.request_id,
+            "provider_reasoning_char_count": self.provider_reasoning_char_count,
+            "provider_reasoning_sha256": self.provider_reasoning_sha256,
+            "context_composition": (
+                self.context_composition.as_dict()
+                if self.context_composition is not None
+                else None
+            ),
         }
 
 
@@ -171,12 +249,7 @@ class UnsupportedPricingMode(ValueError):
 
 
 class DeepSeekPricingCatalog:
-    """Versioned DeepSeek V4 public API pricing effective 2026-08-16 16:00 UTC.
-
-    DeepSeek currently documents realtime peak/off-peak prices. It does not publish
-    a discounted Batch API tariff, so batch accounting fails closed instead of
-    inventing a discount.
-    """
+    """Versioned DeepSeek V4 public API pricing effective 2026-08-16 16:00 UTC."""
 
     source = "https://api-docs.deepseek.com/quick_start/pricing/"
     effective_from_utc = datetime(2026, 8, 16, 16, 0, tzinfo=UTC)
@@ -269,7 +342,118 @@ def _normalized_reasoning_tokens(response: ModelResponse) -> int:
     return max(response.usage.output_tokens_details.reasoning_tokens, 0)
 
 
+def _rate(tokens: int, seconds: float) -> float | None:
+    if seconds <= 0:
+        return None
+    return tokens / seconds
+
+
+def _json_char_count(value: object) -> int:
+    if isinstance(value, str):
+        return len(value)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        value = model_dump(mode="json", exclude_none=False)
+    try:
+        return len(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        return len(str(value))
+
+
+def _item_type(value: object) -> str:
+    if isinstance(value, dict):
+        item_type = value.get("type")
+    else:
+        item_type = getattr(value, "type", None)
+    return item_type if isinstance(item_type, str) else ""
+
+
+def summarize_request_context(
+    *,
+    system_instructions: str | None,
+    input_value: str | list[object],
+    tools: list[object],
+) -> ContextComposition:
+    """Describe observable request shape without pretending chars are provider token counts."""
+
+    system_chars = len(system_instructions or "")
+    if isinstance(input_value, str):
+        items: list[object] = [input_value]
+    else:
+        items = list(input_value)
+
+    message_chars = 0
+    tool_result_chars = 0
+    reasoning_replay_chars = 0
+    tool_call_chars = 0
+    other_chars = 0
+    input_chars = 0
+    for item in items:
+        chars = _json_char_count(item)
+        input_chars += chars
+        item_type = _item_type(item)
+        if item_type == "reasoning":
+            reasoning_replay_chars += chars
+        elif item_type.endswith("_output") or item_type == "function_call_output":
+            tool_result_chars += chars
+        elif item_type in {"function_call", "custom_tool_call", "computer_call"}:
+            tool_call_chars += chars
+        elif item_type in {"message", "easy_input_message"} or isinstance(item, str):
+            message_chars += chars
+        else:
+            other_chars += chars
+
+    tool_schema_chars = sum(_json_char_count(tool) for tool in tools)
+    return ContextComposition(
+        system_instruction_chars=system_chars,
+        input_chars=input_chars,
+        message_chars=message_chars,
+        tool_result_chars=tool_result_chars,
+        reasoning_replay_chars=reasoning_replay_chars,
+        tool_call_chars=tool_call_chars,
+        other_input_chars=other_chars,
+        tool_schema_chars=tool_schema_chars,
+        input_item_count=len(items),
+    )
+
+
+def _provider_reasoning_text(response: ModelResponse) -> str:
+    parts: list[str] = []
+    for item in response.output:
+        if _item_type(item) != "reasoning":
+            continue
+        summary = getattr(item, "summary", None)
+        if summary is None and isinstance(item, dict):
+            summary = item.get("summary")
+        if isinstance(summary, list):
+            for summary_item in summary:
+                text = (
+                    summary_item.get("text")
+                    if isinstance(summary_item, dict)
+                    else getattr(summary_item, "text", None)
+                )
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        content = getattr(item, "content", None)
+        if content is None and isinstance(item, dict):
+            content = item.get("content")
+        if isinstance(content, list):
+            for content_item in content:
+                text = (
+                    content_item.get("text")
+                    if isinstance(content_item, dict)
+                    else getattr(content_item, "text", None)
+                )
+                if isinstance(text, str) and text and text not in parts:
+                    parts.append(text)
+    return "\n".join(parts)
+
+
 def _empty_turns() -> list[ModelTurnUsage]:
+    return []
+
+
+def _empty_observability_events() -> list[ProviderObservabilityEvent]:
     return []
 
 
@@ -279,6 +463,9 @@ class ModelUsageTracker:
     model: str
     execution_mode: ExecutionMode = "realtime"
     turns: list[ModelTurnUsage] = field(default_factory=_empty_turns)
+    observability_events: list[ProviderObservabilityEvent] = field(
+        default_factory=_empty_observability_events
+    )
     _pricing: DeepSeekPricingCatalog = field(default_factory=DeepSeekPricingCatalog, repr=False)
 
     def record_response(
@@ -289,6 +476,7 @@ class ModelUsageTracker:
         run_turn: int,
         request_started_at: datetime,
         response: ModelResponse,
+        context_composition: ContextComposition | None = None,
     ) -> ModelTurnUsage:
         response_completed_at = datetime.now(UTC)
         request_latency_seconds = max(
@@ -306,6 +494,12 @@ class ModelUsageTracker:
         if cache_miss is None:
             cache_miss = max(input_tokens - cache_hit, 0)
         reasoning_tokens = _normalized_reasoning_tokens(response)
+        reasoning_text = _provider_reasoning_text(response)
+        reasoning_sha256 = (
+            hashlib.sha256(reasoning_text.encode("utf-8")).hexdigest()
+            if reasoning_text
+            else None
+        )
 
         pricing: PricingSnapshot | None = None
         estimated_cost: Decimal | None = None
@@ -334,13 +528,15 @@ class ModelUsageTracker:
         else:
             session_cost = None
 
+        session_turn = len(self.turns) + 1
         turn = ModelTurnUsage(
-            session_turn=len(self.turns) + 1,
+            session_turn=session_turn,
             run_turn=run_turn,
             role=role,
             round_number=round_number,
             request_started_at=request_started_at,
             response_completed_at=response_completed_at,
+            request_latency_seconds=request_latency_seconds,
             provider=self.provider,
             model=self.model,
             input_tokens=input_tokens,
@@ -351,10 +547,6 @@ class ModelUsageTracker:
             reasoning_tokens=reasoning_tokens,
             estimated_cost_usd=estimated_cost,
             session_total_tokens_after_turn=prior_total_tokens + total_tokens,
-            session_estimated_cost_usd_after_turn=session_cost,
-            pricing=pricing,
-            response_id=response.response_id,
-            request_id=response.request_id,
             session_model_time_seconds_after_turn=session_model_time,
             session_output_tokens_per_second_after_turn=_rate(
                 prior_output_tokens + output_tokens,
@@ -364,8 +556,36 @@ class ModelUsageTracker:
                 prior_total_tokens + total_tokens,
                 session_model_time,
             ),
+            session_estimated_cost_usd_after_turn=session_cost,
+            pricing=pricing,
+            response_id=response.response_id,
+            request_id=response.request_id,
+            provider_reasoning_char_count=len(reasoning_text),
+            provider_reasoning_sha256=reasoning_sha256,
+            context_composition=context_composition,
         )
         self.turns.append(turn)
+        if context_composition is not None:
+            self.observability_events.append(
+                ProviderObservabilityEvent(
+                    session_turn=session_turn,
+                    run_turn=run_turn,
+                    role=role,
+                    round_number=round_number,
+                    request_started_at=request_started_at,
+                    response_completed_at=response_completed_at,
+                    provider=self.provider,
+                    model=self.model,
+                    reasoning_text=reasoning_text,
+                    reasoning_sha256=reasoning_sha256,
+                    reasoning_char_count=len(reasoning_text),
+                    context_composition=context_composition,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                )
+            )
         return turn
 
     def summary(self, turns: tuple[ModelTurnUsage, ...] | None = None) -> ModelUsageSummary:
