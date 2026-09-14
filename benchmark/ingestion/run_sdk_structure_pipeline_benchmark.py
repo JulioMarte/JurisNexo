@@ -33,19 +33,19 @@ from jurisnexo.model_providers.agents_sdk_compatible import (
     CompatibleProviderName,
     build_compatible_model_provider,
 )
+from jurisnexo.model_providers.usage_accounting import ModelTurnUsage, ModelUsageTracker
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Run the production Structure Agent and adversarial auditor over one real artifact"
-        )
+        description="Run Structure Agent and adversarial auditor over one real artifact"
     )
     parser.add_argument("--bbox", type=Path, required=True)
     parser.add_argument("--pdfimages-list", type=Path, required=True)
     parser.add_argument("--structure-output", type=Path, required=True)
     parser.add_argument("--audit-output", type=Path, required=True)
     parser.add_argument("--trace-output", type=Path, required=True)
+    parser.add_argument("--usage-output", type=Path)
     parser.add_argument("--artifact-label", required=True)
     parser.add_argument("--provider", choices=("gemini", "deepseek"), required=True)
     parser.add_argument("--model", required=True)
@@ -104,43 +104,64 @@ def _journal_path(args: argparse.Namespace) -> Path:
     return args.trace_output.with_suffix(".jsonl")
 
 
-def _write_budget_failure(
+def _usage_path(args: argparse.Namespace) -> Path:
+    return args.usage_output or args.trace_output.with_name("model-usage.json")
+
+
+def _usage_payload(tracker: ModelUsageTracker) -> dict[str, object]:
+    return {
+        "provider": tracker.provider,
+        "model": tracker.model,
+        "execution_mode": tracker.execution_mode,
+        "summary": tracker.summary().as_dict(),
+        "turns": [turn.as_dict() for turn in tracker.turns],
+    }
+
+
+def _stage_usage(
+    tracker: ModelUsageTracker,
+    *,
+    round_number: int,
+    role: str,
+) -> dict[str, object]:
+    turns = tuple(
+        turn
+        for turn in tracker.turns
+        if turn.round_number == round_number and turn.role == role
+    )
+    return {
+        "summary": tracker.summary(turns).as_dict(),
+        "turns": [turn.as_dict() for turn in turns],
+    }
+
+
+def _write_failure(
     *,
     args: argparse.Namespace,
-    exc: StructureInvestigationBudgetExceeded,
+    exc: StructureInvestigationBudgetExceeded | StructureInvestigationFailed,
     profile: ArtifactInspectionProfile,
+    tracker: ModelUsageTracker,
 ) -> None:
-    payload = {
-        "status": "BUDGET_EXHAUSTED",
+    budget = isinstance(exc, StructureInvestigationBudgetExceeded)
+    payload: dict[str, object] = {
+        "status": "BUDGET_EXHAUSTED" if budget else "RUNTIME_FAILURE",
         "stage": exc.stage,
-        "max_turns": exc.max_turns,
         "tool_call_count": len(exc.tool_trace),
         "artifact_profile": profile.model_dump(mode="json"),
         "tool_trace": _serialize_trace(exc.tool_trace),
         "journal_path": str(_journal_path(args)),
+        "usage": tracker.summary().as_dict(),
+        "usage_path": str(_usage_path(args)),
     }
+    if budget:
+        payload["max_turns"] = exc.max_turns
+    else:
+        assert isinstance(exc, StructureInvestigationFailed)
+        payload["error_type"] = exc.error_type
+        payload["error_message"] = exc.error_message
     _write_json(args.trace_output, payload)
     _write_json(args.trace_output.with_name("structure-pipeline-error.json"), payload)
-
-
-def _write_runtime_failure(
-    *,
-    args: argparse.Namespace,
-    exc: StructureInvestigationFailed,
-    profile: ArtifactInspectionProfile,
-) -> None:
-    payload = {
-        "status": "RUNTIME_FAILURE",
-        "stage": exc.stage,
-        "error_type": exc.error_type,
-        "error_message": exc.error_message,
-        "tool_call_count": len(exc.tool_trace),
-        "artifact_profile": profile.model_dump(mode="json"),
-        "tool_trace": _serialize_trace(exc.tool_trace),
-        "journal_path": str(_journal_path(args)),
-    }
-    _write_json(args.trace_output, payload)
-    _write_json(args.trace_output.with_name("structure-pipeline-error.json"), payload)
+    _write_json(_usage_path(args), _usage_payload(tracker))
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -149,6 +170,7 @@ async def _run(args: argparse.Namespace) -> None:
         provider=provider_name,
         api_key=_api_key(provider_name),
     )
+    tracker = ModelUsageTracker(provider=provider_name, model=args.model)
     environment, physical_pages, document_view = _materialize_environment(
         bbox=args.bbox,
         minimum_region_characters=args.minimum_region_characters,
@@ -176,17 +198,20 @@ async def _run(args: argparse.Namespace) -> None:
             search_max_hits=args.search_max_hits,
             artifact_profile=profile,
             model_provider=provider,
+            usage_tracker=tracker,
             trace_journal_path=journal_path,
         )
-    except StructureInvestigationBudgetExceeded as exc:
-        _write_budget_failure(args=args, exc=exc, profile=profile)
-        raise
-    except StructureInvestigationFailed as exc:
-        _write_runtime_failure(args=args, exc=exc, profile=profile)
+    except (StructureInvestigationBudgetExceeded, StructureInvestigationFailed) as exc:
+        _write_failure(args=args, exc=exc, profile=profile, tracker=tracker)
         raise
 
+    _write_json(_usage_path(args), _usage_payload(tracker))
     structure = pipeline.structure
     audit = pipeline.audit
+    final_round = pipeline.rounds[-1]
+    final_structure_role = (
+        "structure_agent" if final_round.round_number == 0 else "structure_reinvestigation"
+    )
     structure_payload = {
         "provider": provider_name,
         "model": args.model,
@@ -200,7 +225,12 @@ async def _run(args: argparse.Namespace) -> None:
         "pipeline_round_count": len(pipeline.rounds),
         "extraction_allowed": pipeline.extraction_allowed,
         "reinvestigation_exhausted": pipeline.exhausted_reinvestigation,
-        "usage": {"total_tokens": structure.usage_total_tokens},
+        "usage": _stage_usage(
+            tracker,
+            round_number=final_round.round_number,
+            role=final_structure_role,
+        ),
+        "session_usage": tracker.summary().as_dict(),
         "last_agent_name": structure.last_agent_name,
         "tool_call_count": len(structure.tool_trace),
         "hypothesis": structure.hypothesis.model_dump(mode="json"),
@@ -212,35 +242,61 @@ async def _run(args: argparse.Namespace) -> None:
         "model": args.model,
         "pipeline_round_count": len(pipeline.rounds),
         "extraction_allowed": pipeline.extraction_allowed,
-        "usage": {"total_tokens": audit.usage_total_tokens},
+        "usage": _stage_usage(
+            tracker,
+            round_number=final_round.round_number,
+            role="structure_auditor",
+        ),
+        "session_usage": tracker.summary().as_dict(),
         "last_agent_name": audit.last_agent_name,
         "tool_call_count": len(audit.tool_trace),
         "audit": audit.audit.model_dump(mode="json"),
     }
     _write_json(args.audit_output, audit_payload)
+
+    rounds_payload: list[dict[str, object]] = []
+    for round_result in pipeline.rounds:
+        structure_role = (
+            "structure_agent"
+            if round_result.round_number == 0
+            else "structure_reinvestigation"
+        )
+        rounds_payload.append(
+            {
+                "round_number": round_result.round_number,
+                "structure_agent": {
+                    "usage": _stage_usage(
+                        tracker,
+                        round_number=round_result.round_number,
+                        role=structure_role,
+                    ),
+                    "tool_call_count": len(round_result.structure.tool_trace),
+                    "tool_trace": _serialize_trace(round_result.structure.tool_trace),
+                },
+                "structure_auditor": {
+                    "state": round_result.audit.audit.state,
+                    "usage": _stage_usage(
+                        tracker,
+                        round_number=round_result.round_number,
+                        role="structure_auditor",
+                    ),
+                    "tool_call_count": len(round_result.audit.tool_trace),
+                    "tool_trace": _serialize_trace(round_result.audit.tool_trace),
+                },
+            }
+        )
+
     _write_json(
         args.trace_output,
         {
             "status": "COMPLETE",
             "artifact_profile": profile.model_dump(mode="json"),
             "journal_path": str(journal_path),
+            "usage_path": str(_usage_path(args)),
+            "session_usage": tracker.summary().as_dict(),
             "pipeline_round_count": len(pipeline.rounds),
             "extraction_allowed": pipeline.extraction_allowed,
-            "rounds": [
-                {
-                    "round_number": round_result.round_number,
-                    "structure_agent": {
-                        "tool_call_count": len(round_result.structure.tool_trace),
-                        "tool_trace": _serialize_trace(round_result.structure.tool_trace),
-                    },
-                    "structure_auditor": {
-                        "state": round_result.audit.audit.state,
-                        "tool_call_count": len(round_result.audit.tool_trace),
-                        "tool_trace": _serialize_trace(round_result.audit.tool_trace),
-                    },
-                }
-                for round_result in pipeline.rounds
-            ],
+            "rounds": rounds_payload,
         },
     )
 
