@@ -136,8 +136,7 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
             "boto3 is required by S3-enabled jobs; install the storage runtime dependency"
         ) from exc
 
-    config_type = getattr(botocore_config, "Config")
-    sdk_config = config_type(
+    sdk_config = botocore_config.Config(
         signature_version="s3v4",
         connect_timeout=settings.connect_timeout_seconds,
         read_timeout=settings.read_timeout_seconds,
