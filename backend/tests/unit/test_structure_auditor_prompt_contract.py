@@ -14,9 +14,11 @@ def test_structure_auditor_instructions_require_adversarial_source_review() -> N
     assert isinstance(instructions, str)
     assert "try to falsify" in instructions
     assert "Use the same read-only workspace tools" in instructions
-    assert "adversarial sampling" in instructions
-    assert "NOT an extraction agent" in instructions
-    assert "do not verify every work unit" in instructions
-    assert "Every supported or contradicted" in instructions
-    assert "material check must cite typed evidence" in instructions
-    assert "APPROVED does not assert" in instructions
+    assert "Do not replay every prior call" in instructions or "Do not re-read every unchanged" in instructions
+    assert "not a legal extraction agent" in instructions
+    assert "minimum independent evidence" in instructions
+    assert "Tool-call volume is not confidence" in instructions
+    assert "carried_forward" in instructions
+    assert "runtime marks that finding_id as eligible" in instructions
+    assert "small independent regression sample" in instructions
+    assert "APPROVED unlocks" in instructions
