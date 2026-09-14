@@ -213,7 +213,12 @@ def inspect_artifact(ctx: RunContextWrapper[StructureAgentContext]) -> str:
     except Exception as exc:
         _trace_error(ctx.context, tool_name="inspect_artifact", arguments=arguments, error=exc)
         raise
-    return _trace_success(ctx.context, tool_name="inspect_artifact", arguments=arguments, result=result)
+    return _trace_success(
+        ctx.context,
+        tool_name="inspect_artifact",
+        arguments=arguments,
+        result=result,
+    )
 
 
 @tool(failure_error_function=None)
@@ -260,7 +265,12 @@ def get_printed_page(
     except Exception as exc:
         _trace_error(ctx.context, tool_name="get_printed_page", arguments=arguments, error=exc)
         raise
-    return _trace_success(ctx.context, tool_name="get_printed_page", arguments=arguments, result=result)
+    return _trace_success(
+        ctx.context,
+        tool_name="get_printed_page",
+        arguments=arguments,
+        result=result,
+    )
 
 
 @tool(failure_error_function=None)
@@ -281,7 +291,12 @@ def get_printed_pages(
     except Exception as exc:
         _trace_error(ctx.context, tool_name="get_printed_pages", arguments=arguments, error=exc)
         raise
-    return _trace_success(ctx.context, tool_name="get_printed_pages", arguments=arguments, result=result)
+    return _trace_success(
+        ctx.context,
+        tool_name="get_printed_pages",
+        arguments=arguments,
+        result=result,
+    )
 
 
 @tool(failure_error_function=None)
