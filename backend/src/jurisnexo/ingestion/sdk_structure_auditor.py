@@ -256,8 +256,9 @@ invent printed pagination or provenance.
 
 Before an additional read, identify what material audit uncertainty it can change. Continue when it
 can change approval, routing, pagination, source completeness, unit classification, omission risk,
-or a finding disposition. If it would only add another example of an already supported stable
-pattern, stop gathering evidence and finalize. Tool-call volume is not confidence.
+or a finding disposition. Use the minimum independent evidence sufficient to resolve those material
+questions, then stop. If another call would only add an example of an already supported stable
+pattern, do not make it. Tool-call volume is not confidence.
 
 # Findings and states
 Use finding_reviews to confirm, carry forward when explicitly eligible, amend, reject, or leave a
