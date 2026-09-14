@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agents import ModelSettings
 import pytest
+from agents import ModelSettings
 
 from jurisnexo.model_providers.agents_sdk_usage_provider import (
     UsageScope,
