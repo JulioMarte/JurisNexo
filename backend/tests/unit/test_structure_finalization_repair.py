@@ -46,6 +46,15 @@ def _fake_wrapper(*, max_attempts: int = 3) -> Any:
     return cast(Any, SimpleNamespace(context=context))
 
 
+def _supported_check() -> StructureAuditCheck:
+    return StructureAuditCheck(
+        kind="artifact_rendering_mode",
+        status="supported",
+        target="scan",
+        explanation="Scanned artifact.",
+    )
+
+
 def test_structure_finalization_error_returns_model_visible_repair_feedback() -> None:
     wrapper = _fake_wrapper()
     error = ModelBehaviorError("Invalid JSON input for tool finalize_structure_hypothesis")
@@ -120,7 +129,7 @@ def test_unexpected_tool_errors_still_fail_loudly() -> None:
         _document_tool_error_feedback(wrapper, RuntimeError("programming defect"))
 
 
-def test_scope_drift_reminder_warns_without_blocking_search() -> None:
+def test_evidence_sufficiency_reminder_warns_without_blocking_search() -> None:
     context = cast(
         Any,
         SimpleNamespace(
@@ -134,8 +143,9 @@ def test_scope_drift_reminder_warns_without_blocking_search() -> None:
     reminded = _scope_reminder(context, "Arias Lora", "third result")
 
     assert reminded.startswith("third result")
-    assert "SCOPE_REMINDER" in reminded
-    assert "Continue searching only when" in reminded
+    assert "EVIDENCE_SUFFICIENCY_REMINDER" in reminded
+    assert "not a hard limit" in reminded
+    assert "material structural uncertainty" in reminded
 
 
 def test_decision_work_unit_allows_index_only_handoff_without_inventing_boundary() -> None:
@@ -150,6 +160,21 @@ def test_decision_work_unit_allows_index_only_handoff_without_inventing_boundary
 
     assert unit.candidate_start_view_page is None
     assert unit.index_reference_printed_page == 183
+    assert unit.unit_kind == "decision"
+    assert unit.extraction_eligible_kind is True
+
+
+def test_nondecision_indexed_unit_is_not_extraction_eligible() -> None:
+    unit = DecisionWorkUnit(
+        work_unit_id="admin-001",
+        unit_kind="administrative_section",
+        index_ordinal=2,
+        index_label="Labor de la Suprema Corte",
+        candidate_start_view_page=180,
+        confidence=0.9,
+    )
+
+    assert unit.extraction_eligible_kind is False
 
 
 def test_candidate_work_unit_requires_a_candidate_start_page() -> None:
@@ -201,14 +226,7 @@ def test_auditor_can_amend_finding_but_not_cleanly_approve_the_change() -> None:
     with pytest.raises(ValidationError, match="APPROVED"):
         StructureAuditResult(
             state="APPROVED",
-            checks=[
-                StructureAuditCheck(
-                    kind="artifact_rendering_mode",
-                    status="supported",
-                    target="scan",
-                    explanation="Scanned artifact.",
-                )
-            ],
+            checks=[_supported_check()],
             finding_reviews=[review],
             summary="Needs correction.",
         )
@@ -217,14 +235,7 @@ def test_auditor_can_amend_finding_but_not_cleanly_approve_the_change() -> None:
 def test_clean_approval_requires_every_candidate_finding_reviewed() -> None:
     audit = StructureAuditResult(
         state="APPROVED",
-        checks=[
-            StructureAuditCheck(
-                kind="artifact_rendering_mode",
-                status="supported",
-                target="scan",
-                explanation="Scanned artifact.",
-            )
-        ],
+        checks=[_supported_check()],
         finding_reviews=[
             StructureFindingReview(
                 finding_id="pagination-offset",
@@ -240,3 +251,30 @@ def test_clean_approval_requires_every_candidate_finding_reviewed() -> None:
             audit=audit,
             candidate_finding_ids=("pagination-offset", "source-completeness"),
         )
+
+
+def test_carried_forward_finding_requires_runtime_eligibility() -> None:
+    audit = StructureAuditResult(
+        state="APPROVED",
+        checks=[_supported_check()],
+        finding_reviews=[
+            StructureFindingReview(
+                finding_id="pagination-offset",
+                action="carried_forward",
+                explanation="Unchanged from the independently confirmed prior round.",
+            )
+        ],
+        summary="Stable finding carried into the focused re-audit.",
+    )
+
+    with pytest.raises(ValueError, match="not eligible"):
+        _validate_finding_reviews_against_candidate(
+            audit=audit,
+            candidate_finding_ids=("pagination-offset",),
+        )
+
+    _validate_finding_reviews_against_candidate(
+        audit=audit,
+        candidate_finding_ids=("pagination-offset",),
+        carry_forward_finding_ids=("pagination-offset",),
+    )
