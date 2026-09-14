@@ -1,14 +1,14 @@
 """Persist durable agent runs, events, structure state, and model usage.
 
 Revision ID: 0017_agent_run_ledger
-Revises: 0016_source_observation_idempotency
+Revises: 0016_source_obs_idempotency
 Create Date: 2026-09-14
 """
 
 from alembic import op
 
 revision = "0017_agent_run_ledger"
-down_revision = "0016_source_observation_idempotency"
+down_revision = "0016_source_obs_idempotency"
 branch_labels = None
 depends_on = None
 
