@@ -73,7 +73,13 @@ def test_batch_pricing_fails_closed_until_deepseek_publishes_a_tariff() -> None:
         )
 
 
-def _turn(*, session_turn: int, seconds: float, output_tokens: int, total_tokens: int) -> ModelTurnUsage:
+def _turn(
+    *,
+    session_turn: int,
+    seconds: float,
+    output_tokens: int,
+    total_tokens: int,
+) -> ModelTurnUsage:
     started = datetime(2026, 9, 14, 4, 30, tzinfo=UTC) + timedelta(seconds=session_turn * 20)
     return ModelTurnUsage(
         session_turn=session_turn,
