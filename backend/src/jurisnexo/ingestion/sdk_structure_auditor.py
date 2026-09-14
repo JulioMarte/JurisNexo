@@ -379,8 +379,13 @@ def _validate_page_evidence(
                 f"{item_label}: view page {evidence.view_page} resolves to printed page "
                 f"{page.printed_page_number}, not {evidence.printed_page}"
             )
-        if evidence.source_reference is not None and page.source_reference != evidence.source_reference:
-            raise DocumentEnvironmentError(f"{item_label}: source_reference does not match source view")
+        if (
+            evidence.source_reference is not None
+            and page.source_reference != evidence.source_reference
+        ):
+            raise DocumentEnvironmentError(
+                f"{item_label}: source_reference does not match source view"
+            )
 
 
 def validate_structure_audit_evidence(
