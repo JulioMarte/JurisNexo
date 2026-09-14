@@ -16,9 +16,12 @@ from jurisnexo.ingestion.document_discovery import (
 )
 from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
 from jurisnexo.ingestion.sdk_structure_agent import (
+    StructureAgentContext,
     _document_tool_error_feedback,
     _scope_reminder,
     _structure_finalization_error_feedback,
+    _structure_tool_use_behavior,
+    finalize_structure_hypothesis,
 )
 from jurisnexo.ingestion.sdk_structure_auditor import (
     StructureAuditCheck,
@@ -53,6 +56,23 @@ def test_structure_finalization_error_returns_model_visible_repair_feedback() ->
     assert "Repair attempt 1 of 3" in feedback
     assert len(wrapper.context.trace_recorder.events) == 1
     assert wrapper.context.trace_recorder.events[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_raw_malformed_structure_finalizer_json_is_repairable_before_sdk_parsing() -> None:
+    context = StructureAgentContext(environment=DocumentEnvironment(pages=("page one",)))
+    wrapper = cast(Any, SimpleNamespace(context=context))
+
+    feedback = await finalize_structure_hypothesis.on_invoke_tool(
+        wrapper,
+        '{"hypothesis":',
+    )
+
+    assert "FINALIZATION_REJECTED" in str(feedback)
+    assert context.finalized_output == []
+    behavior = _structure_tool_use_behavior(wrapper, [])
+    assert behavior.is_final_output is False
+    assert len(context.finalization_errors) == 1
 
 
 def test_structure_finalization_repair_is_bounded() -> None:

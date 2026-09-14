@@ -4,11 +4,21 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
-from agents.agent import StopAtTools
+from agents import (
+    Agent,
+    FunctionTool,
+    FunctionToolResult,
+    ModelSettings,
+    RunConfig,
+    RunContextWrapper,
+    Runner,
+)
+from agents.agent import ToolsToFinalOutputResult
 from agents.decorators import tool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.models.interface import ModelProvider
+from agents.tool_context import ToolContext
+from pydantic import BaseModel, ConfigDict
 
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import (
@@ -429,14 +439,17 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
     return _trace_success(ctx.context, tool_name="search_text", arguments=arguments, result=result)
 
 
-@tool(failure_error_function=_structure_finalization_error_feedback, strict_mode=True)
-def finalize_structure_hypothesis(
+class _StructureFinalizationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hypothesis: DocumentStructureHypothesis
+
+
+def _finalize_structure_hypothesis_impl(
     ctx: RunContextWrapper[StructureAgentContext], hypothesis: DocumentStructureHypothesis
 ) -> str:
-    """Finalize the complete candidate structure after deterministic provenance validation."""
-
     if ctx.context.finalized_output:
-        raise ValueError("structure hypothesis was already finalized")
+        raise RuntimeError("structure hypothesis was already finalized")
     validate_index_reference_evidence(
         hypothesis=hypothesis,
         environment=ctx.context.environment,
@@ -449,6 +462,45 @@ def finalize_structure_hypothesis(
         arguments={"output_type": "DocumentStructureHypothesis"},
         result=rendered,
     )
+
+
+async def _invoke_finalize_structure_hypothesis(
+    ctx: ToolContext[StructureAgentContext], input_json: str
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("structure hypothesis was already finalized")
+    try:
+        parsed = _StructureFinalizationArgs.model_validate_json(input_json)
+        return _finalize_structure_hypothesis_impl(ctx, parsed.hypothesis)
+    except ValueError as exc:
+        return _structure_finalization_error_feedback(ctx, exc)
+
+
+finalize_structure_hypothesis = FunctionTool(
+    name="finalize_structure_hypothesis",
+    description=(
+        "Finalize the complete candidate structure after deterministic provenance validation. "
+        "If rejected, repair only this payload and call the tool again."
+    ),
+    params_json_schema=_StructureFinalizationArgs.model_json_schema(),
+    on_invoke_tool=_invoke_finalize_structure_hypothesis,
+    strict_json_schema=True,
+)
+
+
+def _structure_tool_use_behavior(
+    ctx: RunContextWrapper[StructureAgentContext],
+    _tool_results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    if len(ctx.context.finalized_output) == 1 and isinstance(
+        ctx.context.finalized_output[0], DocumentStructureHypothesis
+    ):
+        hypothesis = ctx.context.finalized_output[0]
+        return ToolsToFinalOutputResult(
+            is_final_output=True,
+            final_output=hypothesis.model_dump_json(),
+        )
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
 
 
 def build_structure_agent(*, model: str) -> Agent[StructureAgentContext]:
@@ -468,7 +520,7 @@ def build_structure_agent(*, model: str) -> Agent[StructureAgentContext]:
             search_text,
             finalize_structure_hypothesis,
         ],
-        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_structure_hypothesis"]),
+        tool_use_behavior=_structure_tool_use_behavior,
     )
 
 

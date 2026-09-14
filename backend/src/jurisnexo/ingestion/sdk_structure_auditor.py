@@ -5,11 +5,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
-from agents.agent import StopAtTools
+from agents import (
+    Agent,
+    FunctionTool,
+    FunctionToolResult,
+    ModelSettings,
+    RunConfig,
+    RunContextWrapper,
+    Runner,
+)
+from agents.agent import ToolsToFinalOutputResult
 from agents.decorators import tool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.models.interface import ModelProvider
+from agents.tool_context import ToolContext
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jurisnexo.ingestion.document_discovery import (
@@ -305,14 +314,17 @@ def _audit_finalization_error_feedback(
     )
 
 
-@tool(failure_error_function=_audit_finalization_error_feedback, strict_mode=True)
-def finalize_structure_audit(
+class _StructureAuditFinalizationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audit: StructureAuditResult
+
+
+def _finalize_structure_audit_impl(
     ctx: RunContextWrapper[StructureAgentContext], audit: StructureAuditResult
 ) -> str:
-    """Finalize the adversarial structure audit after independent source verification."""
-
     if ctx.context.finalized_output:
-        raise ValueError("structure audit was already finalized")
+        raise RuntimeError("structure audit was already finalized")
     _validate_finding_reviews_against_candidate(
         audit=audit,
         candidate_finding_ids=ctx.context.audit_candidate_finding_ids,
@@ -333,6 +345,45 @@ def finalize_structure_audit(
     return rendered
 
 
+async def _invoke_finalize_structure_audit(
+    ctx: ToolContext[StructureAgentContext], input_json: str
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("structure audit was already finalized")
+    try:
+        parsed = _StructureAuditFinalizationArgs.model_validate_json(input_json)
+        return _finalize_structure_audit_impl(ctx, parsed.audit)
+    except (ValueError, DocumentEnvironmentError) as exc:
+        return _audit_finalization_error_feedback(ctx, exc)
+
+
+finalize_structure_audit = FunctionTool(
+    name="finalize_structure_audit",
+    description=(
+        "Finalize the adversarial structure audit after deterministic source verification. "
+        "If rejected, repair only this payload and call the tool again."
+    ),
+    params_json_schema=_StructureAuditFinalizationArgs.model_json_schema(),
+    on_invoke_tool=_invoke_finalize_structure_audit,
+    strict_json_schema=True,
+)
+
+
+def _structure_audit_tool_use_behavior(
+    ctx: RunContextWrapper[StructureAgentContext],
+    _tool_results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    if len(ctx.context.finalized_output) == 1 and isinstance(
+        ctx.context.finalized_output[0], StructureAuditResult
+    ):
+        audit = ctx.context.finalized_output[0]
+        return ToolsToFinalOutputResult(
+            is_final_output=True,
+            final_output=audit.model_dump_json(),
+        )
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+
+
 def build_structure_auditor(*, model: str) -> Agent[StructureAgentContext]:
     """Build an independent auditor with an explicitly selected provider model."""
 
@@ -350,7 +401,7 @@ def build_structure_auditor(*, model: str) -> Agent[StructureAgentContext]:
             search_text,
             finalize_structure_audit,
         ],
-        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_structure_audit"]),
+        tool_use_behavior=_structure_audit_tool_use_behavior,
     )
 
 
