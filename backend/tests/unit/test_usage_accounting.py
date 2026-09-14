@@ -82,7 +82,6 @@ def _turn(*, session_turn: int, seconds: float, output_tokens: int, total_tokens
         round_number=0,
         request_started_at=started,
         response_completed_at=started + timedelta(seconds=seconds),
-        request_latency_seconds=seconds,
         provider="deepseek",
         model="deepseek-v4-flash",
         input_tokens=total_tokens - output_tokens,
@@ -91,18 +90,25 @@ def _turn(*, session_turn: int, seconds: float, output_tokens: int, total_tokens
         input_cache_hit_tokens=0,
         input_cache_miss_tokens=total_tokens - output_tokens,
         reasoning_tokens=0,
-        output_tokens_per_second=output_tokens / seconds,
-        total_tokens_per_second=total_tokens / seconds,
         estimated_cost_usd=None,
         session_total_tokens_after_turn=total_tokens,
-        session_model_time_seconds_after_turn=seconds,
-        session_output_tokens_per_second_after_turn=output_tokens / seconds,
-        session_total_tokens_per_second_after_turn=total_tokens / seconds,
         session_estimated_cost_usd_after_turn=None,
         pricing=None,
         response_id=None,
         request_id=None,
+        session_model_time_seconds_after_turn=seconds,
+        session_output_tokens_per_second_after_turn=output_tokens / seconds,
+        session_total_tokens_per_second_after_turn=total_tokens / seconds,
     )
+
+
+def test_turn_throughput_is_derived_from_tokens_and_request_latency() -> None:
+    turn = _turn(session_turn=1, seconds=4.0, output_tokens=200, total_tokens=1000)
+
+    assert turn.request_latency_seconds == 4.0
+    assert turn.output_tokens_per_second == pytest.approx(50.0)
+    assert turn.total_tokens_per_second == pytest.approx(250.0)
+    assert turn.as_dict()["output_tokens_per_second"] == pytest.approx(50.0)
 
 
 def test_session_throughput_is_weighted_by_model_time_not_mean_of_turn_rates() -> None:
