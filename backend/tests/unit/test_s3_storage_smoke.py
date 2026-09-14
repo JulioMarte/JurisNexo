@@ -18,11 +18,15 @@ def _objects() -> dict[tuple[str, str], bytes]:
     return {}
 
 
+def _calls() -> list[str]:
+    return []
+
+
 @dataclass(slots=True)
 class FakeSmokeClient:
     objects: dict[tuple[str, str], bytes] = field(default_factory=_objects)
     delete_allowed: bool = True
-    calls: list[str] = field(default_factory=list)
+    calls: list[str] = field(default_factory=_calls)
 
     def put_object(
         self,
