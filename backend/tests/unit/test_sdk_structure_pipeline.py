@@ -5,8 +5,8 @@ import pytest
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.sdk_structure_agent import StructureAgentRunResult
 from jurisnexo.ingestion.sdk_structure_auditor import (
-    StructureAuditResult,
     StructureAuditorRunResult,
+    StructureAuditResult,
 )
 from jurisnexo.ingestion.sdk_structure_pipeline import (
     StructurePipelineRound,
