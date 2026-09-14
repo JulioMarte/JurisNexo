@@ -5,7 +5,7 @@ from agents import ModelSettings
 
 from jurisnexo.model_providers.agents_sdk_usage_provider import (
     UsageScope,
-    _bounded_model_settings,
+    bounded_model_settings,
 )
 
 pytestmark = pytest.mark.unit
@@ -62,7 +62,7 @@ def test_runtime_status_reserves_finalization_window() -> None:
 
 
 def test_model_attempt_policy_is_shorter_than_stage_budget_and_retry_safe() -> None:
-    settings = _bounded_model_settings(ModelSettings(parallel_tool_calls=False))
+    settings = bounded_model_settings(ModelSettings(parallel_tool_calls=False))
 
     assert settings.parallel_tool_calls is False
     assert settings.timeout == 90.0
