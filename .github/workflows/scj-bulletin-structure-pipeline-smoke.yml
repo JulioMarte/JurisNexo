@@ -71,7 +71,8 @@ jobs:
             --audit-output ../ingestion-smoke/structure-audit.json \
             --trace-output ../ingestion-smoke/structure-trace.json \
             --usage-output ../ingestion-smoke/model-usage.json \
-            --artifact-label 'Official SCJ Boletín Judicial Núm. 831, Febrero 1980. Investigate the complete artifact as the first ingestion reasoning stage; locate and verify the SUMARIO, rendering mode, pagination, decision boundaries, and discrepancies before finalizing.' \
+            --model-trace-output ../ingestion-smoke/model-observability.jsonl \
+            --artifact-label 'Official SCJ Boletín Judicial Núm. 831, Febrero 1980. Find the SUMARIO/index, resolve printed-to-view pagination, identify structural anomalies, and create one candidate DecisionWorkUnit per indexed decision. Verify representative and anomalous boundaries only; do not extract or exhaustively validate every sentence.' \
             --provider deepseek \
             --model deepseek-v4-flash \
             --structure-max-turns 128 \
@@ -116,7 +117,9 @@ jobs:
               'reinvestigation_exhausted': result.get('reinvestigation_exhausted'),
               'session_usage': usage.get('summary'),
               'turn_count': len(usage.get('turns', [])),
+              'observability_event_count': usage.get('observability_event_count'),
               'structure_tool_calls': result.get('tool_call_count'),
+              'decision_work_unit_count': len(result.get('hypothesis', {}).get('decision_work_units', [])),
               'audit_state': audit_state,
               'audit_tool_calls': audit.get('tool_call_count'),
               'structure_score': score,
@@ -147,5 +150,6 @@ jobs:
             ingestion-smoke/structure-trace.json
             ingestion-smoke/structure-trace.jsonl
             ingestion-smoke/model-usage.json
+            ingestion-smoke/model-observability.jsonl
             ingestion-smoke/structure-pipeline-error.json
             ingestion-smoke/summary.json
