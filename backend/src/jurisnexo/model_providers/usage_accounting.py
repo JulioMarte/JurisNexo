@@ -225,13 +225,11 @@ def _int_field(payload: dict[str, Any], key: str) -> int | None:
 
 
 def _normalized_cached_tokens(response: ModelResponse) -> int:
-    cached = response.usage.input_tokens_details.cached_tokens
-    return cached if isinstance(cached, int) and cached >= 0 else 0
+    return max(response.usage.input_tokens_details.cached_tokens, 0)
 
 
 def _normalized_reasoning_tokens(response: ModelResponse) -> int:
-    reasoning = response.usage.output_tokens_details.reasoning_tokens
-    return reasoning if isinstance(reasoning, int) and reasoning >= 0 else 0
+    return max(response.usage.output_tokens_details.reasoning_tokens, 0)
 
 
 def _empty_turns() -> list[ModelTurnUsage]:
