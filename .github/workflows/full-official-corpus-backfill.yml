@@ -65,7 +65,7 @@ jobs:
   database-preflight:
     name: Validate production database configuration
     needs: preflight
-    if: ${{ inputs.scope != 's3-smoke' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.scope != 's3-smoke' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
