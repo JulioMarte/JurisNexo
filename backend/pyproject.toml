@@ -52,6 +52,7 @@ addopts = "-ra --strict-markers --strict-config"
 xfail_strict = true
 markers = [
     "unit: pure or isolated unit tests",
+    "asyncio: asynchronous unit tests driven explicitly by the test suite",
     "postgres: requires PostgreSQL",
     "integration: crosses component boundaries",
     "invariant: proves a durable correctness or safety property",
