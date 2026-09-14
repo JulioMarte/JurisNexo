@@ -1,5 +1,6 @@
 name: SCJ bulletin structure pipeline smoke
 
+# one-shot trigger; removed by the following cleanup commit
 on:
   workflow_dispatch:
   push:
