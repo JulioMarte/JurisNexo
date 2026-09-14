@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -45,7 +46,7 @@ def test_trace_records_errors_without_swallowing_identity() -> None:
     assert event.error_message == "missing page"
 
 
-def test_trace_journal_is_appended_immediately(tmp_path) -> None:
+def test_trace_journal_is_appended_immediately(tmp_path: Path) -> None:
     journal = tmp_path / "trace.jsonl"
     recorder = StructureToolTraceRecorder(
         stage="structure_auditor",
