@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from agents import Agent, ModelSettings, RunConfig, Runner
+from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
 from agents.agent import StopAtTools
 from agents.decorators import tool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
@@ -107,7 +107,8 @@ class StructureAuditResult(BaseModel):
 
     @property
     def allows_extraction(self) -> bool:
-        return self.state in {"APPROVED", "APPROVED_WITH_AMENDMENTS"}
+        # Amendments must be incorporated into a new candidate and re-audited first.
+        return self.state == "APPROVED"
 
     @model_validator(mode="after")
     def validate_state_coherence(self) -> StructureAuditResult:
@@ -121,8 +122,13 @@ class StructureAuditResult(BaseModel):
                 raise ValueError("APPROVED cannot contain contradicted or unresolved checks")
             if self.amendments:
                 raise ValueError("APPROVED cannot contain amendments")
-        if self.state == "APPROVED_WITH_AMENDMENTS" and not self.amendments:
-            raise ValueError("APPROVED_WITH_AMENDMENTS requires amendments")
+        if self.state == "APPROVED_WITH_AMENDMENTS":
+            if not self.amendments:
+                raise ValueError("APPROVED_WITH_AMENDMENTS requires amendments")
+            if not self.required_follow_up:
+                raise ValueError(
+                    "APPROVED_WITH_AMENDMENTS requires follow-up before extraction"
+                )
         if self.state == "MORE_INVESTIGATION_REQUIRED":
             if not any(check.status == "unresolved" for check in self.checks):
                 raise ValueError("MORE_INVESTIGATION_REQUIRED requires an unresolved check")
@@ -176,10 +182,11 @@ inspect_artifact's deterministic profile rather than page evidence.
 You must not approve a candidate merely because the first agent was confident, used many tools,
 or produced a coherent narrative. Return APPROVED only when the material claims you checked are
 supported by your independent source review and no material check remains contradicted or
-unresolved. Use APPROVED_WITH_AMENDMENTS when extraction can safely continue after explicit bounded
-corrections. Use MORE_INVESTIGATION_REQUIRED for unresolved material ambiguity, REJECTED for
-source-backed contradiction that invalidates the hypothesis, and SOURCE_QUALITY_BLOCKED when the
-source cannot support a reliable structural decision.
+unresolved. Use APPROVED_WITH_AMENDMENTS only when bounded corrections are known, and put the
+required correction steps in required_follow_up so the candidate can be revised and audited again.
+Use MORE_INVESTIGATION_REQUIRED for unresolved material ambiguity, REJECTED for source-backed
+contradiction that invalidates the hypothesis, and SOURCE_QUALITY_BLOCKED when the source cannot
+support a reliable structural decision.
 
 Approval must state what was independently checked. Unknown is preferable to unsupported certainty.
 When MORE_INVESTIGATION_REQUIRED or SOURCE_QUALITY_BLOCKED is used, required_follow_up must contain
@@ -255,8 +262,13 @@ def validate_structure_audit_evidence(
                     f"{label}: view page {evidence.view_page} resolves to printed page "
                     f"{page.printed_page_number}, not {evidence.printed_page}"
                 )
-            if evidence.source_reference is not None and page.source_reference != evidence.source_reference:
-                raise DocumentEnvironmentError(f"{label}: source_reference does not match source view")
+            if (
+                evidence.source_reference is not None
+                and page.source_reference != evidence.source_reference
+            ):
+                raise DocumentEnvironmentError(
+                    f"{label}: source_reference does not match source view"
+                )
 
 
 async def run_structure_auditor(
