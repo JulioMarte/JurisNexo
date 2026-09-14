@@ -8,6 +8,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+StructureTraceStage = Literal[
+    "structure_agent",
+    "structure_auditor",
+    "structure_reinvestigation",
+]
+
 
 class ArtifactInspectionProfile(BaseModel):
     """Deterministic artifact facts exposed to the Structure Agent as evidence."""
@@ -37,7 +43,7 @@ class StructureToolTraceEvent(BaseModel):
 
     sequence: int = Field(ge=1)
     occurred_at: datetime
-    stage: Literal["structure_agent", "structure_auditor", "structure_reinvestigation"]
+    stage: StructureTraceStage
     tool_name: str
     arguments: dict[str, int | str]
     status: Literal["success", "error"]
@@ -54,15 +60,13 @@ class StructureToolTraceRecorder:
     def __init__(
         self,
         *,
-        stage: Literal[
-            "structure_agent", "structure_auditor", "structure_reinvestigation"
-        ] = "structure_agent",
+        stage: StructureTraceStage = "structure_agent",
         excerpt_chars: int = 2_000,
         journal_path: Path | None = None,
     ) -> None:
         if excerpt_chars < 200:
             raise ValueError("excerpt_chars must be at least 200")
-        self._stage = stage
+        self._stage: StructureTraceStage = stage
         self._excerpt_chars = excerpt_chars
         self._journal_path = journal_path
         self._events: list[StructureToolTraceEvent] = []
