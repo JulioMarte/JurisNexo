@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ from uuid import UUID
 
 from agents.models.interface import ModelProvider
 
+from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import DocumentEnvironment
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentRunResult,
@@ -77,6 +79,26 @@ class StructurePipelineRunResult:
         }
 
 
+def _focused_audit_delta(previous: StructurePipelineRound) -> dict[str, object]:
+    audit = previous.audit.audit
+    return {
+        "state": audit.state,
+        "summary": audit.summary,
+        "amendments": audit.amendments,
+        "required_follow_up": audit.required_follow_up,
+        "disputed_checks": [
+            check.model_dump(mode="json")
+            for check in audit.checks
+            if check.status in {"contradicted", "unresolved"}
+        ],
+        "nonconfirmed_finding_reviews": [
+            review.model_dump(mode="json")
+            for review in audit.finding_reviews
+            if review.action != "confirmed"
+        ],
+    }
+
+
 def _focused_reinvestigation_context(
     *,
     previous: StructurePipelineRound,
@@ -84,20 +106,57 @@ def _focused_reinvestigation_context(
 ) -> str:
     directives = [*previous.audit.audit.required_follow_up, *previous.audit.audit.amendments]
     rendered_directives = (
-        "\n".join(f"- {item}" for item in directives) or "- Re-check audit findings."
+        "\n".join(f"- {item}" for item in directives) or "- Resolve the material audit objection."
+    )
+    audit_delta = json.dumps(
+        _focused_audit_delta(previous),
+        ensure_ascii=False,
+        indent=2,
     )
     return (
-        f"This is bounded structure reinvestigation round {round_number}. The prior candidate is "
-        "not authoritative and must be revised only where source evidence supports revision.\n\n"
+        f"This is focused structure reinvestigation round {round_number}. The prior candidate is "
+        "working state, not authority. Preserve source-backed parts that were not challenged; "
+        "change only what evidence or the audit requires.\n\n"
         "Prior candidate hypothesis:\n"
         f"{previous.structure.hypothesis.model_dump_json(indent=2)}\n\n"
-        "Prior adversarial audit:\n"
-        f"{previous.audit.audit.model_dump_json(indent=2)}\n\n"
-        "Focused checks that must be resolved before finalization:\n"
+        "Material audit delta (supported checks intentionally omitted to reduce noise):\n"
+        f"{audit_delta}\n\n"
+        "Questions that must be resolved before finalization:\n"
         f"{rendered_directives}\n\n"
-        "Use the document tools to resolve these checks. Preserve correct prior findings, replace "
-        "incorrect ones with source-backed findings, and keep unresolved uncertainty explicit."
+        "Use source tools only where they can change one of those questions or reveal a material "
+        "regression. Do not re-prove unchanged structure for coverage. Preserve correct findings, "
+        "replace incorrect ones with source-backed findings, and keep genuine uncertainty explicit."
     )
+
+
+def _eligible_carry_forward_finding_ids(
+    *,
+    previous: StructurePipelineRound,
+    current: DocumentStructureHypothesis,
+) -> tuple[str, ...]:
+    """Return previously confirmed findings whose complete candidate payload is unchanged."""
+
+    confirmed = {
+        review.finding_id
+        for review in previous.audit.audit.finding_reviews
+        if review.action == "confirmed" and review.finding_id is not None
+    }
+    prior_by_id = {
+        finding.finding_id: finding.model_dump(mode="json")
+        for finding in previous.structure.hypothesis.structure_findings
+    }
+    current_by_id = {
+        finding.finding_id: finding.model_dump(mode="json")
+        for finding in current.structure_findings
+    }
+    eligible = [
+        finding_id
+        for finding_id in confirmed
+        if finding_id in prior_by_id
+        and finding_id in current_by_id
+        and prior_by_id[finding_id] == current_by_id[finding_id]
+    ]
+    return tuple(sorted(eligible))
 
 
 def _tool_budget(
@@ -276,7 +335,7 @@ async def run_structure_pipeline(
     persistence: StructurePipelinePersistence | None = None,
     trace_journal_path: Path | None = None,
 ) -> StructurePipelineRunResult:
-    """Run discovery, adversarial audit, reinvestigation, telemetry, and durable checkpoints."""
+    """Run discovery, adversarial audit, focused reinvestigation, and durable checkpoints."""
 
     if max_reinvestigation_rounds < 0 or max_reinvestigation_rounds > 5:
         raise ValueError("max_reinvestigation_rounds must be between 0 and 5")
@@ -414,16 +473,26 @@ async def run_structure_pipeline(
         turn_start = len(usage_tracker.turns) if usage_tracker is not None else 0
         if scoped_provider is not None:
             scoped_provider.set_scope(role="structure_auditor", round_number=round_number)
-        combined_prior_trace = tuple(
-            event for completed_round in rounds for event in completed_round.structure.tool_trace
-        ) + structure.tool_trace
+
+        prior_round = rounds[-1] if rounds else None
+        prior_audit = prior_round.audit.audit if prior_round is not None else None
+        carry_forward_finding_ids = (
+            _eligible_carry_forward_finding_ids(
+                previous=prior_round,
+                current=structure.hypothesis,
+            )
+            if prior_round is not None
+            else ()
+        )
         try:
             audit = await run_structure_auditor(
                 environment=environment,
                 hypothesis=structure.hypothesis,
                 artifact_label=artifact_label,
                 model=model,
-                structure_agent_trace=combined_prior_trace,
+                structure_agent_trace=structure.tool_trace,
+                prior_audit=prior_audit,
+                carry_forward_finding_ids=carry_forward_finding_ids,
                 max_turns=audit_max_turns,
                 max_runtime_seconds=audit_max_runtime_seconds,
                 max_tool_output_chars=max_tool_output_chars,
