@@ -1,0 +1,410 @@
+name: One-shot raw finalizer repair
+
+on:
+  push:
+    branches:
+      - ingestion/structure-agent-adversarial-trace
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Install one-shot raw finalizer repair'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply raw-finalizer repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one exact match, got {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          def regex_once(path: str, pattern: str, replacement: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one regex match, got {count}')
+              p.write_text(updated)
+
+          structure = 'backend/src/jurisnexo/ingestion/sdk_structure_agent.py'
+          replace_once(
+              structure,
+              'from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner\nfrom agents.agent import StopAtTools\n',
+              'from agents import (\n    Agent,\n    FunctionTool,\n    FunctionToolResult,\n    ModelSettings,\n    RunConfig,\n    RunContextWrapper,\n    Runner,\n)\nfrom agents.agent import ToolsToFinalOutputResult\n',
+          )
+          replace_once(
+              structure,
+              'from agents.models.interface import ModelProvider\n\nfrom jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis\n',
+              'from agents.models.interface import ModelProvider\nfrom agents.tool_context import ToolContext\nfrom pydantic import BaseModel, ConfigDict\n\nfrom jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis\n',
+          )
+          regex_once(
+              structure,
+              r'@tool\(failure_error_function=_structure_finalization_error_feedback, strict_mode=True\)\ndef finalize_structure_hypothesis\(.*?\n\n\ndef build_structure_agent',
+              '''class _StructureFinalizationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hypothesis: DocumentStructureHypothesis
+
+
+def _finalize_structure_hypothesis_impl(
+    ctx: RunContextWrapper[StructureAgentContext], hypothesis: DocumentStructureHypothesis
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("structure hypothesis was already finalized")
+    validate_index_reference_evidence(
+        hypothesis=hypothesis,
+        environment=ctx.context.environment,
+    )
+    ctx.context.finalized_output.append(hypothesis)
+    rendered = hypothesis.model_dump_json()
+    return _trace_success(
+        ctx.context,
+        tool_name="finalize_structure_hypothesis",
+        arguments={"output_type": "DocumentStructureHypothesis"},
+        result=rendered,
+    )
+
+
+async def _invoke_finalize_structure_hypothesis(
+    ctx: ToolContext[StructureAgentContext], input_json: str
+) -> str:
+    """Parse finalizer arguments inside JurisNexo so malformed JSON is model-repairable."""
+
+    if ctx.context.finalized_output:
+        raise RuntimeError("structure hypothesis was already finalized")
+    try:
+        parsed = _StructureFinalizationArgs.model_validate_json(input_json)
+        return _finalize_structure_hypothesis_impl(ctx, parsed.hypothesis)
+    except ValueError as exc:
+        return _structure_finalization_error_feedback(ctx, exc)
+
+
+finalize_structure_hypothesis = FunctionTool(
+    name="finalize_structure_hypothesis",
+    description=(
+        "Finalize the complete candidate structure after deterministic provenance validation. "
+        "If rejected, repair only this payload and call the tool again."
+    ),
+    params_json_schema=_StructureFinalizationArgs.model_json_schema(),
+    on_invoke_tool=_invoke_finalize_structure_hypothesis,
+    strict_json_schema=True,
+)
+
+
+def _structure_tool_use_behavior(
+    ctx: RunContextWrapper[StructureAgentContext],
+    _tool_results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    """Stop only after a finalizer payload has actually passed deterministic validation."""
+
+    if len(ctx.context.finalized_output) == 1 and isinstance(
+        ctx.context.finalized_output[0], DocumentStructureHypothesis
+    ):
+        hypothesis = ctx.context.finalized_output[0]
+        return ToolsToFinalOutputResult(
+            is_final_output=True,
+            final_output=hypothesis.model_dump_json(),
+        )
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+
+
+def build_structure_agent''',
+          )
+          replace_once(
+              structure,
+              '        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_structure_hypothesis"]),\n',
+              '        tool_use_behavior=_structure_tool_use_behavior,\n',
+          )
+
+          auditor = 'backend/src/jurisnexo/ingestion/sdk_structure_auditor.py'
+          replace_once(
+              auditor,
+              'from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner\nfrom agents.agent import StopAtTools\n',
+              'from agents import (\n    Agent,\n    FunctionTool,\n    FunctionToolResult,\n    ModelSettings,\n    RunConfig,\n    RunContextWrapper,\n    Runner,\n)\nfrom agents.agent import ToolsToFinalOutputResult\n',
+          )
+          replace_once(
+              auditor,
+              'from agents.models.interface import ModelProvider\nfrom pydantic import BaseModel, ConfigDict, Field, model_validator\n',
+              'from agents.models.interface import ModelProvider\nfrom agents.tool_context import ToolContext\nfrom pydantic import BaseModel, ConfigDict, Field, model_validator\n',
+          )
+          regex_once(
+              auditor,
+              r'@tool\(failure_error_function=_audit_finalization_error_feedback, strict_mode=True\)\ndef finalize_structure_audit\(.*?\n\n\ndef build_structure_auditor',
+              '''class _StructureAuditFinalizationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audit: StructureAuditResult
+
+
+def _finalize_structure_audit_impl(
+    ctx: RunContextWrapper[StructureAgentContext], audit: StructureAuditResult
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("structure audit was already finalized")
+    _validate_finding_reviews_against_candidate(
+        audit=audit,
+        candidate_finding_ids=ctx.context.audit_candidate_finding_ids,
+    )
+    validate_structure_audit_evidence(audit=audit, environment=ctx.context.environment)
+    ctx.context.finalized_output.append(audit)
+    rendered = audit.model_dump_json()
+    ctx.context.trace_recorder.record_success(
+        tool_name="finalize_structure_audit",
+        arguments={"output_type": "StructureAuditResult"},
+        result=rendered,
+    )
+    ctx.context.tool_budget.observe_success(
+        tool_name="finalize_structure_audit",
+        arguments={"output_type": "StructureAuditResult"},
+        result_char_count=len(rendered),
+    )
+    return rendered
+
+
+async def _invoke_finalize_structure_audit(
+    ctx: ToolContext[StructureAgentContext], input_json: str
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("structure audit was already finalized")
+    try:
+        parsed = _StructureAuditFinalizationArgs.model_validate_json(input_json)
+        return _finalize_structure_audit_impl(ctx, parsed.audit)
+    except (ValueError, DocumentEnvironmentError) as exc:
+        return _audit_finalization_error_feedback(ctx, exc)
+
+
+finalize_structure_audit = FunctionTool(
+    name="finalize_structure_audit",
+    description=(
+        "Finalize the adversarial structure audit after deterministic source verification. "
+        "If rejected, repair only this payload and call the tool again."
+    ),
+    params_json_schema=_StructureAuditFinalizationArgs.model_json_schema(),
+    on_invoke_tool=_invoke_finalize_structure_audit,
+    strict_json_schema=True,
+)
+
+
+def _structure_audit_tool_use_behavior(
+    ctx: RunContextWrapper[StructureAgentContext],
+    _tool_results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    if len(ctx.context.finalized_output) == 1 and isinstance(
+        ctx.context.finalized_output[0], StructureAuditResult
+    ):
+        audit = ctx.context.finalized_output[0]
+        return ToolsToFinalOutputResult(
+            is_final_output=True,
+            final_output=audit.model_dump_json(),
+        )
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+
+
+def build_structure_auditor''',
+          )
+          replace_once(
+              auditor,
+              '        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_structure_audit"]),\n',
+              '        tool_use_behavior=_structure_audit_tool_use_behavior,\n',
+          )
+
+          extraction = 'backend/src/jurisnexo/ingestion/sdk_extraction_agent.py'
+          replace_once(
+              extraction,
+              'from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner\nfrom agents.agent import StopAtTools\n',
+              'from agents import (\n    Agent,\n    FunctionTool,\n    FunctionToolResult,\n    ModelSettings,\n    RunConfig,\n    RunContextWrapper,\n    Runner,\n)\nfrom agents.agent import ToolsToFinalOutputResult\n',
+          )
+          replace_once(
+              extraction,
+              'from agents.decorators import tool\nfrom pydantic import BaseModel, ConfigDict, Field, model_validator\n',
+              'from agents.decorators import tool\nfrom agents.tool_context import ToolContext\nfrom pydantic import BaseModel, ConfigDict, Field, model_validator\n',
+          )
+          regex_once(
+              extraction,
+              r'@tool\(failure_error_function=_extraction_finalization_error_feedback, strict_mode=True\)\ndef finalize_extraction_annotations\(.*?\n\n\ndef build_extraction_agent',
+              '''class _ExtractionFinalizationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    annotations: ExtractionAnnotations
+
+
+def _finalize_extraction_annotations_impl(
+    ctx: RunContextWrapper[ExtractionAgentContext], annotations: ExtractionAnnotations
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("extraction annotations were already finalized")
+    validate_extraction_annotations(annotations=annotations, decision=ctx.context.decision)
+    ctx.context.finalized_output.append(annotations)
+    return annotations.model_dump_json()
+
+
+async def _invoke_finalize_extraction_annotations(
+    ctx: ToolContext[ExtractionAgentContext], input_json: str
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("extraction annotations were already finalized")
+    try:
+        parsed = _ExtractionFinalizationArgs.model_validate_json(input_json)
+        return _finalize_extraction_annotations_impl(ctx, parsed.annotations)
+    except ValueError as exc:
+        return _extraction_finalization_error_feedback(ctx, exc)
+
+
+finalize_extraction_annotations = FunctionTool(
+    name="finalize_extraction_annotations",
+    description=(
+        "Finalize extraction after deterministic exact-span provenance validation. "
+        "If rejected, repair only this payload and call the tool again."
+    ),
+    params_json_schema=_ExtractionFinalizationArgs.model_json_schema(),
+    on_invoke_tool=_invoke_finalize_extraction_annotations,
+    strict_json_schema=True,
+)
+
+
+def _extraction_tool_use_behavior(
+    ctx: RunContextWrapper[ExtractionAgentContext],
+    _tool_results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    if len(ctx.context.finalized_output) == 1 and isinstance(
+        ctx.context.finalized_output[0], ExtractionAnnotations
+    ):
+        annotations = ctx.context.finalized_output[0]
+        return ToolsToFinalOutputResult(
+            is_final_output=True,
+            final_output=annotations.model_dump_json(),
+        )
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+
+
+def build_extraction_agent''',
+          )
+          replace_once(
+              extraction,
+              '        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_extraction_annotations"]),\n',
+              '        tool_use_behavior=_extraction_tool_use_behavior,\n',
+          )
+
+          extraction_auditor = 'backend/src/jurisnexo/ingestion/sdk_extraction_auditor.py'
+          replace_once(
+              extraction_auditor,
+              'from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner\nfrom agents.agent import StopAtTools\n',
+              'from agents import (\n    Agent,\n    FunctionTool,\n    FunctionToolResult,\n    ModelSettings,\n    RunConfig,\n    RunContextWrapper,\n    Runner,\n)\nfrom agents.agent import ToolsToFinalOutputResult\n',
+          )
+          replace_once(
+              extraction_auditor,
+              'from agents.decorators import tool\nfrom pydantic import BaseModel, ConfigDict, Field, model_validator\n',
+              'from agents.decorators import tool\nfrom agents.tool_context import ToolContext\nfrom pydantic import BaseModel, ConfigDict, Field, model_validator\n',
+          )
+          regex_once(
+              extraction_auditor,
+              r'@tool\(failure_error_function=_extraction_audit_finalization_error_feedback, strict_mode=True\)\ndef finalize_extraction_audit\(.*?\n\n\ndef build_extraction_auditor',
+              '''class _ExtractionAuditFinalizationArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audit: ExtractionAuditResult
+
+
+def _finalize_extraction_audit_impl(
+    ctx: RunContextWrapper[ExtractionAuditorContext], audit: ExtractionAuditResult
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("extraction audit was already finalized")
+    validate_extraction_audit_evidence(audit=audit, environment=ctx.context.environment)
+    ctx.context.finalized_output.append(audit)
+    return audit.model_dump_json()
+
+
+async def _invoke_finalize_extraction_audit(
+    ctx: ToolContext[ExtractionAuditorContext], input_json: str
+) -> str:
+    if ctx.context.finalized_output:
+        raise RuntimeError("extraction audit was already finalized")
+    try:
+        parsed = _ExtractionAuditFinalizationArgs.model_validate_json(input_json)
+        return _finalize_extraction_audit_impl(ctx, parsed.audit)
+    except (ValueError, DocumentEnvironmentError) as exc:
+        return _extraction_audit_finalization_error_feedback(ctx, exc)
+
+
+finalize_extraction_audit = FunctionTool(
+    name="finalize_extraction_audit",
+    description=(
+        "Finalize the extraction audit after deterministic source validation. "
+        "If rejected, repair only this payload and call the tool again."
+    ),
+    params_json_schema=_ExtractionAuditFinalizationArgs.model_json_schema(),
+    on_invoke_tool=_invoke_finalize_extraction_audit,
+    strict_json_schema=True,
+)
+
+
+def _extraction_audit_tool_use_behavior(
+    ctx: RunContextWrapper[ExtractionAuditorContext],
+    _tool_results: list[FunctionToolResult],
+) -> ToolsToFinalOutputResult:
+    if len(ctx.context.finalized_output) == 1 and isinstance(
+        ctx.context.finalized_output[0], ExtractionAuditResult
+    ):
+        audit = ctx.context.finalized_output[0]
+        return ToolsToFinalOutputResult(
+            is_final_output=True,
+            final_output=audit.model_dump_json(),
+        )
+    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+
+
+def build_extraction_auditor''',
+          )
+          replace_once(
+              extraction_auditor,
+              '        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_extraction_audit"]),\n',
+              '        tool_use_behavior=_extraction_audit_tool_use_behavior,\n',
+          )
+
+          test_path = 'backend/tests/unit/test_structure_finalization_repair.py'
+          replace_once(
+              test_path,
+              '    _document_tool_error_feedback,\n    _scope_reminder,\n    _structure_finalization_error_feedback,\n)',
+              '    StructureAgentContext,\n    _document_tool_error_feedback,\n    _scope_reminder,\n    _structure_finalization_error_feedback,\n    _structure_tool_use_behavior,\n    finalize_structure_hypothesis,\n)',
+          )
+          p = Path(test_path)
+          text = p.read_text()
+          marker = '\n\ndef test_structure_finalization_repair_is_bounded() -> None:\n'
+          if marker not in text:
+              raise SystemExit('test insertion marker not found')
+          test = '''\n\n@pytest.mark.asyncio\nasync def test_raw_malformed_structure_finalizer_json_is_repairable_before_sdk_parsing() -> None:\n    context = StructureAgentContext(environment=DocumentEnvironment(pages=("page one",)))\n    wrapper = cast(Any, SimpleNamespace(context=context))\n\n    feedback = await finalize_structure_hypothesis.on_invoke_tool(\n        wrapper,\n        '{"hypothesis":',\n    )\n\n    assert "FINALIZATION_REJECTED" in str(feedback)\n    assert context.finalized_output == []\n    behavior = _structure_tool_use_behavior(wrapper, [])\n    assert behavior.is_final_output is False\n    assert len(context.finalization_errors) == 1\n\n'''
+          p.write_text(text.replace(marker, test + marker, 1))
+          PY
+
+          git diff --check
+          git status --short
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'JurisNexo CI repair'
+          git config user.email 'actions@users.noreply.github.com'
+          git add backend/src/jurisnexo/ingestion/sdk_structure_agent.py \
+                  backend/src/jurisnexo/ingestion/sdk_structure_auditor.py \
+                  backend/src/jurisnexo/ingestion/sdk_extraction_agent.py \
+                  backend/src/jurisnexo/ingestion/sdk_extraction_auditor.py \
+                  backend/tests/unit/test_structure_finalization_repair.py
+          git commit -m 'Repair raw finalizer JSON handling'
+          git push origin HEAD:ingestion/structure-agent-adversarial-trace
