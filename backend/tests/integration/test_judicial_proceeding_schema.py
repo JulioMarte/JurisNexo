@@ -18,6 +18,12 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
         yield conn
 
 
+def _first(cursor: psycopg.Cursor[Any]) -> Any:
+    row = cursor.fetchone()
+    assert row is not None
+    return row[0]
+
+
 def test_judicial_intelligence_tables_exist(connection: psycopg.Connection[Any]) -> None:
     expected = {
         "legal_matters",
@@ -56,7 +62,7 @@ def test_one_proceeding_can_link_multiple_decisions_and_keep_raw_parties(
             returning id
             """
         )
-        court_id = cursor.fetchone()[0]
+        court_id = _first(cursor)
         cursor.execute(
             """
             insert into corpus.judicial_proceedings (originating_court_id, identity_status)
@@ -65,7 +71,7 @@ def test_one_proceeding_can_link_multiple_decisions_and_keep_raw_parties(
             """,
             (court_id,),
         )
-        proceeding_id = cursor.fetchone()[0]
+        proceeding_id = _first(cursor)
         cursor.execute(
             """
             insert into corpus.judicial_proceeding_identifiers (
@@ -129,9 +135,9 @@ def test_one_proceeding_can_link_multiple_decisions_and_keep_raw_parties(
             (proceeding_id,),
         )
         assert cursor.fetchone() == (
-            'Compañía de Electricidad de Puerto Plata, S. A. (CEPP).',
-            'Recurrente',
-            'recurrente',
+            "Compañía de Electricidad de Puerto Plata, S. A. (CEPP).",
+            "Recurrente",
+            "recurrente",
         )
 
 
@@ -146,7 +152,7 @@ def test_model_relation_observation_does_not_become_verified_relation_automatica
             returning id
             """
         )
-        court_id = cursor.fetchone()[0]
+        court_id = _first(cursor)
         cursor.execute(
             "insert into corpus.cases (court_id) values (%s), (%s) returning id",
             (court_id, court_id),
@@ -184,7 +190,7 @@ def test_source_record_can_resolve_to_only_one_verified_canonical_document(
             returning id
             """
         )
-        registry_id = cursor.fetchone()[0]
+        registry_id = _first(cursor)
         payload = {"idExpediente": "schema-1", "fecha": "29/01/2020"}
         payload_json = json.dumps(payload, sort_keys=True)
         payload_sha = hashlib.sha256(payload_json.encode()).hexdigest()
@@ -201,7 +207,7 @@ def test_source_record_can_resolve_to_only_one_verified_canonical_document(
             """,
             (registry_id, payload_json, payload_sha),
         )
-        source_document_id = cursor.fetchone()[0]
+        source_document_id = _first(cursor)
         cursor.execute(
             """
             insert into corpus.legal_documents (document_type, identity_status)
@@ -215,7 +221,10 @@ def test_source_record_can_resolve_to_only_one_verified_canonical_document(
             insert into corpus.source_document_canonical_resolutions (
                 source_document_id, legal_document_id, resolution_status,
                 resolution_method, confidence, matched_on
-            ) values (%s, %s, 'verified', 'official_identifier_match', 1.0, '{"expediente": true}'::jsonb)
+            ) values (
+                %s, %s, 'verified', 'official_identifier_match',
+                1.0, '{"expediente": true}'::jsonb
+            )
             """,
             (source_document_id, legal_document_a),
         )
@@ -231,6 +240,51 @@ def test_source_record_can_resolve_to_only_one_verified_canonical_document(
             )
 
 
+def test_cross_scope_case_proceeding_link_is_rejected(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            insert into corpus.scopes (visibility, organization_id)
+            values ('private', gen_random_uuid())
+            returning id
+            """
+        )
+        private_scope = _first(cursor)
+        cursor.execute(
+            """
+            insert into corpus.courts (code, name, jurisdiction)
+            values ('SCHEMA-SCOPE', 'Scope schema test', 'República Dominicana')
+            returning id
+            """
+        )
+        court_id = _first(cursor)
+        cursor.execute(
+            "insert into corpus.cases (court_id) values (%s) returning id",
+            (court_id,),
+        )
+        public_case = _first(cursor)
+        cursor.execute(
+            """
+            insert into corpus.judicial_proceedings (scope_id, identity_status)
+            values (%s, 'canonical')
+            returning id
+            """,
+            (private_scope,),
+        )
+        private_proceeding = _first(cursor)
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            cursor.execute(
+                """
+                insert into corpus.case_proceedings (
+                    case_id, proceeding_id, verification_method
+                ) values (%s, %s, 'test')
+                """,
+                (public_case, private_proceeding),
+            )
+
+
 def test_structured_disposition_keeps_raw_source_text(connection: psycopg.Connection[Any]) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         cursor.execute(
@@ -240,9 +294,12 @@ def test_structured_disposition_keeps_raw_source_text(connection: psycopg.Connec
             returning id
             """
         )
-        court_id = cursor.fetchone()[0]
-        cursor.execute("insert into corpus.cases (court_id) values (%s) returning id", (court_id,))
-        case_id = cursor.fetchone()[0]
+        court_id = _first(cursor)
+        cursor.execute(
+            "insert into corpus.cases (court_id) values (%s) returning id",
+            (court_id,),
+        )
+        case_id = _first(cursor)
         cursor.execute(
             """
             insert into corpus.case_dispositions (
@@ -257,6 +314,6 @@ def test_structured_disposition_keeps_raw_source_text(connection: psycopg.Connec
             (case_id,),
         )
         assert cursor.fetchone() == (
-            'cassated',
-            'CASA la sentencia impugnada y envía el asunto por ante otra corte.',
+            "cassated",
+            "CASA la sentencia impugnada y envía el asunto por ante otra corte.",
         )
