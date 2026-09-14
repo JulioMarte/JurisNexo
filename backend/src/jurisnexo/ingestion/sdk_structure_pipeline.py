@@ -23,6 +23,9 @@ from jurisnexo.ingestion.sdk_structure_auditor import (
 )
 from jurisnexo.ingestion.structure_run_ledger import AgentRunRole, StructureRunLedger
 from jurisnexo.ingestion.structure_trace import ArtifactInspectionProfile, StructureToolTraceEvent
+from jurisnexo.model_providers.agents_sdk_runtime_provider import (
+    RuntimeSupervisingModelProvider,
+)
 from jurisnexo.model_providers.agents_sdk_usage_provider import UsageTrackingModelProvider
 from jurisnexo.model_providers.usage_accounting import (
     ModelTurnUsage,
@@ -342,11 +345,15 @@ async def run_structure_pipeline(
     if persistence is not None and usage_tracker is None:
         raise ValueError("durable structure persistence requires a model usage tracker")
 
-    tracking_provider: ModelProvider | None = model_provider
-    scoped_provider: UsageTrackingModelProvider | None = None
+    effective_provider: ModelProvider | None = model_provider
+    usage_provider: UsageTrackingModelProvider | None = None
+    runtime_provider: RuntimeSupervisingModelProvider | None = None
     if model_provider is not None and usage_tracker is not None:
-        scoped_provider = UsageTrackingModelProvider(inner=model_provider, tracker=usage_tracker)
-        tracking_provider = scoped_provider
+        usage_provider = UsageTrackingModelProvider(inner=model_provider, tracker=usage_tracker)
+        effective_provider = usage_provider
+    if effective_provider is not None:
+        runtime_provider = RuntimeSupervisingModelProvider(inner=effective_provider)
+        effective_provider = runtime_provider
 
     pipeline_run_id = (
         persistence.ledger.create_structure_pipeline_run(
@@ -405,8 +412,14 @@ async def run_structure_pipeline(
             parent_run_id=parent_run_id,
         )
         turn_start = len(usage_tracker.turns) if usage_tracker is not None else 0
-        if scoped_provider is not None:
-            scoped_provider.set_scope(role=role, round_number=round_number)
+        if usage_provider is not None:
+            usage_provider.set_scope(role=role, round_number=round_number)
+        if runtime_provider is not None:
+            runtime_provider.set_scope(
+                role=role,
+                round_number=round_number,
+                runtime_budget_seconds=structure_max_runtime_seconds,
+            )
         try:
             structure = await run_structure_agent(
                 environment=environment,
@@ -419,7 +432,7 @@ async def run_structure_pipeline(
                 max_identical_tool_calls=max_identical_tool_calls,
                 search_max_hits=search_max_hits,
                 artifact_profile=artifact_profile,
-                model_provider=tracking_provider,
+                model_provider=effective_provider,
                 trace_journal_path=trace_journal_path,
                 trace_stage=trace_stage,
                 investigation_context=investigation_context,
@@ -471,8 +484,14 @@ async def run_structure_pipeline(
             parent_run_id=structure_run_id,
         )
         turn_start = len(usage_tracker.turns) if usage_tracker is not None else 0
-        if scoped_provider is not None:
-            scoped_provider.set_scope(role="structure_auditor", round_number=round_number)
+        if usage_provider is not None:
+            usage_provider.set_scope(role="structure_auditor", round_number=round_number)
+        if runtime_provider is not None:
+            runtime_provider.set_scope(
+                role="structure_auditor",
+                round_number=round_number,
+                runtime_budget_seconds=audit_max_runtime_seconds,
+            )
 
         prior_round = rounds[-1] if rounds else None
         prior_audit = prior_round.audit.audit if prior_round is not None else None
@@ -500,7 +519,7 @@ async def run_structure_pipeline(
                 max_identical_tool_calls=max_identical_tool_calls,
                 search_max_hits=search_max_hits,
                 artifact_profile=artifact_profile,
-                model_provider=tracking_provider,
+                model_provider=effective_provider,
                 trace_journal_path=trace_journal_path,
             )
         except (StructureInvestigationBudgetExceeded, StructureInvestigationFailed) as exc:
