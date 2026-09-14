@@ -36,13 +36,17 @@ def _decision() -> SourceFaithfulDecision:
     )
 
 
-def test_extraction_agent_has_only_bounded_decision_tools() -> None:
+def test_extraction_agent_has_only_bounded_tools_and_recoverable_finalizer() -> None:
     agent = build_extraction_agent(model="gemini/gemini-3.8-flash")
 
     assert agent.name == "JurisNexo Extraction Agent"
-    assert agent.output_type == ExtractionAnnotations
+    assert agent.output_type is None
     tools = [tool for tool in agent.tools if isinstance(tool, FunctionTool)]
-    assert {tool.name for tool in tools} == {"get_decision_page", "search_decision_text"}
+    assert {tool.name for tool in tools} == {
+        "get_decision_page",
+        "search_decision_text",
+        "finalize_extraction_annotations",
+    }
 
 
 def test_evidence_spans_must_match_exact_source_text() -> None:
