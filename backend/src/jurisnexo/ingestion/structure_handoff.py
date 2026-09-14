@@ -66,7 +66,7 @@ def render_approved_structure_context(context: ApprovedStructureContext) -> str:
     if not context.findings:
         return "No material approved structure findings apply to this decision."
 
-    payload = []
+    payload: list[dict[str, object]] = []
     for finding in context.findings:
         payload.append(
             {
