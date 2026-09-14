@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_EMPTY_MAPPING: Mapping[str, object] = {}
+
 
 class S3Client(Protocol):
     def head_object(self, *, Bucket: str, Key: str) -> object: ...
@@ -147,20 +149,20 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
     return boto3.client("s3", config=sdk_config, **boto3_client_kwargs(settings))
 
 
+def _string_object_mapping(value: object) -> Mapping[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return cast(Mapping[str, object], value)
+
+
 def is_s3_not_found(exc: Exception) -> bool:
     response: object = getattr(exc, "response", None)
-    if not isinstance(response, Mapping):
+    response_map = _string_object_mapping(response)
+    if response_map is None:
         return False
-    response_map = cast(Mapping[str, object], response)
 
-    error_value = response_map.get("Error")
-    metadata_value = response_map.get("ResponseMetadata")
-    error = cast(Mapping[str, object], error_value) if isinstance(error_value, Mapping) else {}
-    metadata = (
-        cast(Mapping[str, object], metadata_value)
-        if isinstance(metadata_value, Mapping)
-        else {}
-    )
+    error = _string_object_mapping(response_map.get("Error")) or _EMPTY_MAPPING
+    metadata = _string_object_mapping(response_map.get("ResponseMetadata")) or _EMPTY_MAPPING
 
     code = str(error.get("Code", ""))
     raw_status = metadata.get("HTTPStatusCode", 0)
