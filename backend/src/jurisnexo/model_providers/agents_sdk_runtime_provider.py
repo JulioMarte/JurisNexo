@@ -16,13 +16,14 @@ _DEFAULT_STAGE_RUNTIME_SECONDS = 600.0
 _DEFAULT_MODEL_ATTEMPT_TIMEOUT_SECONDS = 90.0
 _DEFAULT_SOFT_DEADLINE_FRACTION = 0.80
 _FINALIZATION_WINDOW_SECONDS = 60.0
+_DEADLINE_RESERVE_SECONDS = 5.0
 
 
-def _model_retry_settings() -> ModelRetrySettings:
+def _model_retry_settings(*, max_retries: int = 2) -> ModelRetrySettings:
     """Retry only transient/replay-safe model failures with bounded backoff."""
 
     return ModelRetrySettings(
-        max_retries=2,
+        max_retries=max_retries,
         backoff={
             "initial_delay": 0.5,
             "max_delay": 4.0,
@@ -55,6 +56,15 @@ class RuntimeScope:
             raise ValueError("runtime_budget_seconds must be positive")
         if not 0 < self.soft_deadline_fraction < 1:
             raise ValueError("soft_deadline_fraction must be between 0 and 1")
+
+    def remaining_seconds(self, *, now_monotonic: float | None = None) -> float | None:
+        """Return remaining stage runtime without letting clock skew create negative time."""
+
+        if self.started_monotonic is None or self.runtime_budget_seconds is None:
+            return None
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        elapsed = max(now - self.started_monotonic, 0.0)
+        return max(self.runtime_budget_seconds - elapsed, 0.0)
 
     def runtime_status(self, *, now_monotonic: float | None = None) -> str | None:
         if self.started_monotonic is None or self.runtime_budget_seconds is None:
@@ -105,15 +115,55 @@ def with_runtime_status(system_instructions: str | None, scope: RuntimeScope) ->
     return f"# Runtime budget\n{status}"
 
 
-def bounded_model_settings(model_settings: ModelSettings) -> ModelSettings:
-    """Apply shared attempt timeout/retry policy without changing reasoning budgets."""
+def bounded_model_settings(
+    model_settings: ModelSettings,
+    *,
+    timeout_seconds: float = _DEFAULT_MODEL_ATTEMPT_TIMEOUT_SECONDS,
+    max_retries: int = 2,
+) -> ModelSettings:
+    """Apply bounded model attempts without changing an agent's reasoning configuration."""
 
     return model_settings.resolve(
         {
             "preserve_raw_usage": True,
-            "timeout": _DEFAULT_MODEL_ATTEMPT_TIMEOUT_SECONDS,
-            "retry": _model_retry_settings(),
+            "timeout": timeout_seconds,
+            "retry": _model_retry_settings(max_retries=max_retries),
         }
+    )
+
+
+def deadline_aware_model_settings(
+    model_settings: ModelSettings,
+    *,
+    scope: RuntimeScope,
+    now_monotonic: float | None = None,
+) -> ModelSettings:
+    """Shrink retries near a hard deadline so retry storms cannot consume finalization time."""
+
+    remaining = scope.remaining_seconds(now_monotonic=now_monotonic)
+    if remaining is None:
+        return bounded_model_settings(model_settings)
+
+    reserve = min(_DEADLINE_RESERVE_SECONDS, max(remaining * 0.10, 0.5))
+    usable = max(remaining - reserve, 0.5)
+    if remaining <= _FINALIZATION_WINDOW_SECONDS:
+        max_retries = 0
+    elif remaining <= _DEFAULT_MODEL_ATTEMPT_TIMEOUT_SECONDS * 2:
+        max_retries = 1
+    else:
+        max_retries = 2
+
+    # Split the usable time across all possible attempts. This is deliberately conservative:
+    # retry backoff still consumes a little wall time, while the outer stage timeout remains the
+    # authoritative hard fuse.
+    timeout_seconds = min(
+        _DEFAULT_MODEL_ATTEMPT_TIMEOUT_SECONDS,
+        max(usable / (max_retries + 1), 0.5),
+    )
+    return bounded_model_settings(
+        model_settings,
+        timeout_seconds=timeout_seconds,
+        max_retries=max_retries,
     )
 
 
@@ -141,7 +191,7 @@ class RuntimeSupervisingModel(Model):
         return await self._inner.get_response(
             with_runtime_status(system_instructions, self._scope),
             input,
-            bounded_model_settings(model_settings),
+            deadline_aware_model_settings(model_settings, scope=self._scope),
             tools,
             output_schema,
             handoffs,
@@ -165,7 +215,10 @@ class RuntimeSupervisingModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> AsyncIterator[TResponseStreamEvent]:
-        settings = bounded_model_settings(model_settings).resolve({"include_usage": True})
+        settings = deadline_aware_model_settings(
+            model_settings,
+            scope=self._scope,
+        ).resolve({"include_usage": True})
         return self._inner.stream_response(
             with_runtime_status(system_instructions, self._scope),
             input,
