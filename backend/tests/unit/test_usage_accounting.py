@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from jurisnexo.model_providers.usage_accounting import (
     DeepSeekPricingCatalog,
+    ModelTurnUsage,
+    ModelUsageTracker,
     UnsupportedPricingMode,
 )
 
@@ -69,3 +71,52 @@ def test_batch_pricing_fails_closed_until_deepseek_publishes_a_tariff() -> None:
             at=datetime(2026, 9, 14, 4, 30, tzinfo=UTC),
             execution_mode="batch",
         )
+
+
+def _turn(*, session_turn: int, seconds: float, output_tokens: int, total_tokens: int) -> ModelTurnUsage:
+    started = datetime(2026, 9, 14, 4, 30, tzinfo=UTC) + timedelta(seconds=session_turn * 20)
+    return ModelTurnUsage(
+        session_turn=session_turn,
+        run_turn=session_turn,
+        role="structure_agent",
+        round_number=0,
+        request_started_at=started,
+        response_completed_at=started + timedelta(seconds=seconds),
+        request_latency_seconds=seconds,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        input_tokens=total_tokens - output_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        input_cache_hit_tokens=0,
+        input_cache_miss_tokens=total_tokens - output_tokens,
+        reasoning_tokens=0,
+        output_tokens_per_second=output_tokens / seconds,
+        total_tokens_per_second=total_tokens / seconds,
+        estimated_cost_usd=None,
+        session_total_tokens_after_turn=total_tokens,
+        session_model_time_seconds_after_turn=seconds,
+        session_output_tokens_per_second_after_turn=output_tokens / seconds,
+        session_total_tokens_per_second_after_turn=total_tokens / seconds,
+        session_estimated_cost_usd_after_turn=None,
+        pricing=None,
+        response_id=None,
+        request_id=None,
+    )
+
+
+def test_session_throughput_is_weighted_by_model_time_not_mean_of_turn_rates() -> None:
+    tracker = ModelUsageTracker(provider="deepseek", model="deepseek-v4-flash")
+    turns = (
+        _turn(session_turn=1, seconds=1.0, output_tokens=100, total_tokens=200),
+        _turn(session_turn=2, seconds=9.0, output_tokens=90, total_tokens=900),
+    )
+
+    summary = tracker.summary(turns)
+
+    assert summary.model_time_seconds == 10.0
+    assert summary.output_tokens == 190
+    assert summary.total_tokens == 1100
+    assert summary.output_tokens_per_second == pytest.approx(19.0)
+    assert summary.total_tokens_per_second == pytest.approx(110.0)
+    assert summary.output_tokens_per_second != pytest.approx((100.0 + 10.0) / 2)
