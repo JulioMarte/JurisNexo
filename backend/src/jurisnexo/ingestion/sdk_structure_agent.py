@@ -209,9 +209,9 @@ def _scope_reminder(context: StructureAgentContext, query: str, result: str) -> 
         f"{result}\n\n"
         "SCOPE_REMINDER: You have now issued many distinct literal searches. If the SUMARIO/index, "
         "pagination transform, and representative boundary pattern are already established, stop "
-        "verifying entries one-by-one. Create DecisionWorkUnits for the remaining index entries and "
-        "finalize. Continue searching only when this query resolves a specific structural anomaly, "
-        "pagination discrepancy, omission risk, or uncertain boundary."
+        "verifying entries one-by-one. Create DecisionWorkUnits for the remaining "
+        "index entries and finalize. Continue searching only when this query resolves a specific "
+        "structural anomaly, pagination discrepancy, omission risk, or uncertain boundary."
     )
 
 
