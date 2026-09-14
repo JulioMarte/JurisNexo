@@ -1,5 +1,6 @@
 name: SCJ bulletin structure pipeline smoke
 
+# Trigger commit for one live agent evaluation on the feature branch.
 on:
   workflow_dispatch:
   push:
