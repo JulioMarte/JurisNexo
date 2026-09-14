@@ -18,29 +18,6 @@ env:
   SOURCE_URL: https://transparencia.poderjudicial.gob.do/documentos/PDF/boletines/1980/FEBRERO.pdf
 
 jobs:
-  patch_lint:
-    if: github.event_name == 'push' && github.event.head_commit.message == 'Fix raw finalizer lint'
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Remove obsolete decorator import
-        run: |
-          set -euo pipefail
-          sed -i '/^from agents\.decorators import tool$/d' backend/src/jurisnexo/ingestion/sdk_structure_auditor.py
-          git diff --check
-      - name: Commit lint repair
-        run: |
-          set -euo pipefail
-          git config user.name 'JurisNexo CI repair'
-          git config user.email 'actions@users.noreply.github.com'
-          git add backend/src/jurisnexo/ingestion/sdk_structure_auditor.py
-          git commit -m 'Remove obsolete structure auditor import'
-          git push origin HEAD:ingestion/structure-agent-adversarial-trace
-
   smoke:
     if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Run one-shot DeepSeek structure smoke'
     name: Investigate and adversarially audit one real SCJ bulletin
