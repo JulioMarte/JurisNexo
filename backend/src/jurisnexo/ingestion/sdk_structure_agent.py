@@ -37,6 +37,10 @@ def _empty_finalization_errors() -> list[str]:
     return []
 
 
+def _empty_search_queries() -> set[str]:
+    return set()
+
+
 @dataclass(frozen=True, slots=True)
 class StructureAgentContext:
     environment: DocumentEnvironment
@@ -48,6 +52,8 @@ class StructureAgentContext:
     finalized_output: list[object] = field(default_factory=_empty_finalized_output, repr=False)
     max_finalization_repair_attempts: int = 3
     finalization_errors: list[str] = field(default_factory=_empty_finalization_errors, repr=False)
+    scope_reminder_after_unique_searches: int = 12
+    search_queries: set[str] = field(default_factory=_empty_search_queries, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_tool_output_chars < 1_000:
@@ -56,6 +62,8 @@ class StructureAgentContext:
             raise ValueError("search_max_hits must be between 1 and 100")
         if self.max_finalization_repair_attempts < 1:
             raise ValueError("max_finalization_repair_attempts must be positive")
+        if self.scope_reminder_after_unique_searches < 1:
+            raise ValueError("scope_reminder_after_unique_searches must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +198,21 @@ def _search_text(query: str, hits: tuple[TextSearchHit, ...]) -> str:
             metadata.append(f"source_reference={hit.source_reference}")
         rendered.append(f"{' | '.join(metadata)}\n{hit.snippet}")
     return "\n\n".join(rendered)
+
+
+def _scope_reminder(context: StructureAgentContext, query: str, result: str) -> str:
+    normalized_query = " ".join(query.casefold().split())
+    context.search_queries.add(normalized_query)
+    if len(context.search_queries) <= context.scope_reminder_after_unique_searches:
+        return result
+    return (
+        f"{result}\n\n"
+        "SCOPE_REMINDER: You have now issued many distinct literal searches. If the SUMARIO/index, "
+        "pagination transform, and representative boundary pattern are already established, stop "
+        "verifying entries one-by-one. Create DecisionWorkUnits for the remaining index entries and "
+        "finalize. Continue searching only when this query resolves a specific structural anomaly, "
+        "pagination discrepancy, omission risk, or uncertain boundary."
+    )
 
 
 def bound_tool_output(context: StructureAgentContext, output: str) -> str:
@@ -365,7 +388,9 @@ def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> st
     arguments: dict[str, int | str] = {"query": query}
     try:
         hits = ctx.context.environment.search_text(query, max_hits=ctx.context.search_max_hits)
-        result = bound_tool_output(ctx.context, _search_text(query, hits))
+        result = _search_text(query, hits)
+        result = _scope_reminder(ctx.context, query, result)
+        result = bound_tool_output(ctx.context, result)
     except Exception as exc:
         _trace_error(ctx.context, tool_name="search_text", arguments=arguments, error=exc)
         raise
@@ -428,6 +453,7 @@ async def run_structure_agent(
     trace_stage: StructureTraceStage = "structure_agent",
     investigation_context: str | None = None,
     max_finalization_repair_attempts: int = 3,
+    scope_reminder_after_unique_searches: int = 12,
 ) -> StructureAgentRunResult:
     """Run structure discovery and reject source-unsupported page identities."""
 
@@ -448,6 +474,7 @@ async def run_structure_agent(
             max_identical_calls=max_identical_tool_calls,
         ),
         max_finalization_repair_attempts=max_finalization_repair_attempts,
+        scope_reminder_after_unique_searches=scope_reminder_after_unique_searches,
     )
     agent = build_structure_agent(model=model)
     initial_page = _page_text(environment.get_page(1))
