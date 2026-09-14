@@ -141,6 +141,10 @@ class ExtractionAgentRunResult:
     last_agent_name: str
 
 
+class ExtractionToolRequestError(ValueError):
+    """Recoverable request error produced while navigating one bounded decision."""
+
+
 _INSTRUCTIONS = """\
 You are the JurisNexo Extraction Agent. The source-faithful decision reconstruction is immutable.
 Do not rewrite, summarize, repair, or complete its text. Your task is only to annotate bounded
@@ -151,6 +155,10 @@ also use source spans when supported. `exact_text` must be copied exactly from t
 and character range. Never use evidence outside the bounded decision. Do not infer missing dates,
 parties, numbers, holdings, legal issues, or citations. Put uncertain/missing items in `unresolved`
 instead of guessing.
+
+A TOOL_REQUEST_REJECTED response is recoverable. It means the requested page/query/output does not
+fit the bounded decision or tool contract. Adapt the request and continue; do not repeat the same
+invalid call. Unexpected runtime and invariant failures remain fatal.
 
 Do not perform deep legal enrichment. In particular, do not create holdings, Legal Elements,
 proposition graphs, citation treatment, or later-treatment conclusions in this stage.
@@ -166,7 +174,9 @@ def render_decision_page(decision: SourceFaithfulDecision, view_page: int) -> st
                 f"view_page={page.view_page} | printed_page={page.printed_page} | "
                 f"source_reference={page.source_reference}\n{page.text}"
             )
-    raise ValueError(f"view_page {view_page} is outside the bounded decision")
+    raise ExtractionToolRequestError(
+        f"view_page {view_page} is outside the bounded decision"
+    )
 
 
 def search_bounded_decision(decision: SourceFaithfulDecision, query: str) -> str:
@@ -174,9 +184,9 @@ def search_bounded_decision(decision: SourceFaithfulDecision, query: str) -> str
 
     needle = query.strip()
     if not needle:
-        raise ValueError("query must not be empty")
+        raise ExtractionToolRequestError("query must not be empty")
     if len(needle) > 200:
-        raise ValueError("query exceeds 200 characters")
+        raise ExtractionToolRequestError("query exceeds 200 characters")
     hits: list[str] = []
     folded_needle = needle.casefold()
     for page in decision.pages:
@@ -197,18 +207,32 @@ def search_bounded_decision(decision: SourceFaithfulDecision, query: str) -> str
 
 def _bound(context: ExtractionAgentContext, output: str) -> str:
     if len(output) > context.max_tool_output_chars:
-        raise ValueError("tool output exceeds extraction context budget; narrow the request")
+        raise ExtractionToolRequestError(
+            "tool output exceeds extraction context budget; narrow the request"
+        )
     return output
 
 
-@tool(failure_error_function=None)
+def _extraction_tool_error_feedback(
+    _ctx: RunContextWrapper[ExtractionAgentContext], error: Exception
+) -> str:
+    if not isinstance(error, ExtractionToolRequestError):
+        raise error
+    return (
+        "TOOL_REQUEST_REJECTED. This is a recoverable bounded-decision navigation error. "
+        "Adapt the page or query and continue; do not repeat the identical request. "
+        f"Reason: {error}"
+    )
+
+
+@tool(failure_error_function=_extraction_tool_error_feedback)
 def get_decision_page(ctx: RunContextWrapper[ExtractionAgentContext], view_page: int) -> str:
     """Read one complete source page, but only if it belongs to the bounded decision."""
 
     return _bound(ctx.context, render_decision_page(ctx.context.decision, view_page))
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_extraction_tool_error_feedback)
 def search_decision_text(ctx: RunContextWrapper[ExtractionAgentContext], query: str) -> str:
     """Find literal text only inside the bounded decision and return page-local character spans."""
 
