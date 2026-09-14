@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -30,6 +31,7 @@ from jurisnexo.ingestion.sdk_structure_agent import (
     inspect_artifact,
     search_text,
 )
+from jurisnexo.ingestion.structure_budget import StructureToolBudget
 from jurisnexo.ingestion.structure_trace import (
     ArtifactInspectionProfile,
     StructureToolTraceEvent,
@@ -213,6 +215,11 @@ def finalize_structure_audit(
         arguments={"output_type": "StructureAuditResult"},
         result=rendered,
     )
+    ctx.context.tool_budget.observe_success(
+        tool_name="finalize_structure_audit",
+        arguments={"output_type": "StructureAuditResult"},
+        result_char_count=len(rendered),
+    )
     return rendered
 
 
@@ -279,7 +286,10 @@ async def run_structure_auditor(
     model: str,
     structure_agent_trace: tuple[StructureToolTraceEvent, ...] = (),
     max_turns: int = 96,
+    max_runtime_seconds: int = 600,
     max_tool_output_chars: int = 60_000,
+    max_total_tool_result_chars: int = 750_000,
+    max_identical_tool_calls: int = 4,
     search_max_hits: int = 20,
     artifact_profile: ArtifactInspectionProfile | None = None,
     trace_prompt_max_chars: int = 40_000,
@@ -288,6 +298,8 @@ async def run_structure_auditor(
 ) -> StructureAuditorRunResult:
     """Adversarially audit one structure hypothesis and validate every cited page identity."""
 
+    if max_runtime_seconds < 1:
+        raise ValueError("max_runtime_seconds must be positive")
     recorder = StructureToolTraceRecorder(
         stage="structure_auditor",
         journal_path=trace_journal_path,
@@ -298,6 +310,10 @@ async def run_structure_auditor(
         search_max_hits=search_max_hits,
         artifact_profile=artifact_profile,
         trace_recorder=recorder,
+        tool_budget=StructureToolBudget(
+            max_total_result_chars=max_total_tool_result_chars,
+            max_identical_calls=max_identical_tool_calls,
+        ),
     )
     auditor = build_structure_auditor(model=model)
     trace_text = render_tool_trace(structure_agent_trace, max_chars=trace_prompt_max_chars)
@@ -318,13 +334,14 @@ async def run_structure_auditor(
     if model_provider is not None:
         run_config.model_provider = model_provider
     try:
-        result = await Runner.run(
-            starting_agent=auditor,
-            input=prompt,
-            context=context,
-            max_turns=max_turns,
-            run_config=run_config,
-        )
+        async with asyncio.timeout(max_runtime_seconds):
+            result = await Runner.run(
+                starting_agent=auditor,
+                input=prompt,
+                context=context,
+                max_turns=max_turns,
+                run_config=run_config,
+            )
     except MaxTurnsExceeded as exc:
         raise StructureInvestigationBudgetExceeded(
             stage="structure_auditor",
