@@ -10,9 +10,12 @@ pytestmark = [pytest.mark.unit]
 
 def _tool_decorator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Call | None:
     for decorator in function.decorator_list:
-        if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Name):
-            if decorator.func.id == "tool":
-                return decorator
+        if (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Name)
+            and decorator.func.id == "tool"
+        ):
+            return decorator
     return None
 
 
