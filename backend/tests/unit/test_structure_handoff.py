@@ -10,6 +10,7 @@ from jurisnexo.ingestion.document_discovery import (
     StructureFindingAttribute,
 )
 from jurisnexo.ingestion.structure_handoff import (
+    approved_decision_work_units,
     build_approved_structure_context,
     render_approved_structure_context,
 )
@@ -37,6 +38,14 @@ def _hypothesis() -> DocumentStructureHypothesis:
                 index_label="Second decision",
                 candidate_start_view_page=12,
                 confidence=0.9,
+            ),
+            DecisionWorkUnit(
+                work_unit_id="admin-001",
+                unit_kind="administrative_section",
+                index_ordinal=3,
+                index_label="Labor de la Suprema Corte",
+                candidate_start_view_page=180,
+                confidence=0.95,
             ),
         ],
         structure_findings=[
@@ -108,4 +117,30 @@ def test_handoff_rejects_unknown_work_unit() -> None:
             hypothesis=_hypothesis(),
             audit_state="APPROVED",
             work_unit_id="does-not-exist",
+        )
+
+
+def test_nondecision_work_unit_cannot_receive_decision_extraction_context() -> None:
+    with pytest.raises(ValueError, match="not a judicial decision extraction target"):
+        build_approved_structure_context(
+            hypothesis=_hypothesis(),
+            audit_state="APPROVED",
+            work_unit_id="admin-001",
+        )
+
+
+def test_approved_decision_fanout_filters_administrative_sections() -> None:
+    units = approved_decision_work_units(
+        hypothesis=_hypothesis(),
+        audit_state="APPROVED",
+    )
+
+    assert [unit.work_unit_id for unit in units] == ["decision-001", "decision-002"]
+
+
+def test_decision_fanout_requires_clean_approval() -> None:
+    with pytest.raises(ValueError, match="clean APPROVED"):
+        approved_decision_work_units(
+            hypothesis=_hypothesis(),
+            audit_state="APPROVED_WITH_AMENDMENTS",
         )
