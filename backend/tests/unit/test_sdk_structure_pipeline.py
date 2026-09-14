@@ -70,6 +70,9 @@ def _audit(state: str) -> StructureAuditorRunResult:
                 }
             ],
             "amendments": ["Correct the candidate before extraction."],
+            "required_follow_up": [
+                "Revise the candidate and submit it for a clean adversarial re-audit."
+            ],
             "summary": "approval requires correction",
         }
     else:
