@@ -151,12 +151,20 @@ def _empty_structure_findings() -> list[StructureFinding]:
     return []
 
 
+IndexedUnitKind = Literal[
+    "decision",
+    "administrative_section",
+    "other_indexed_section",
+]
+
+
 class DecisionWorkUnit(BaseModel):
-    """A structure-stage handoff for one indexed decision, not extracted legal content."""
+    """A structure-stage handoff for one indexed unit, before extraction eligibility is decided."""
 
     model_config = ConfigDict(extra="forbid")
 
     work_unit_id: str = Field(min_length=1)
+    unit_kind: IndexedUnitKind = "decision"
     index_ordinal: int = Field(ge=1)
     index_label: str = Field(min_length=1)
     index_reference_printed_page: int | None = Field(default=None, ge=1)
@@ -169,6 +177,12 @@ class DecisionWorkUnit(BaseModel):
     )
     confidence: float = Field(ge=0.0, le=1.0)
     status: Literal["candidate", "boundary_uncertain", "index_only"] = "candidate"
+
+    @property
+    def extraction_eligible_kind(self) -> bool:
+        """Only judicial decisions may fan out to the decision-extraction stage."""
+
+        return self.unit_kind == "decision"
 
     @model_validator(mode="after")
     def validate_candidate_range(self) -> DecisionWorkUnit:
@@ -362,8 +376,11 @@ Your goal is to propose a candidate structural interpretation from the supplied 
 Identify possible document type, index pages, case-boundary signals, recurring metadata regions,
 and anomalies that require further inspection. When evidence supports concrete boundaries,
 return them as candidate_segments using physical page numbers. For indexed compilations, also
-produce decision_work_units that hand each index entry and its candidate page range to later
-extraction agents. A decision_work_unit is a routing hypothesis, not extracted legal content.
+produce decision_work_units for indexed units that need downstream routing. Classify each unit with
+unit_kind. Judicial decisions use unit_kind='decision'; tables, statistics, monthly labor reports,
+or other administrative material must not masquerade as decisions and should use
+'administrative_section' or 'other_indexed_section'. Only decision units are eligible for later
+legal extraction. A work unit is a routing hypothesis, not extracted legal content.
 For each concrete segment, include only metadata values that are explicitly evidenced in inspected
 pages, together with the physical evidence pages. Typical useful fields include document_type,
 decision_date, decision_number, docket_number, and parties. Leave an end page or field unknown
