@@ -1,6 +1,7 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -58,14 +59,15 @@ def test_structure_finalization_error_returns_model_visible_repair_feedback() ->
     assert wrapper.context.trace_recorder.events[0].status == "error"
 
 
-@pytest.mark.asyncio
-async def test_raw_malformed_structure_finalizer_json_is_repairable_before_sdk_parsing() -> None:
+def test_raw_malformed_structure_finalizer_json_is_repairable_before_sdk_parsing() -> None:
     context = StructureAgentContext(environment=DocumentEnvironment(pages=("page one",)))
     wrapper = cast(Any, SimpleNamespace(context=context))
 
-    feedback = await finalize_structure_hypothesis.on_invoke_tool(
-        wrapper,
-        '{"hypothesis":',
+    feedback = asyncio.run(
+        finalize_structure_hypothesis.on_invoke_tool(
+            wrapper,
+            '{"hypothesis":',
+        )
     )
 
     assert "FINALIZATION_REJECTED" in str(feedback)
