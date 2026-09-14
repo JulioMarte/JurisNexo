@@ -417,6 +417,12 @@ async def run_structure_agent(
             error=exc,
             tool_trace=context.trace_recorder.events,
         ) from exc
+    except Exception as exc:
+        raise StructureInvestigationFailed(
+            stage="structure_agent",
+            error=exc,
+            tool_trace=context.trace_recorder.events,
+        ) from exc
 
     if len(context.finalized_output) != 1 or not isinstance(
         context.finalized_output[0], DocumentStructureHypothesis
