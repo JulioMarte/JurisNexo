@@ -14,7 +14,10 @@ def test_structure_auditor_instructions_require_adversarial_source_review() -> N
     assert isinstance(instructions, str)
     assert "try to falsify" in instructions
     assert "Use the same read-only workspace tools" in instructions
-    assert "Do not replay every prior call" in instructions or "Do not re-read every unchanged" in instructions
+    assert (
+        "Do not replay every prior call" in instructions
+        or "Do not re-read every unchanged" in instructions
+    )
     assert "not a legal extraction agent" in instructions
     assert "minimum independent evidence" in instructions
     assert "Tool-call volume is not confidence" in instructions
