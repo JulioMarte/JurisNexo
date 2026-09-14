@@ -63,16 +63,17 @@ def _annotations() -> ExtractionAnnotations:
     )
 
 
-def test_extraction_auditor_is_separate_agent_with_source_tools() -> None:
+def test_extraction_auditor_is_separate_agent_with_source_tools_and_finalizer() -> None:
     auditor = build_extraction_auditor(model="gemini/gemini-3.8-flash")
 
     assert auditor.name == "JurisNexo Extraction Auditor"
-    assert auditor.output_type == ExtractionAuditResult
+    assert auditor.output_type is None
     tools = [tool for tool in auditor.tools if isinstance(tool, FunctionTool)]
     assert {tool.name for tool in tools} == {
         "get_candidate_page",
         "get_source_page",
         "get_source_pages",
+        "finalize_extraction_audit",
     }
 
 

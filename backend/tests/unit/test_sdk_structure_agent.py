@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from agents import FunctionTool
 
-from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
 from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
 from jurisnexo.ingestion.sdk_structure_agent import (
     StructureAgentContext,
@@ -11,6 +10,7 @@ from jurisnexo.ingestion.sdk_structure_agent import (
     build_structure_agent,
     render_printed_page_range,
 )
+from jurisnexo.ingestion.structure_trace import ArtifactInspectionProfile
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
 
@@ -26,19 +26,21 @@ def _environment() -> DocumentEnvironment:
     )
 
 
-def test_structure_agent_uses_structured_output_and_document_tools() -> None:
+def test_structure_agent_uses_validated_finalization_and_document_tools() -> None:
     agent = build_structure_agent(model="gemini/gemini-3.8-flash")
 
     assert agent.name == "JurisNexo Structure Agent"
-    assert agent.output_type == DocumentStructureHypothesis
+    assert agent.output_type is None
     function_tools = [tool for tool in agent.tools if isinstance(tool, FunctionTool)]
     assert len(function_tools) == len(agent.tools)
     assert {tool.name for tool in function_tools} == {
+        "inspect_artifact",
         "get_page",
         "get_pages",
         "get_printed_page",
         "get_printed_pages",
         "search_text",
+        "finalize_structure_hypothesis",
     }
 
 
@@ -63,3 +65,25 @@ def test_tool_output_budget_rejects_oversized_evidence() -> None:
 def test_structure_agent_context_rejects_invalid_budget() -> None:
     with pytest.raises(ValueError, match="at least 1000"):
         StructureAgentContext(environment=_environment(), max_tool_output_chars=999)
+
+
+def test_structure_agent_context_accepts_artifact_profile_and_trace_recorder() -> None:
+    profile = ArtifactInspectionProfile(
+        physical_page_count=2,
+        pages_with_extractable_text=2,
+        pages_with_images=2,
+        pages_with_text_and_images=2,
+        suspected_rendering_mode="scanned_image_with_text_layer",
+        profile_method="test",
+    )
+
+    context = StructureAgentContext(environment=_environment(), artifact_profile=profile)
+    context.trace_recorder.record_success(
+        tool_name="inspect_artifact",
+        arguments={},
+        result=profile.model_dump_json(),
+    )
+
+    assert context.artifact_profile == profile
+    assert len(context.trace_recorder.events) == 1
+    assert context.trace_recorder.events[0].tool_name == "inspect_artifact"

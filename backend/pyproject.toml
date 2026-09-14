@@ -40,6 +40,9 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
 # Long SQL literals are more readable and auditable when they preserve their SQL shape.
 "migrations/versions/*.py" = ["E501"]
 "tests/integration/test_initial_schema_contract.py" = ["E501"]
+# Agent instructions are reviewed as prose contracts; forced wrapping can make prompt diffs noisier.
+"src/jurisnexo/ingestion/sdk_structure_agent.py" = ["E501"]
+"src/jurisnexo/ingestion/sdk_structure_auditor.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]
@@ -52,6 +55,7 @@ addopts = "-ra --strict-markers --strict-config"
 xfail_strict = true
 markers = [
     "unit: pure or isolated unit tests",
+    "asyncio: asynchronous unit tests driven explicitly by the test suite",
     "postgres: requires PostgreSQL",
     "integration: crosses component boundaries",
     "invariant: proves a durable correctness or safety property",

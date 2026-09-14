@@ -262,14 +262,56 @@ These are separate systems.
 ### Ingestion path
 
 ```text
-source PDF/HTML
-    -> extract/OCR
-    -> normalize pages
-    -> metadata extraction
-    -> citation extraction
-    -> baseline quality checks
-    -> searchable corpus
+immutable source PDF/HTML
+    -> deterministic extraction/OCR + document environment
+    -> Structure Agent
+    -> adversarial Structure Auditor
+    -> bounded reinvestigation when required
+    -> clean APPROVED structure
+    -> DecisionWorkUnits + approved structural context
+    -> bounded per-decision extraction
+    -> extraction audit
+    -> normalized searchable corpus
 ```
+
+The Structure Agent performs document archaeology and routing rather than exhaustive legal extraction. Its job is to locate indexes or SUMARIO sections, understand printed/view pagination, identify recurring decision boundaries, record material anomalies, and produce one `DecisionWorkUnit` per indexed decision when possible.
+
+### Durable structure findings
+
+Document-level discoveries that can materially affect downstream work must be recorded as typed `structure_findings`, not only prose notes. Examples include:
+
+- evidence that the stored artifact is an excerpt or incomplete scan of a larger printed volume;
+- a printed-page to document-view pagination transform or offset;
+- missing, duplicated, unresolved, or repeated scans;
+- index destinations that disagree with observable source pagination;
+- recurring decision-boundary patterns;
+- OCR limitations that make a region unsafe for blind metadata extraction;
+- source-identity or scan-composition facts relevant to later agents.
+
+A structure finding carries a stable ID, type, statement, operational impact, confidence, typed source evidence when page-backed, machine-readable attributes, optional work-unit scope, and downstream instructions.
+
+The Structure Auditor treats these findings as first-class claims. It may confirm, amend, reject, leave unresolved, or add a finding. It must not silently mutate the authoritative candidate. Any amendment, rejection, or newly added material finding produces `APPROVED_WITH_AMENDMENTS` (or a stricter state) and therefore requires a revised Structure Agent candidate followed by another audit. Only a clean `APPROVED` hypothesis may unlock extraction.
+
+After clean approval, only material findings that are global or applicable to a specific `DecisionWorkUnit` are handed to downstream extraction agents. This `ApprovedStructureContext` is operational guidance, not primary legal evidence. For example, an approved pagination offset may tell an extractor how to navigate the source, but it cannot by itself prove a party name, date, holding, statute, or other legal fact. Those still require exact source evidence from the bounded decision.
+
+### Recoverable agent errors
+
+The ingestion runtime must distinguish expected investigation failures from actual software failures.
+
+Expected request/domain conditions are model-visible and recoverable. Examples include:
+
+- an unresolved printed page;
+- a requested view page outside the current document view or bounded decision;
+- an invalid/narrowable page range;
+- an empty or oversized literal query;
+- a tool response that exceeds the per-call evidence budget;
+- final JSON/schema/provenance that the model can correct without repeating source investigation.
+
+These conditions return bounded feedback such as `TOOL_REQUEST_REJECTED` or `FINALIZATION_REJECTED`. The agent must adapt its request or repair only the final payload. It should not repeat the same rejected operation.
+
+Unexpected runtime exceptions, programming defects, corrupted state, invariant violations, and exhausted safety budgets remain fatal. JurisNexo must not use broad catch-and-continue behavior that hides genuine bugs.
+
+Source-grounded SDK agents finalize through explicit repairable finalizer tools so deterministic schema and provenance validation occurs before a run is accepted. Architecture fitness tests enforce both rules: every SDK tool declares an explicit failure policy, and source-grounded ingestion agents must not bypass the repair loop with a native terminal `output_type` followed by post-run source validation.
 
 ### Research path
 

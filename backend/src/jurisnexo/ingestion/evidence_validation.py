@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
+from jurisnexo.ingestion.document_discovery import (
+    DocumentStructureHypothesis,
+    InvestigationPageEvidence,
+)
 from jurisnexo.ingestion.document_environment import DocumentEnvironment, DocumentEnvironmentError
 
 
@@ -16,50 +19,77 @@ class EvidenceValidationError(ValueError):
         return self.message
 
 
+def _validate_evidence_pages(
+    *,
+    evidence_pages: list[InvestigationPageEvidence],
+    environment: DocumentEnvironment,
+    label: str,
+) -> None:
+    for evidence_index, evidence in enumerate(evidence_pages, start=1):
+        item_label = f"{label}, evidence item {evidence_index}"
+        try:
+            page = environment.get_page(evidence.view_page)
+        except DocumentEnvironmentError as exc:
+            raise EvidenceValidationError(
+                f"{item_label}: view page {evidence.view_page} is not in the document environment"
+            ) from exc
+
+        if page.printed_page_number is None:
+            if evidence.printed_page is not None:
+                raise EvidenceValidationError(
+                    f"{item_label}: view page {evidence.view_page} has no resolved printed page; "
+                    f"model claimed printed page {evidence.printed_page}"
+                )
+        elif evidence.printed_page != page.printed_page_number:
+            raise EvidenceValidationError(
+                f"{item_label}: view page {evidence.view_page} resolves to printed page "
+                f"{page.printed_page_number}, not claimed printed page {evidence.printed_page}"
+            )
+
+        if evidence.source_reference is not None:
+            if page.source_reference is None:
+                raise EvidenceValidationError(
+                    f"{item_label}: source provenance was claimed but the environment has none"
+                )
+            if page.source_reference != evidence.source_reference:
+                raise EvidenceValidationError(
+                    f"{item_label}: source provenance does not match the document environment"
+                )
+
+
 def validate_index_reference_evidence(
     *,
     hypothesis: DocumentStructureHypothesis,
     environment: DocumentEnvironment,
 ) -> None:
-    """Prove that every typed index-reference evidence pair exists in the source view.
+    """Validate every typed structure evidence item against the immutable source view.
 
-    This is intentionally deterministic. The model may propose page identities, but it does
-    not get authority to assert that a view page corresponds to a printed page or provenance
-    reference. Those facts are checked against the immutable DocumentEnvironment.
+    The historical function name is retained for compatibility. Validation now covers index
+    investigations, decision-work-unit boundary evidence, and durable structure findings. Printed
+    identity is checked whenever the environment resolved it; otherwise models must preserve a null
+    printed identity rather than inventing pagination.
     """
 
     for investigation_index, investigation in enumerate(
         hypothesis.index_reference_investigations,
         start=1,
     ):
-        for evidence_index, evidence in enumerate(investigation.evidence_pages, start=1):
-            label = (
-                f"index investigation {investigation_index}, "
-                f"evidence item {evidence_index}"
-            )
-            try:
-                page = environment.get_page(evidence.view_page)
-            except DocumentEnvironmentError as exc:
-                raise EvidenceValidationError(
-                    f"{label}: view page {evidence.view_page} is not in the document environment"
-                ) from exc
+        _validate_evidence_pages(
+            evidence_pages=investigation.evidence_pages,
+            environment=environment,
+            label=f"index investigation {investigation_index}",
+        )
 
-            if page.printed_page_number is None:
-                raise EvidenceValidationError(
-                    f"{label}: view page {evidence.view_page} has no resolved printed page"
-                )
-            if page.printed_page_number != evidence.printed_page:
-                raise EvidenceValidationError(
-                    f"{label}: view page {evidence.view_page} resolves to printed page "
-                    f"{page.printed_page_number}, not claimed printed page {evidence.printed_page}"
-                )
+    for unit_index, unit in enumerate(hypothesis.decision_work_units, start=1):
+        _validate_evidence_pages(
+            evidence_pages=unit.boundary_evidence_pages,
+            environment=environment,
+            label=f"decision work unit {unit_index} ({unit.work_unit_id})",
+        )
 
-            if evidence.source_reference is not None:
-                if page.source_reference is None:
-                    raise EvidenceValidationError(
-                        f"{label}: source provenance was claimed but the environment has none"
-                    )
-                if page.source_reference != evidence.source_reference:
-                    raise EvidenceValidationError(
-                        f"{label}: source provenance does not match the document environment"
-                    )
+    for finding_index, finding in enumerate(hypothesis.structure_findings, start=1):
+        _validate_evidence_pages(
+            evidence_pages=finding.evidence_pages,
+            environment=environment,
+            label=f"structure finding {finding_index} ({finding.finding_id})",
+        )
