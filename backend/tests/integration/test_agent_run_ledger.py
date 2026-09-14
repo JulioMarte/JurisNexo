@@ -163,7 +163,11 @@ def test_agent_run_event_sequence_and_pipeline_state_are_durable(
         assert row[:7] == (1, 1_500, 500, 2_000, 1_000, 500, 100)
         assert row[7] == Decimal("0.0004470000")
         cursor.execute(
-            "select event_type, payload->>'session_turn' from corpus.agent_run_events where run_id = %s",
+            """
+            select event_type, payload->>'session_turn'
+            from corpus.agent_run_events
+            where run_id = %s
+            """,
             (run_id,),
         )
         assert cursor.fetchone() == ("model_turn", "1")
