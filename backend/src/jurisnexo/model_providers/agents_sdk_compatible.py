@@ -32,11 +32,10 @@ class CompatibleEndpointModelProvider(ModelProvider):
     def get_model(self, model_name: str | None) -> Model:
         if model_name is None or not model_name.strip():
             raise ValueError("an explicit model name is required")
-        replay_reasoning = (lambda _context: True) if self.provider_name == "deepseek" else None
         return OpenAIChatCompletionsModel(
             model=model_name,
             openai_client=self._client,
-            should_replay_reasoning_content=replay_reasoning,
+            should_replay_reasoning_content=self.provider_name == "deepseek",
         )
 
 
