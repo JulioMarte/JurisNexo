@@ -6,6 +6,7 @@ from typing import Literal, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 from jurisnexo.ingestion.document_discovery import (
+    DecisionWorkUnit,
     DocumentStructureHypothesis,
     StructureFinding,
 )
@@ -46,6 +47,20 @@ class _FindingPayload(TypedDict):
     evidence_pages: list[_EvidencePagePayload]
 
 
+def approved_decision_work_units(
+    *,
+    hypothesis: DocumentStructureHypothesis,
+    audit_state: str,
+) -> tuple[DecisionWorkUnit, ...]:
+    """Return only judicial work units after a clean structure approval."""
+
+    if audit_state != "APPROVED":
+        raise ValueError("decision extraction requires a clean APPROVED structure audit")
+    return tuple(
+        unit for unit in hypothesis.decision_work_units if unit.extraction_eligible_kind
+    )
+
+
 def build_approved_structure_context(
     *,
     hypothesis: DocumentStructureHypothesis,
@@ -57,8 +72,17 @@ def build_approved_structure_context(
     if audit_state != "APPROVED":
         raise ValueError("downstream structure context requires a clean APPROVED audit")
 
-    known_work_units = {unit.work_unit_id for unit in hypothesis.decision_work_units}
-    if work_unit_id is not None and work_unit_id not in known_work_units:
+    decision_work_units = {
+        unit.work_unit_id: unit
+        for unit in hypothesis.decision_work_units
+        if unit.extraction_eligible_kind
+    }
+    if work_unit_id is not None and work_unit_id not in decision_work_units:
+        all_ids = {unit.work_unit_id for unit in hypothesis.decision_work_units}
+        if work_unit_id in all_ids:
+            raise ValueError(
+                f"work unit {work_unit_id!r} is not a judicial decision extraction target"
+            )
         raise ValueError(f"unknown decision work unit {work_unit_id!r}")
 
     findings = [
