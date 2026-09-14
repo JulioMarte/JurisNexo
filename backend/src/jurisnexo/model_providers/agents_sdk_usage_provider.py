@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import time
 from typing import cast
 
 from agents import ModelRetrySettings, ModelSettings, retry_policies
