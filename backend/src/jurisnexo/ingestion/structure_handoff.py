@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Literal
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,6 +27,23 @@ class ApprovedStructureContext(BaseModel):
     work_unit_id: str | None = None
     findings: list[StructureFinding] = Field(default_factory=_empty_findings)
     audit_state: Literal["APPROVED"] = "APPROVED"
+
+
+class _EvidencePagePayload(TypedDict):
+    view_page: int
+    printed_page: int | None
+    source_reference: str | None
+
+
+class _FindingPayload(TypedDict):
+    finding_id: str
+    kind: str
+    statement: str
+    operational_impact: str
+    attributes: dict[str, str]
+    downstream_instructions: list[str]
+    confidence: float
+    evidence_pages: list[_EvidencePagePayload]
 
 
 def build_approved_structure_context(
@@ -66,8 +83,16 @@ def render_approved_structure_context(context: ApprovedStructureContext) -> str:
     if not context.findings:
         return "No material approved structure findings apply to this decision."
 
-    payload: list[dict[str, object]] = []
+    payload: list[_FindingPayload] = []
     for finding in context.findings:
+        evidence_pages: list[_EvidencePagePayload] = [
+            {
+                "view_page": evidence.view_page,
+                "printed_page": evidence.printed_page,
+                "source_reference": evidence.source_reference,
+            }
+            for evidence in finding.evidence_pages
+        ]
         payload.append(
             {
                 "finding_id": finding.finding_id,
@@ -79,14 +104,7 @@ def render_approved_structure_context(context: ApprovedStructureContext) -> str:
                 },
                 "downstream_instructions": finding.downstream_instructions,
                 "confidence": finding.confidence,
-                "evidence_pages": [
-                    {
-                        "view_page": evidence.view_page,
-                        "printed_page": evidence.printed_page,
-                        "source_reference": evidence.source_reference,
-                    }
-                    for evidence in finding.evidence_pages
-                ],
+                "evidence_pages": evidence_pages,
             }
         )
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
