@@ -141,13 +141,19 @@ def _persist_events(
             ledger.append_model_turn(run_id=run_id, event=event)
 
 
-def _stage_turns(tracker: ModelUsageTracker | None, start_index: int) -> tuple[ModelTurnUsage, ...]:
+def _stage_turns(
+    tracker: ModelUsageTracker | None,
+    start_index: int,
+) -> tuple[ModelTurnUsage, ...]:
     if tracker is None:
         return ()
     return tuple(tracker.turns[start_index:])
 
 
-def _usage_dict(tracker: ModelUsageTracker | None, turns: tuple[ModelTurnUsage, ...]) -> dict[str, object]:
+def _usage_dict(
+    tracker: ModelUsageTracker | None,
+    turns: tuple[ModelTurnUsage, ...],
+) -> dict[str, object]:
     if tracker is None:
         return {
             "request_count": 0,
