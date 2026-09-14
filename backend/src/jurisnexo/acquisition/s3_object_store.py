@@ -148,16 +148,27 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
 
 
 def is_s3_not_found(exc: Exception) -> bool:
-    response = getattr(exc, "response", None)
+    response: object = getattr(exc, "response", None)
     if not isinstance(response, Mapping):
         return False
-    error = response.get("Error", {})
-    metadata = response.get("ResponseMetadata", {})
-    code = str(error.get("Code", "")) if isinstance(error, Mapping) else ""
-    raw_status = metadata.get("HTTPStatusCode", 0) if isinstance(metadata, Mapping) else 0
-    try:
-        status = int(raw_status or 0)
-    except (TypeError, ValueError):
+    response_map = cast(Mapping[str, object], response)
+
+    error_value = response_map.get("Error")
+    metadata_value = response_map.get("ResponseMetadata")
+    error = cast(Mapping[str, object], error_value) if isinstance(error_value, Mapping) else {}
+    metadata = (
+        cast(Mapping[str, object], metadata_value)
+        if isinstance(metadata_value, Mapping)
+        else {}
+    )
+
+    code = str(error.get("Code", ""))
+    raw_status = metadata.get("HTTPStatusCode", 0)
+    if isinstance(raw_status, int):
+        status = raw_status
+    elif isinstance(raw_status, str) and raw_status.isdigit():
+        status = int(raw_status)
+    else:
         status = 0
     return status == 404 or code in {"404", "NoSuchKey", "NotFound", "NoSuchObject"}
 
