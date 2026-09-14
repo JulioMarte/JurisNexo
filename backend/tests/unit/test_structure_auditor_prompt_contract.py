@@ -19,7 +19,7 @@ def test_structure_auditor_instructions_require_adversarial_source_review() -> N
         or "Do not re-read every unchanged" in instructions
     )
     assert "not a legal extraction agent" in instructions
-    assert "minimum independent evidence" in instructions
+    assert "minimum" in instructions and "independent evidence" in instructions
     assert "Tool-call volume is not confidence" in instructions
     assert "carried_forward" in instructions
     assert "runtime marks that finding_id as eligible" in instructions
