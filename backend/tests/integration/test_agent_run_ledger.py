@@ -138,6 +138,9 @@ def test_agent_run_event_sequence_and_pipeline_state_are_durable(
         "input_cache_hit_tokens": 1_000,
         "input_cache_miss_tokens": 500,
         "reasoning_tokens": 100,
+        "model_time_seconds": 4.0,
+        "output_tokens_per_second": 125.0,
+        "total_tokens_per_second": 500.0,
         "estimated_cost_usd": "0.000447",
     }
     ledger.complete_agent_run(run_id=run_id, usage=usage)
@@ -153,7 +156,8 @@ def test_agent_run_event_sequence_and_pipeline_state_are_durable(
             """
             select request_count, input_tokens, output_tokens, total_tokens,
                    input_cache_hit_tokens, input_cache_miss_tokens,
-                   reasoning_tokens, estimated_cost_usd
+                   reasoning_tokens, estimated_cost_usd,
+                   model_time_seconds, output_tokens_per_second, total_tokens_per_second
             from corpus.agent_runs where id = %s
             """,
             (run_id,),
@@ -162,6 +166,19 @@ def test_agent_run_event_sequence_and_pipeline_state_are_durable(
         assert row is not None
         assert row[:7] == (1, 1_500, 500, 2_000, 1_000, 500, 100)
         assert row[7] == Decimal("0.0004470000")
+        assert row[8:] == (Decimal("4.000000"), Decimal("125.000000"), Decimal("500.000000"))
+        cursor.execute(
+            """
+            select model_time_seconds, output_tokens_per_second, total_tokens_per_second
+            from corpus.structure_pipeline_runs where id = %s
+            """,
+            (pipeline_id,),
+        )
+        assert cursor.fetchone() == (
+            Decimal("4.000000"),
+            Decimal("125.000000"),
+            Decimal("500.000000"),
+        )
         cursor.execute(
             """
             select event_type, payload->>'session_turn'
