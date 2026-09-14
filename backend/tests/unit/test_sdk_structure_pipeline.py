@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from jurisnexo.ingestion import sdk_structure_pipeline as pipeline_module
 from jurisnexo.ingestion.document_discovery import DocumentStructureHypothesis
+from jurisnexo.ingestion.document_environment import DocumentEnvironment
 from jurisnexo.ingestion.sdk_structure_agent import StructureAgentRunResult
 from jurisnexo.ingestion.sdk_structure_auditor import (
     StructureAuditorRunResult,
@@ -11,6 +15,7 @@ from jurisnexo.ingestion.sdk_structure_auditor import (
 from jurisnexo.ingestion.sdk_structure_pipeline import (
     StructurePipelineRound,
     StructurePipelineRunResult,
+    run_structure_pipeline,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
@@ -119,3 +124,68 @@ def test_amendments_and_unresolved_findings_require_reinvestigation() -> None:
     assert _pipeline("APPROVED").exhausted_reinvestigation is False
     assert _pipeline("APPROVED_WITH_AMENDMENTS").exhausted_reinvestigation is True
     assert _pipeline("MORE_INVESTIGATION_REQUIRED").exhausted_reinvestigation is True
+
+
+def test_pipeline_reinvestigates_then_requires_clean_reapproval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    structure_calls = 0
+    audit_states = ["APPROVED_WITH_AMENDMENTS", "APPROVED"]
+
+    async def fake_structure_agent(**_: object) -> StructureAgentRunResult:
+        nonlocal structure_calls
+        structure_calls += 1
+        return _structure()
+
+    async def fake_structure_auditor(**_: object) -> StructureAuditorRunResult:
+        return _audit(audit_states.pop(0))
+
+    monkeypatch.setattr(pipeline_module, "run_structure_agent", fake_structure_agent)
+    monkeypatch.setattr(pipeline_module, "run_structure_auditor", fake_structure_auditor)
+
+    result = asyncio.run(
+        run_structure_pipeline(
+            environment=DocumentEnvironment(("page one",)),
+            artifact_label="synthetic bulletin",
+            model="fake-model",
+            max_reinvestigation_rounds=2,
+        )
+    )
+
+    assert structure_calls == 2
+    assert len(result.rounds) == 2
+    assert result.rounds[0].audit.audit.state == "APPROVED_WITH_AMENDMENTS"
+    assert result.rounds[1].audit.audit.state == "APPROVED"
+    assert result.extraction_allowed is True
+
+
+def test_pipeline_stops_after_configured_reinvestigation_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    structure_calls = 0
+
+    async def fake_structure_agent(**_: object) -> StructureAgentRunResult:
+        nonlocal structure_calls
+        structure_calls += 1
+        return _structure()
+
+    async def fake_structure_auditor(**_: object) -> StructureAuditorRunResult:
+        return _audit("MORE_INVESTIGATION_REQUIRED")
+
+    monkeypatch.setattr(pipeline_module, "run_structure_agent", fake_structure_agent)
+    monkeypatch.setattr(pipeline_module, "run_structure_auditor", fake_structure_auditor)
+
+    result = asyncio.run(
+        run_structure_pipeline(
+            environment=DocumentEnvironment(("page one",)),
+            artifact_label="synthetic bulletin",
+            model="fake-model",
+            max_reinvestigation_rounds=2,
+        )
+    )
+
+    assert structure_calls == 3
+    assert len(result.rounds) == 3
+    assert result.audit.audit.state == "MORE_INVESTIGATION_REQUIRED"
+    assert result.extraction_allowed is False
+    assert result.exhausted_reinvestigation is True
