@@ -5,31 +5,18 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-import boto3
 import psycopg
-from botocore.config import Config
 
 from jurisnexo.acquisition.official_corpus import SourceName, object_key_for
+from jurisnexo.acquisition.s3_object_store import S3RuntimeSettings, create_boto3_s3_client
 
 Source = Literal["supreme_court", "constitutional_court"]
 REQUIRED_ENV = (
     "DATABASE_URL",
-    "JURISNEXO_S3_BUCKET",
-    "JURISNEXO_S3_ENDPOINT_URL",
-    "JURISNEXO_S3_REGION",
-    "JURISNEXO_S3_ACCESS_KEY_ID",
-    "JURISNEXO_S3_SECRET_ACCESS_KEY",
     "BACKFILL_VERIFY_SOURCE",
     "BACKFILL_VERIFY_INVENTORY",
     "BACKFILL_VERIFY_OUTPUT",
 )
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().casefold() not in {"", "0", "false", "no", "off"}
 
 
 def require_environment() -> None:
@@ -97,22 +84,10 @@ def expected_inventory(source: Source, path: Path) -> dict[tuple[str, str], str 
     return expected
 
 
-def s3_client() -> Any:
-    force_path_style = _env_flag("JURISNEXO_S3_FORCE_PATH_STYLE", True)
-    return boto3.client(
-        "s3",
-        endpoint_url=os.environ["JURISNEXO_S3_ENDPOINT_URL"],
-        region_name=os.environ["JURISNEXO_S3_REGION"],
-        aws_access_key_id=os.environ["JURISNEXO_S3_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["JURISNEXO_S3_SECRET_ACCESS_KEY"],
-        config=Config(s3={"addressing_style": "path" if force_path_style else "virtual"}),
-    )
-
-
-def list_s3_keys(client: Any, *, prefix: str) -> set[str]:
+def list_s3_keys(client: Any, *, bucket: str, prefix: str) -> set[str]:
     keys: set[str] = set()
     paginator = client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=os.environ["JURISNEXO_S3_BUCKET"], Prefix=prefix):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for item in page.get("Contents", []):
             key = str(item.get("Key") or "")
             if key:
@@ -129,6 +104,8 @@ def main() -> None:
     inventory = expected_inventory(source, Path(os.environ["BACKFILL_VERIFY_INVENTORY"]))
     output = Path(os.environ["BACKFILL_VERIFY_OUTPUT"])
     output.mkdir(parents=True, exist_ok=True)
+    storage = S3RuntimeSettings()  # type: ignore[call-arg]
+    s3_client = create_boto3_s3_client(storage)
 
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -182,14 +159,18 @@ def main() -> None:
         )
 
     prefix = "jurisdictions/do/scj/" if source == "supreme_court" else "jurisdictions/do/tc/"
-    stored_keys = list_s3_keys(s3_client(), prefix=prefix)
+    stored_keys = list_s3_keys(s3_client, bucket=storage.bucket, prefix=prefix)
     missing_storage = [
         {"source_identifier": key[0], "collection": key[1], "object_key": object_key}
         for key, object_key in expected_object_keys.items()
         if object_key not in stored_keys
     ]
 
-    status = "COMPLETE" if not missing_database and not url_mismatches and not missing_storage else "INCOMPLETE"
+    status = (
+        "COMPLETE"
+        if not missing_database and not url_mismatches and not missing_storage
+        else "INCOMPLETE"
+    )
     summary = {
         "status": status,
         "source": source,

@@ -3,12 +3,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
 
-import boto3
 import psycopg
-from botocore.config import Config
-from botocore.exceptions import ClientError
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -21,7 +17,7 @@ from jurisnexo.acquisition.official_corpus import (
     discover_pdf_link,
     object_key_for,
 )
-from jurisnexo.acquisition.s3_object_store import S3ObjectStore, S3ObjectStoreConfig
+from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.corpus.artifact_catalog import PostgresOfficialArtifactCatalog
 from jurisnexo.corpus.artifact_inventory import PostgresRegisteredArtifactInventory
 from jurisnexo.corpus.source_inventory import (
@@ -31,11 +27,6 @@ from jurisnexo.corpus.source_inventory import (
 
 REQUIRED_ENV = (
     "DATABASE_URL",
-    "JURISNEXO_S3_BUCKET",
-    "JURISNEXO_S3_ENDPOINT_URL",
-    "JURISNEXO_S3_REGION",
-    "JURISNEXO_S3_ACCESS_KEY_ID",
-    "JURISNEXO_S3_SECRET_ACCESS_KEY",
     "TC_INVENTORY_FILE",
     "TC_BACKFILL_SHARD_INDEX",
     "TC_BACKFILL_SHARD_COUNT",
@@ -77,33 +68,6 @@ def configure_telemetry(*, shard_index: int, shard_count: int) -> None:
     trace.set_tracer_provider(provider)
 
 
-def is_s3_not_found(exc: Exception) -> bool:
-    if not isinstance(exc, ClientError):
-        return False
-    code = str(exc.response.get("Error", {}).get("Code", ""))
-    status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
-    return status == 404 or code in {"404", "NoSuchKey", "NotFound"}
-
-
-def build_object_store() -> S3ObjectStore:
-    force_path_style = _env_flag("JURISNEXO_S3_FORCE_PATH_STYLE", True)
-    config = S3ObjectStoreConfig(
-        bucket=os.environ["JURISNEXO_S3_BUCKET"],
-        endpoint_url=os.environ["JURISNEXO_S3_ENDPOINT_URL"],
-        region=os.environ["JURISNEXO_S3_REGION"],
-        force_path_style=force_path_style,
-    )
-    client: Any = boto3.client(
-        "s3",
-        endpoint_url=config.endpoint_url,
-        region_name=config.region,
-        aws_access_key_id=os.environ["JURISNEXO_S3_ACCESS_KEY_ID"],
-        aws_secret_access_key=os.environ["JURISNEXO_S3_SECRET_ACCESS_KEY"],
-        config=Config(s3={"addressing_style": "path" if force_path_style else "virtual"}),
-    )
-    return S3ObjectStore(client=client, config=config, is_not_found=is_s3_not_found)
-
-
 def assigned_records(
     *, inventory_path: Path, shard_index: int, shard_count: int
 ) -> list[dict[str, str]]:
@@ -137,7 +101,7 @@ def main() -> None:
     configure_telemetry(shard_index=shard_index, shard_count=shard_count)
     tracer = trace.get_tracer("jurisnexo.tc.backfill")
     fetcher = BoundedHttpFetcher(allowed_hosts=OFFICIAL_SOURCE_HOSTS)
-    object_store = build_object_store()
+    object_store = build_s3_object_store()
     records = assigned_records(
         inventory_path=Path(os.environ["TC_INVENTORY_FILE"]),
         shard_index=shard_index,
@@ -156,7 +120,7 @@ def main() -> None:
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
             catalog = PostgresOfficialArtifactCatalog(
                 connection=connection,
-                storage_bucket=os.environ["JURISNEXO_S3_BUCKET"],
+                storage_bucket=object_store.config.bucket,
             )
             source_inventory = PostgresSourceDocumentInventory(connection=connection)
             registered = PostgresRegisteredArtifactInventory(connection=connection).observations_for(
