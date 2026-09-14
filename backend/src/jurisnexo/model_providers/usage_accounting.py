@@ -225,15 +225,17 @@ def _int_field(payload: dict[str, Any], key: str) -> int | None:
 
 
 def _normalized_cached_tokens(response: ModelResponse) -> int:
-    details = response.usage.input_tokens_details
-    cached = getattr(details, "cached_tokens", 0) if details is not None else 0
+    cached = response.usage.input_tokens_details.cached_tokens
     return cached if isinstance(cached, int) and cached >= 0 else 0
 
 
 def _normalized_reasoning_tokens(response: ModelResponse) -> int:
-    details = response.usage.output_tokens_details
-    reasoning = getattr(details, "reasoning_tokens", 0) if details is not None else 0
+    reasoning = response.usage.output_tokens_details.reasoning_tokens
     return reasoning if isinstance(reasoning, int) and reasoning >= 0 else 0
+
+
+def _empty_turns() -> list[ModelTurnUsage]:
+    return []
 
 
 @dataclass(slots=True)
@@ -241,7 +243,7 @@ class ModelUsageTracker:
     provider: ProviderName
     model: str
     execution_mode: ExecutionMode = "realtime"
-    turns: list[ModelTurnUsage] = field(default_factory=list)
+    turns: list[ModelTurnUsage] = field(default_factory=_empty_turns)
     _pricing: DeepSeekPricingCatalog = field(default_factory=DeepSeekPricingCatalog, repr=False)
 
     def record_response(
