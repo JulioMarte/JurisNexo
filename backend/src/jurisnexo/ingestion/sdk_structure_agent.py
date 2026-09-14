@@ -26,6 +26,10 @@ from jurisnexo.ingestion.structure_trace import (
 )
 
 
+def _empty_finalized_output() -> list[object]:
+    return []
+
+
 @dataclass(frozen=True, slots=True)
 class StructureAgentContext:
     environment: DocumentEnvironment
@@ -33,7 +37,7 @@ class StructureAgentContext:
     search_max_hits: int = 20
     artifact_profile: ArtifactInspectionProfile | None = None
     trace_recorder: StructureToolTraceRecorder = field(default_factory=StructureToolTraceRecorder)
-    finalized_output: list[object] = field(default_factory=list, repr=False)
+    finalized_output: list[object] = field(default_factory=_empty_finalized_output, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_tool_output_chars < 1_000:
