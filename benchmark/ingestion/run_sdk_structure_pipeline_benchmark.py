@@ -46,6 +46,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--audit-output", type=Path, required=True)
     parser.add_argument("--trace-output", type=Path, required=True)
     parser.add_argument("--usage-output", type=Path)
+    parser.add_argument("--model-trace-output", type=Path)
     parser.add_argument("--artifact-label", required=True)
     parser.add_argument("--provider", choices=("gemini", "deepseek"), required=True)
     parser.add_argument("--model", required=True)
@@ -108,6 +109,17 @@ def _usage_path(args: argparse.Namespace) -> Path:
     return args.usage_output or args.trace_output.with_name("model-usage.json")
 
 
+def _model_trace_path(args: argparse.Namespace) -> Path:
+    return args.model_trace_output or args.trace_output.with_name("model-observability.jsonl")
+
+
+def _write_model_trace(path: Path, tracker: ModelUsageTracker) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for event in tracker.observability_events:
+            handle.write(json.dumps(event.as_dict(), ensure_ascii=False) + "\n")
+
+
 def _usage_payload(tracker: ModelUsageTracker) -> dict[str, object]:
     return {
         "provider": tracker.provider,
@@ -115,6 +127,7 @@ def _usage_payload(tracker: ModelUsageTracker) -> dict[str, object]:
         "execution_mode": tracker.execution_mode,
         "summary": tracker.summary().as_dict(),
         "turns": [turn.as_dict() for turn in tracker.turns],
+        "observability_event_count": len(tracker.observability_events),
     }
 
 
@@ -152,6 +165,7 @@ def _write_failure(
         "journal_path": str(_journal_path(args)),
         "usage": tracker.summary().as_dict(),
         "usage_path": str(_usage_path(args)),
+        "model_observability_path": str(_model_trace_path(args)),
     }
     if budget:
         payload["max_turns"] = exc.max_turns
@@ -162,6 +176,7 @@ def _write_failure(
     _write_json(args.trace_output, payload)
     _write_json(args.trace_output.with_name("structure-pipeline-error.json"), payload)
     _write_json(_usage_path(args), _usage_payload(tracker))
+    _write_model_trace(_model_trace_path(args), tracker)
 
 
 async def _run(args: argparse.Namespace) -> None:
@@ -185,6 +200,9 @@ async def _run(args: argparse.Namespace) -> None:
     journal_path = _journal_path(args)
     journal_path.parent.mkdir(parents=True, exist_ok=True)
     journal_path.unlink(missing_ok=True)
+    model_trace_path = _model_trace_path(args)
+    model_trace_path.parent.mkdir(parents=True, exist_ok=True)
+    model_trace_path.unlink(missing_ok=True)
 
     try:
         pipeline = await run_structure_pipeline(
@@ -206,6 +224,7 @@ async def _run(args: argparse.Namespace) -> None:
         raise
 
     _write_json(_usage_path(args), _usage_payload(tracker))
+    _write_model_trace(model_trace_path, tracker)
     structure = pipeline.structure
     audit = pipeline.audit
     final_round = pipeline.rounds[-1]
@@ -293,6 +312,7 @@ async def _run(args: argparse.Namespace) -> None:
             "artifact_profile": profile.model_dump(mode="json"),
             "journal_path": str(journal_path),
             "usage_path": str(_usage_path(args)),
+            "model_observability_path": str(model_trace_path),
             "session_usage": tracker.summary().as_dict(),
             "pipeline_round_count": len(pipeline.rounds),
             "extraction_allowed": pipeline.extraction_allowed,
