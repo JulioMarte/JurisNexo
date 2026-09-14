@@ -54,6 +54,7 @@ class StructureAgentContext:
     finalization_errors: list[str] = field(default_factory=_empty_finalization_errors, repr=False)
     scope_reminder_after_unique_searches: int = 12
     search_queries: set[str] = field(default_factory=_empty_search_queries, repr=False)
+    audit_candidate_finding_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.max_tool_output_chars < 1_000:
@@ -130,12 +131,25 @@ and small reads before larger ranges. When an index points to a printed page, tr
 number as a source claim rather than truth. If a claimed destination is suspicious, inspect the
 nearby range and record the discrepancy rather than silently correcting it.
 
+A document-tool rejection such as an unresolved printed page, an out-of-range view page, an empty
+search, or a request that is too broad is recoverable evidence about the current workspace. Read
+the returned TOOL_REQUEST_REJECTED message, adapt the investigation, and continue. Do not repeat the
+identical rejected request. Runtime failures, invariant violations, and safety-budget exhaustion
+remain fatal and are not converted into model-visible success.
+
 DO NOT exhaustively verify every indexed decision. Once the SUMARIO/index, pagination transform,
 and representative boundary pattern are established, create work units for the remaining entries
 from the index itself. Independently inspect a representative sample, the first and last entries,
 and every entry with a pagination anomaly or boundary ambiguity. Individual party-name searches
 across most entries are extraction work and are scope drift unless they are necessary to resolve a
 specific structural discrepancy.
+
+Capture durable document-level knowledge in structure_findings. Findings are not generic notes:
+they are source-backed operational facts or hypotheses that later agents should inherit, such as a
+likely incomplete scan, a view-to-printed pagination offset, duplicate/missing scans, an index
+anomaly, OCR limitations, or a recurring boundary pattern. Give every finding a stable finding_id,
+confidence, evidence basis, operational impact, and downstream instructions. Put reusable facts
+such as pagination offsets into finding attributes. Keep uncertainty explicit.
 
 For each material index-reference investigation, return typed evidence_pages. Every evidence item
 must explicitly bind the document view page to the printed/editorial page and should carry the
@@ -148,10 +162,10 @@ inspection.
 Before finalizing, make a deliberate completion check: rendering mode/profile considered; index
 presence and location established; pagination understood or explicitly unresolved; every index
 entry represented by a work unit when an index exists; representative/high-risk boundaries checked;
-anomalies enumerated; and high-risk conclusions tied to source evidence. The goal is sufficient
-partitioning evidence, not proof of every decision's substantive contents. Do not repeat equivalent
-tool calls once they add no new structural evidence. The runtime turn limit is a safety fuse, not
-a target.
+material document-level findings recorded; anomalies enumerated; and high-risk conclusions tied to
+source evidence. The goal is sufficient partitioning evidence, not proof of every decision's
+substantive contents. Do not repeat equivalent tool calls once they add no new structural evidence.
+The runtime turn limit is a safety fuse, not a target.
 
 IMPORTANT: You do not finish by writing a JSON answer. Attempt completion by calling
 finalize_structure_hypothesis with the complete candidate hypothesis. If the runtime rejects the
@@ -259,6 +273,23 @@ def _trace_error(
     )
 
 
+def _document_tool_error_feedback(
+    ctx: RunContextWrapper[StructureAgentContext], error: Exception
+) -> str:
+    """Convert expected document-navigation failures into model-visible evidence."""
+
+    if not isinstance(error, DocumentEnvironmentError):
+        raise error
+    return (
+        "TOOL_REQUEST_REJECTED. This is a recoverable document-navigation condition, not a "
+        "pipeline failure. Treat it as evidence about the current document view, do not repeat "
+        "the identical request, and adapt by narrowing the range, inspecting neighboring view "
+        "pages, using a printed-page range, or recording the reference as unresolved. "
+        f"Environment: {ctx.context.environment.describe()}. "
+        f"Reason: {error}"
+    )
+
+
 def _structure_finalization_error_feedback(
     ctx: RunContextWrapper[StructureAgentContext], error: Exception
 ) -> str:
@@ -284,7 +315,7 @@ def _structure_finalization_error_feedback(
     )
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_document_tool_error_feedback)
 def inspect_artifact(ctx: RunContextWrapper[StructureAgentContext]) -> str:
     """Inspect deterministic PDF/rendering facts gathered before structural reasoning."""
 
@@ -303,7 +334,7 @@ def inspect_artifact(ctx: RunContextWrapper[StructureAgentContext]) -> str:
     )
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_document_tool_error_feedback)
 def get_page(ctx: RunContextWrapper[StructureAgentContext], page_number: int) -> str:
     """Read one document-view page by its 1-based view-page number."""
 
@@ -317,7 +348,7 @@ def get_page(ctx: RunContextWrapper[StructureAgentContext], page_number: int) ->
     return _trace_success(ctx.context, tool_name="get_page", arguments=arguments, result=result)
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_document_tool_error_feedback)
 def get_pages(
     ctx: RunContextWrapper[StructureAgentContext], start_page: int, end_page: int
 ) -> str:
@@ -334,7 +365,7 @@ def get_pages(
     return _trace_success(ctx.context, tool_name="get_pages", arguments=arguments, result=result)
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_document_tool_error_feedback)
 def get_printed_page(
     ctx: RunContextWrapper[StructureAgentContext], printed_page_number: int
 ) -> str:
@@ -355,7 +386,7 @@ def get_printed_page(
     )
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_document_tool_error_feedback)
 def get_printed_pages(
     ctx: RunContextWrapper[StructureAgentContext],
     start_printed_page: int,
@@ -381,7 +412,7 @@ def get_printed_pages(
     )
 
 
-@tool(failure_error_function=None)
+@tool(failure_error_function=_document_tool_error_feedback)
 def search_text(ctx: RunContextWrapper[StructureAgentContext], query: str) -> str:
     """Search literal text across the document and return provenance-bearing snippets."""
 
@@ -490,8 +521,9 @@ async def run_structure_agent(
         f"Initial page preview:\n{initial_page}\n\n"
         "Investigate only enough to partition the artifact defensibly into decision work units. "
         "Use representative and anomaly-driven verification rather than checking every decision. "
-        "Record unresolved uncertainty explicitly and finish by calling "
-        "finalize_structure_hypothesis after the structural completion checklist is satisfied."
+        "Persist reusable document-level knowledge in structure_findings, keep unresolved "
+        "uncertainty explicit, and finish by calling finalize_structure_hypothesis after the "
+        "structural completion checklist is satisfied."
     )
     run_config = RunConfig(
         workflow_name="JurisNexo Structure Discovery",
