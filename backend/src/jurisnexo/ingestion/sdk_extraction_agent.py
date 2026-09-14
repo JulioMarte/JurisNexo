@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from agents import Agent, ModelSettings, RunConfig, RunContextWrapper, Runner
+from agents.agent import StopAtTools
 from agents.decorators import tool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jurisnexo.ingestion.decision_reconstruction import SourceFaithfulDecision
+from jurisnexo.ingestion.structure_handoff import (
+    ApprovedStructureContext,
+    render_approved_structure_context,
+)
 
 SectionKind = Literal[
     "heading_caption",
@@ -53,6 +58,14 @@ def _empty_references() -> list[ReferenceAnnotation]:
 
 
 def _empty_strings() -> list[str]:
+    return []
+
+
+def _empty_finalized_output() -> list[object]:
+    return []
+
+
+def _empty_finalization_errors() -> list[str]:
     return []
 
 
@@ -128,10 +141,18 @@ class ExtractionAnnotations(BaseModel):
 class ExtractionAgentContext:
     decision: SourceFaithfulDecision
     max_tool_output_chars: int = 40_000
+    structure_context: ApprovedStructureContext | None = None
+    max_finalization_repair_attempts: int = 3
+    finalized_output: list[object] = field(default_factory=_empty_finalized_output, repr=False)
+    finalization_errors: list[str] = field(default_factory=_empty_finalization_errors, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_tool_output_chars < 1_000:
             raise ValueError("max_tool_output_chars must be at least 1000")
+        if self.max_finalization_repair_attempts < 1:
+            raise ValueError("max_finalization_repair_attempts must be positive")
+        if self.structure_context is not None and self.structure_context.audit_state != "APPROVED":
+            raise ValueError("extraction structure context must be cleanly APPROVED")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,12 +177,22 @@ and character range. Never use evidence outside the bounded decision. Do not inf
 parties, numbers, holdings, legal issues, or citations. Put uncertain/missing items in `unresolved`
 instead of guessing.
 
+You may receive APPROVED STRUCTURE CONTEXT from the preceding structure pipeline. It is audited
+operational guidance about the artifact, such as pagination offsets, incomplete-scan warnings, OCR
+limitations, or boundary patterns. Use it to choose safer inspections, but NEVER treat a structure
+finding as evidence for a legal metadata value or reference. Legal annotations still require exact
+source spans from this bounded decision.
+
 A TOOL_REQUEST_REJECTED response is recoverable. It means the requested page/query/output does not
 fit the bounded decision or tool contract. Adapt the request and continue; do not repeat the same
 invalid call. Unexpected runtime and invariant failures remain fatal.
 
 Do not perform deep legal enrichment. In particular, do not create holdings, Legal Elements,
 proposition graphs, citation treatment, or later-treatment conclusions in this stage.
+
+Finish only by calling finalize_extraction_annotations. If the finalizer rejects invalid JSON,
+schema, source membership, or exact-span provenance, keep the completed investigation and repair
+only the final payload. Do not repeat page reads merely because finalization failed.
 """
 
 
@@ -174,9 +205,7 @@ def render_decision_page(decision: SourceFaithfulDecision, view_page: int) -> st
                 f"view_page={page.view_page} | printed_page={page.printed_page} | "
                 f"source_reference={page.source_reference}\n{page.text}"
             )
-    raise ExtractionToolRequestError(
-        f"view_page {view_page} is outside the bounded decision"
-    )
+    raise ExtractionToolRequestError(f"view_page {view_page} is outside the bounded decision")
 
 
 def search_bounded_decision(decision: SourceFaithfulDecision, query: str) -> str:
@@ -225,6 +254,23 @@ def _extraction_tool_error_feedback(
     )
 
 
+def _extraction_finalization_error_feedback(
+    ctx: RunContextWrapper[ExtractionAgentContext], error: Exception
+) -> str:
+    ctx.context.finalization_errors.append(f"{type(error).__name__}: {error}")
+    attempt = len(ctx.context.finalization_errors)
+    if attempt >= ctx.context.max_finalization_repair_attempts:
+        raise error
+    return (
+        "FINALIZATION_REJECTED. The extraction payload was invalid JSON/schema or its source "
+        "evidence did not match the immutable bounded decision. Keep the completed investigation; "
+        "DO NOT repeat page reads or searches. Repair only the final payload, preserve explicit "
+        "unknowns, and call finalize_extraction_annotations again. "
+        f"Repair attempt {attempt} of {ctx.context.max_finalization_repair_attempts}. "
+        f"Validation summary: {type(error).__name__}: {error}"
+    )
+
+
 @tool(failure_error_function=_extraction_tool_error_feedback)
 def get_decision_page(ctx: RunContextWrapper[ExtractionAgentContext], view_page: int) -> str:
     """Read one complete source page, but only if it belongs to the bounded decision."""
@@ -257,14 +303,27 @@ def validate_extraction_annotations(
             raise ValueError(f"evidence span {index} exact_text does not match source")
 
 
+@tool(failure_error_function=_extraction_finalization_error_feedback, strict_mode=True)
+def finalize_extraction_annotations(
+    ctx: RunContextWrapper[ExtractionAgentContext], annotations: ExtractionAnnotations
+) -> str:
+    """Finalize extraction only after deterministic exact-span provenance validation."""
+
+    if ctx.context.finalized_output:
+        raise ValueError("extraction annotations were already finalized")
+    validate_extraction_annotations(annotations=annotations, decision=ctx.context.decision)
+    ctx.context.finalized_output.append(annotations)
+    return annotations.model_dump_json()
+
+
 def build_extraction_agent(*, model: str) -> Agent[ExtractionAgentContext]:
     return Agent[ExtractionAgentContext](
         name="JurisNexo Extraction Agent",
         instructions=_INSTRUCTIONS,
         model=model,
         model_settings=ModelSettings(parallel_tool_calls=False),
-        tools=[get_decision_page, search_decision_text],
-        output_type=ExtractionAnnotations,
+        tools=[get_decision_page, search_decision_text, finalize_extraction_annotations],
+        tool_use_behavior=StopAtTools(stop_at_tool_names=["finalize_extraction_annotations"]),
     )
 
 
@@ -275,18 +334,30 @@ async def run_extraction_agent(
     model: str,
     max_turns: int = 12,
     max_tool_output_chars: int = 40_000,
+    structure_context: ApprovedStructureContext | None = None,
+    max_finalization_repair_attempts: int = 3,
 ) -> ExtractionAgentRunResult:
     context = ExtractionAgentContext(
         decision=decision,
         max_tool_output_chars=max_tool_output_chars,
+        structure_context=structure_context,
+        max_finalization_repair_attempts=max_finalization_repair_attempts,
     )
     agent = build_extraction_agent(model=model)
     boundary = decision.boundary
+    structure_text = (
+        render_approved_structure_context(structure_context)
+        if structure_context is not None
+        else "No approved structure context was supplied."
+    )
     prompt = (
         f"Artifact: {artifact_label}\n"
         f"Bounded decision view pages: {boundary.start_view_page}..{boundary.end_view_page}\n"
         f"Unresolved source regions: {len(decision.unresolved_regions)}\n\n"
-        "Annotate only this bounded decision. Use tools to obtain exact source spans."
+        "Approved structure context (operational guidance, NOT legal evidence):\n"
+        f"{structure_text}\n\n"
+        "Annotate only this bounded decision. Use tools to obtain exact source spans and finish "
+        "through finalize_extraction_annotations."
     )
     result = await Runner.run(
         starting_agent=agent,
@@ -298,8 +369,11 @@ async def run_extraction_agent(
             trace_include_sensitive_data=False,
         ),
     )
-    annotations = result.final_output_as(ExtractionAnnotations, raise_if_incorrect_type=True)
-    validate_extraction_annotations(annotations=annotations, decision=decision)
+    if len(context.finalized_output) != 1 or not isinstance(
+        context.finalized_output[0], ExtractionAnnotations
+    ):
+        raise RuntimeError("extraction agent ended without a validated finalization tool call")
+    annotations = context.finalized_output[0]
     return ExtractionAgentRunResult(
         annotations=annotations,
         usage_total_tokens=result.context_wrapper.usage.total_tokens,
