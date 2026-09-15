@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tokenize
 from pathlib import Path
@@ -18,9 +19,40 @@ FILE_LOC_REVIEW_THRESHOLD = 120
 DEFAULT_OUTPUT = Path(".ci/engineering-quality.json")
 
 
-def build_report(repo_root: Path) -> dict[str, object]:
+def _changed_python_paths(repo_root: Path, base_ref: str | None) -> set[str] | None:
+    if not base_ref:
+        return None
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "diff",
+            "--name-only",
+            "--diff-filter=ACMR",
+            f"{base_ref}...HEAD",
+            "--",
+            "backend",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "git diff failed"
+        raise RuntimeError(f"cannot determine changed Python files: {detail}")
+    return {path for path in result.stdout.splitlines() if path.endswith(".py")}
+
+
+def build_report(repo_root: Path, *, base_ref: str | None = None) -> dict[str, object]:
     measurements = file_measurements(repo_root)
     coupling = component_dependency_snapshot(repo_root)
+    changed_paths = _changed_python_paths(repo_root, base_ref)
+    candidate_measurements = (
+        measurements
+        if changed_paths is None
+        else [record for record in measurements if str(record["path"]) in changed_paths]
+    )
     candidates = [
         {
             "classification": "REVIEW_CANDIDATE",
@@ -33,7 +65,7 @@ def build_report(repo_root: Path) -> dict[str, object]:
                 "Is the size mostly declarative or linear rather than decision-heavy?",
             ],
         }
-        for record in measurements
+        for record in candidate_measurements
         if int(record["effective_loc"]) > FILE_LOC_REVIEW_THRESHOLD
     ]
     largest_files = sorted(
@@ -46,6 +78,13 @@ def build_report(repo_root: Path) -> dict[str, object]:
     return {
         "schema_version": SCHEMA_VERSION,
         "authority": "maintainability-signals-are-non-blocking",
+        "provenance": {
+            "base_ref": base_ref,
+            "candidate_scope": "all-python-files" if changed_paths is None else "changed-python-files",
+            "changed_python_file_count": (
+                None if changed_paths is None else len(changed_paths)
+            ),
+        },
         "policy": {
             "file_loc_review_threshold": FILE_LOC_REVIEW_THRESHOLD,
             "file_loc_threshold_status": "review-signal-not-architecture-cliff",
@@ -83,6 +122,7 @@ def _markdown_table(headers: list[str], rows: list[list[object]]) -> list[str]:
 def render_summary(report: dict[str, object]) -> str:
     summary = report["summary"]
     coupling = report["component_coupling"]
+    provenance = report["provenance"]
     components = coupling["components"]
     edges = coupling["edges"]
     largest = report["largest_files"]
@@ -95,6 +135,7 @@ def render_summary(report: dict[str, object]) -> str:
         f"Architecture components: **{summary['component_count']}**",
         f"Observed component connections: **{summary['connection_count']}**",
         f"File-size review candidates: **{summary['file_size_review_candidates']}**",
+        f"Candidate scope: **{provenance['candidate_scope']}**",
         "",
         (
             "These are maintainability/review signals. File size and fan-in/fan-out "
@@ -173,12 +214,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--base-ref")
     args = parser.parse_args()
     repo_root = args.repo_root.resolve()
     output = args.output if args.output.is_absolute() else repo_root / args.output
     try:
-        report = build_report(repo_root)
-    except (OSError, SyntaxError, tokenize.TokenError, ValueError) as exc:
+        report = build_report(repo_root, base_ref=args.base_ref)
+    except (OSError, RuntimeError, SyntaxError, tokenize.TokenError, ValueError) as exc:
         print(f"[ENGINEERING-QUALITY-ERROR] evidence collection failed: {exc}")
         return 2
     write_report(report, output)
