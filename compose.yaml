@@ -30,7 +30,12 @@ services:
       context: ./backend
       target: runtime
     environment:
-      DATABASE_URL: postgresql://jurisnexo:jurisnexo@db:5432/jurisnexo
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: jurisnexo
+      POSTGRES_USER: jurisnexo
+      POSTGRES_PASSWORD: jurisnexo
+      POSTGRES_SSLMODE: disable
     depends_on:
       migrate:
         condition: service_completed_successfully
