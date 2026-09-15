@@ -1,0 +1,122 @@
+schema_version = 1
+status = "review-current-proof-map"
+normative = false
+guarantees = "docs/testing/current-guarantees.toml"
+
+# This file is review/migration evidence, not a constitution of test filenames.
+# current-guarantees.toml is normative. A proof path may move or be replaced as
+# long as equal-or-stronger evidence continues to protect the guarantee.
+#
+# Every current guarantee must appear either in [[proofs]] or [[gaps]]. A gap is
+# intentionally explicit: it means the repository accepts the guarantee but does
+# not yet claim that the required evidence is complete.
+
+[[proofs]]
+guarantee = "INV-SOURCE-PROVENANCE-001"
+path = "backend/tests/integration/test_source_document_inventory.py"
+evidence = ["invariant", "provenance"]
+
+[[proofs]]
+guarantee = "INV-SOURCE-PROVENANCE-001"
+path = "backend/tests/integration/test_artifact_catalog.py"
+evidence = ["invariant", "provenance"]
+
+[[proofs]]
+guarantee = "INV-EVIDENCE-TRACE-001"
+path = "backend/tests/unit/test_index_reference_evidence_contract.py"
+evidence = ["contract", "provenance"]
+
+[[proofs]]
+guarantee = "INV-EVIDENCE-TRACE-001"
+path = "backend/tests/unit/test_evidence_validation.py"
+evidence = ["adversarial", "provenance"]
+
+[[proofs]]
+guarantee = "INV-CANONICAL-COMMIT-001"
+path = "backend/tests/integration/test_canonical_commit.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-AGENT-DATA-ACCESS-001"
+path = "backend/tests/architecture/test_agent_runtime_boundaries.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-TENANT-001"
+path = "backend/tests/unit/test_corpus_access.py"
+evidence = ["contract", "adversarial", "security"]
+
+[[proofs]]
+guarantee = "INV-TENANT-001"
+path = "backend/tests/integration/test_canonical_commit.py"
+evidence = ["invariant", "adversarial", "security"]
+
+[[proofs]]
+guarantee = "INV-RUNTIME-REPLACEABILITY-001"
+path = "backend/tests/architecture/test_agent_runtime_boundaries.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-RUNTIME-REPLACEABILITY-001"
+path = "backend/tests/unit/test_agents_sdk_compatible_provider.py"
+evidence = ["contract"]
+
+[[proofs]]
+guarantee = "INV-REPRODUCIBILITY-001"
+path = "backend/tests/integration/test_resolution_ledger_contract.py"
+evidence = ["invariant", "contract", "provenance"]
+
+[[proofs]]
+guarantee = "FIT-ARCH-BOUNDARY-001"
+path = "backend/tests/architecture/test_agent_runtime_boundaries.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-REPO-GOVERNANCE-001"
+path = "backend/tests/architecture/test_repository_governance.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-REPO-GOVERNANCE-001"
+path = "backend/tests/architecture/test_instruction_routing_contract.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-TEST-EVIDENCE-001"
+path = "backend/tests/architecture/test_current_guarantee_inventory.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-TEST-EVIDENCE-001"
+path = "backend/tests/architecture/test_instruction_routing_contract.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-BRANCH-WORKFLOW-001"
+path = "backend/tests/architecture/test_branch_workflow_contract.py"
+evidence = ["fitness"]
+
+[[gaps]]
+guarantee = "INV-INGESTION-GATES-001"
+missing_evidence = ["integration", "adversarial"]
+reason = "Canonical commit currently proves audit-state rejection, but the repository does not yet claim one end-to-end proof of the full Structure -> Structure Audit -> Extraction -> Extraction Audit -> commit sequence."
+
+[[gaps]]
+guarantee = "INV-AGENT-DATA-ACCESS-001"
+missing_evidence = ["security", "adversarial"]
+reason = "Static runtime-boundary fitness exists; a real runtime security proof that an agent/model cannot obtain unrestricted database authority remains incomplete."
+
+[[gaps]]
+guarantee = "INV-RESEARCH-VERIFICATION-001"
+missing_evidence = ["benchmark", "contract", "adversarial"]
+reason = "Research/report verification is an accepted target guarantee but does not yet have complete current-product evidence."
+
+[[gaps]]
+guarantee = "INV-REPRODUCIBILITY-001"
+missing_evidence = ["contract"]
+reason = "The resolution/provenance ledger proves part of durable lineage; complete run-level model/provider/prompt/configuration reproducibility is not yet proven end to end."
+
+[[gaps]]
+guarantee = "INV-BENCHMARK-INDEPENDENCE-001"
+missing_evidence = ["fitness", "adversarial"]
+reason = "Benchmark scorers exist, but repository-level enforcement that gold cannot leak into candidate prompts/tools and that scorer weakening is detected is not yet complete."
