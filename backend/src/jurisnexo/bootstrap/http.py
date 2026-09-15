@@ -19,6 +19,7 @@ from jurisnexo.bootstrap.settings import (
 )
 from jurisnexo.modules.acquisition.adapters.db import PostgresAcquisitionLedger
 from jurisnexo.modules.acquisition.api.router import create_acquisition_router
+from jurisnexo.modules.legal_reference.bootstrap import verify_database_bootstrap
 from jurisnexo.modules.source_catalog.adapters.db import PostgresSourceCatalog
 from jurisnexo.modules.source_catalog.api.router import create_source_catalog_router
 from jurisnexo.platform.db.connection import (
@@ -66,6 +67,14 @@ def _configured_s3_settings() -> S3RuntimeSettings | None:
         return S3RuntimeSettings()  # pyright: ignore[reportCallIssue]
     except ValidationError:
         return None
+
+
+def _bootstrap_is_ready(connection_factory: ConnectionFactory) -> bool:
+    try:
+        verify_database_bootstrap(connection_factory)
+    except (RuntimeError, ValueError):
+        return False
+    return True
 
 
 def create_http_app(
@@ -125,14 +134,16 @@ def create_http_app(
     @app.get("/health/ready", tags=["health"], summary="Readiness probe")
     def readiness(response: Response) -> dict[str, object]:
         database_ready = database_is_ready(connections)
+        bootstrap_ready = database_ready and _bootstrap_is_ready(connections)
         storage_configured = resolved_s3 is not None
-        ready = database_ready and storage_configured
+        ready = database_ready and bootstrap_ready and storage_configured
         if not ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {
             "status": "ready" if ready else "not_ready",
             "checks": {
                 "database": "ready" if database_ready else "unavailable",
+                "database_bootstrap": "ready" if bootstrap_ready else "incomplete",
                 "storage_configuration": (
                     "ready" if storage_configured else "unconfigured"
                 ),
