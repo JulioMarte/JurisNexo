@@ -106,5 +106,6 @@ def test_engineering_quality_signals_are_visible_but_not_a_numeric_merge_gate() 
     assert "review-signal-not-architecture-cliff" in (
         REPO_ROOT / "backend/scripts/ci/build_engineering_quality_report.py"
     ).read_text(encoding="utf-8")
-    assert "not a blocking architecture limit" in policy
+    assert "blocking architecture limit" in policy
+    assert "deliberately **not**" in policy
     assert "There is intentionally no synthetic architecture score" in policy
