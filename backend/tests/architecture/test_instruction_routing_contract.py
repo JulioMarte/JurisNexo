@@ -19,6 +19,7 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/evidence-authoring-guide.md",
         "docs/testing/current-guarantees.toml",
         "docs/testing/current-proof-map.toml",
+        "docs/testing/test-architecture-migration.md",
         "backend/tests/AGENTS.md",
     ]
     missing = [path for path in required if not (REPO_ROOT / path).is_file()]
@@ -42,6 +43,8 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/repository-governance-contract.md",
         "docs/testing/evidence-authoring-guide.md",
         "docs/testing/current-guarantees.toml",
+        "docs/testing/current-proof-map.toml",
+        "docs/testing/test-architecture-migration.md",
     ):
         assert reference in test_agents, (
             "backend/tests/AGENTS.md must route test authors to canonical evidence policy: "
