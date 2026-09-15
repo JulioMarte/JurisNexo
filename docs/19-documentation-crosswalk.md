@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This crosswalk explains which documents are authoritative after the agent-runtime architecture change and prevents older design language from being read as a requirement to preserve the custom harness.
+This crosswalk explains which documents are authoritative after the agent-runtime architecture change and prevents older design language from being read as a requirement to preserve the custom harness or an obsolete pre-production repository shape.
 
 ## Current interpretation
 
@@ -32,13 +32,24 @@ The following documents define the current runtime/implementation direction and 
 - `18-migration-plan-custom-harness-to-agents-sdk.md` — migration and retirement criteria;
 - `20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, structured-output, multimodal, handoff, guardrail, tracing, and upgrade constraints;
 - `21-implementation-governance-and-agent-execution.md` — canonical implementation sequencing, workstream separation, parity requirements, and definition-of-done rules for implementation agents;
-- `22-architecture-fitness-functions.md` — executable architecture-governance methodology and rules for creating/evolving structural fitness functions.
+- `22-architecture-fitness-functions.md` — executable architecture-governance methodology and rules for creating/evolving structural fitness functions;
+- `23-pre-production-evolution-and-adversarial-proof-policy.md` — normative current policy for deliberate pre-production architecture/test evolution: freeze evidence rather than accidental shape, preserve HARD guarantees, disposition old proof explicitly, and require adversarial/exact-head evidence for replacements.
 
-`docs/testing/current-guarantees.toml` is the normative semantic guarantee inventory used by architecture/testing governance. It names durable guarantees and required evidence classes; it intentionally does not freeze exact test filenames.
+The testing-governance layer is split deliberately:
+
+- `docs/testing/current-guarantees.toml` — **normative** semantic guarantee inventory and required evidence classes;
+- `docs/testing/repository-governance-contract.md` — HARD / CONTROLLED / FLEXIBLE / HISTORICAL repository and evidence-governance policy;
+- `docs/testing/evidence-authoring-guide.md` — normative falsifiable-proof authoring rules;
+- `docs/testing/current-proof-map.toml` — **non-normative** map of representative current proof and explicit evidence gaps;
+- `docs/testing/test-architecture-migration.md` — **non-normative** ledger of KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL proof migration decisions.
+
+The guarantee inventory intentionally does not freeze exact test filenames. The proof map and migration ledger may evolve as equal-or-stronger proof moves between execution boundaries.
 
 ## Operational agent instructions and reusable prompts
 
 `AGENTS.md` is the repository-wide operational map for coding agents. It summarizes branch/CI discipline, what to read first, non-negotiable boundaries, benchmark/evidence rules, architecture-fitness policy, and validation expectations. It intentionally points back to the canonical docs instead of duplicating architecture rationale.
+
+Nearer `AGENTS.md` files add path-specific execution rules. In particular, `backend/tests/AGENTS.md` owns test-authoring operations, while `docs/AGENTS.md` owns documentation maintenance discipline. Tool-specific `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, and `.github/instructions/*.instructions.md` files are adapters only.
 
 Reusable task prompts live under `prompts/`:
 
@@ -49,9 +60,9 @@ Prompts are execution aids, not architecture authority. If a prompt conflicts wi
 
 ## Conflict resolution rule
 
-If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–22, the newer runtime/implementation documents take precedence.
+If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–23, the newer runtime/implementation/evolution documents take precedence.
 
-This precedence applies only to generic agent-runtime/implementation mechanics. It does **not** relax older requirements concerning:
+This precedence applies only to generic agent-runtime/implementation/repository-shape mechanics. It does **not** relax older requirements concerning:
 
 - provenance;
 - source preservation;
@@ -64,7 +75,21 @@ This precedence applies only to generic agent-runtime/implementation mechanics. 
 - reproducibility;
 - market validation.
 
-Those remain mandatory unless explicitly changed by a future ADR.
+Those remain mandatory unless explicitly changed by a future accepted contract with equal-or-stronger protection.
+
+## Pre-production evolution rule
+
+JurisNexo currently follows:
+
+```text
+freeze the evidence, not the future
+```
+
+Historical benchmark/custom-harness/checkpoint artifacts may remain reproducible provenance without requiring current product head to preserve their incidental runtime, provider, prompt, test path, or repository shape.
+
+When current architecture intentionally supersedes an old restriction, `23-pre-production-evolution-and-adversarial-proof-policy.md` requires reviewers to identify the old rule, why it is insufficient, the new contract, guarantee disposition, test disposition, adversarial proof, compatibility decision, and exact-head evidence.
+
+This rule must not be used to weaken HARD source/provenance/security/authority/benchmark guarantees.
 
 ## Architecture/testing interpretation rule
 
@@ -72,7 +97,9 @@ Those remain mandatory unless explicitly changed by a future ADR.
 
 Architecture tests are blocking structural evidence, not substitutes for PostgreSQL/security/concurrency tests or semantic legal benchmarks. A fitness test should protect a stable risk/boundary rather than freeze incidental repository shape.
 
-When architecture intentionally changes, update the current normative document, guarantee inventory when semantics change, and executable fitness function in one coherent change. Do not mechanically weaken a test or widen an allowlist only to make CI green.
+`backend/tests/conftest.py` classifies `tests/architecture/**` as effective `fitness` evidence by ownership. `backend/scripts/ci/audit_test_architecture.py` inventories physical test scope and evidence metadata and detects historical/release proof contaminating the current architecture lane. The blocking architecture suite executes that audit.
+
+When architecture intentionally changes, update the current normative document, guarantee inventory when semantics change, proof map when representative evidence changes, and executable fitness function in one coherent change. Do not mechanically weaken a test or widen an allowlist only to make CI green.
 
 ## Research-method interpretation rule
 
@@ -100,5 +127,6 @@ Trust layer: provenance + typed evidence + independent audit
 Research method: iterative root agent + bounded specialists + claim verification
 Evaluation: layered frozen benchmarks + real-user market validation
 Implementation mode: small attributable workstreams with exact-head CI and semantic benchmark evidence
-Architecture governance: normative guarantee inventory + blocking fitness functions + stronger evidence by risk class
+Architecture governance: normative guarantees + blocking fitness + proof map + explicit evidence gaps
+Evolution mode: freeze evidence, not accidental pre-production shape
 ```
