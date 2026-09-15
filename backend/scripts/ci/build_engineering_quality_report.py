@@ -580,11 +580,9 @@ def render_summary(report: dict[str, object]) -> str:
             )
             scope = item.get("scope", {})
             lines.append(
-                (
-                    f"- `{item['trigger_id']}` `{scope.get('path')}` :: "
-                    f"`{scope.get('subject')}` — {fact.get('kind')}="
-                    f"{fact.get('value')}"
-                )
+                f"- `{item['trigger_id']}` `{scope.get('path')}` :: "
+                f"`{scope.get('subject')}` — {fact.get('kind')}="
+                f"{fact.get('value')}"
             )
     return "\n".join(lines)
 
