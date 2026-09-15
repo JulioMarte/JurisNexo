@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
@@ -14,7 +15,7 @@ WORKFLOW = REPO_ROOT / ".github/workflows/engineering-quality.yml"
 POLICY = REPO_ROOT / "docs/24-engineering-quality-signals.md"
 
 
-def _build_report(tmp_path: Path) -> dict[str, object]:
+def _build_report(tmp_path: Path) -> dict[str, Any]:
     output = tmp_path / "engineering-quality.json"
     result = subprocess.run(
         [
@@ -30,7 +31,8 @@ def _build_report(tmp_path: Path) -> dict[str, object]:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    return json.loads(output.read_text(encoding="utf-8"))
+    payload: dict[str, Any] = json.loads(output.read_text(encoding="utf-8"))
+    return payload
 
 
 def test_engineering_quality_report_matches_current_component_graph(tmp_path: Path) -> None:
@@ -38,12 +40,9 @@ def test_engineering_quality_report_matches_current_component_graph(tmp_path: Pa
     assert report["schema_version"] == "jurisnexo-engineering-quality/v1"
     assert report["authority"] == "maintainability-signals-are-non-blocking"
 
-    coupling = report["component_coupling"]
-    assert isinstance(coupling, dict)
-    components = coupling["components"]
-    edges = coupling["edges"]
-    assert isinstance(components, list)
-    assert isinstance(edges, list)
+    coupling: dict[str, Any] = report["component_coupling"]
+    components: list[dict[str, Any]] = coupling["components"]
+    edges: list[dict[str, Any]] = coupling["edges"]
 
     expected_components = {
         path.name
@@ -72,15 +71,12 @@ def test_engineering_quality_report_matches_current_component_graph(tmp_path: Pa
 
 def test_file_size_signals_are_complete_and_non_blocking(tmp_path: Path) -> None:
     report = _build_report(tmp_path)
-    policy = report["policy"]
-    assert isinstance(policy, dict)
+    policy: dict[str, Any] = report["policy"]
     assert policy["file_loc_threshold_status"] == "review-signal-not-architecture-cliff"
     assert "no numeric fan-in/fan-out cliff" in str(policy["coupling_policy"])
 
-    measurements = report["file_measurements"]
-    candidates = report["review_candidates"]
-    assert isinstance(measurements, list)
-    assert isinstance(candidates, list)
+    measurements: list[dict[str, Any]] = report["file_measurements"]
+    candidates: list[dict[str, Any]] = report["review_candidates"]
 
     threshold = int(policy["file_loc_review_threshold"])
     expected_candidates = {
