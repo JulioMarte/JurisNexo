@@ -137,18 +137,32 @@ def test_lower_and_specialized_courts_fit_without_schema_changes(
         assert lower_row is not None
         lower_court_id = lower_row[0]
 
-        cursor.execute("SELECT id FROM corpus.courts WHERE code = 'DO-SCJ'")
-        scj_row = cursor.fetchone()
-        assert scj_row is not None
-        scj_id = scj_row[0]
+        cursor.execute(
+            """
+            INSERT INTO corpus.courts (
+                code, name, short_name, jurisdiction, judicial_system, court_type
+            ) VALUES (
+                'DO-TEST-NNA-CA',
+                'Corte de Apelación de prueba de Niños, Niñas y Adolescentes',
+                'CA NNA prueba',
+                'Departamento Judicial de prueba',
+                'ordinary_judiciary',
+                'appellate'
+            )
+            RETURNING id
+            """
+        )
+        appellate_row = cursor.fetchone()
+        assert appellate_row is not None
+        appellate_court_id = appellate_row[0]
 
         cursor.execute(
             """
             INSERT INTO corpus.court_jurisdictions (
                 court_id, jurisdiction_code, is_primary
-            ) VALUES (%s, 'juvenile', true)
+            ) VALUES (%s, 'juvenile', true), (%s, 'juvenile', true)
             """,
-            (lower_court_id,),
+            (lower_court_id, appellate_court_id),
         )
         cursor.execute(
             """
@@ -156,13 +170,19 @@ def test_lower_and_specialized_courts_fit_without_schema_changes(
                 from_court_id, to_court_id, relation_type, source_note
             ) VALUES (%s, %s, 'appeals_to', 'contract test only')
             """,
-            (lower_court_id, scj_id),
+            (lower_court_id, appellate_court_id),
         )
         cursor.execute(
             """
             INSERT INTO corpus.cases (
                 court_id, decision_number, decision_date, decision_date_status, title
-            ) VALUES (%s, 'TEST-0001', DATE '2026-09-15', 'verified_official_metadata', 'Caso de prueba')
+            ) VALUES (
+                %s,
+                'TEST-0001',
+                DATE '2026-09-15',
+                'verified_official_metadata',
+                'Caso de prueba'
+            )
             RETURNING court_id
             """,
             (lower_court_id,),
@@ -171,15 +191,18 @@ def test_lower_and_specialized_courts_fit_without_schema_changes(
 
 
 def test_invalid_court_taxonomy_is_rejected(connection: psycopg.Connection[Any]) -> None:
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        with pytest.raises(psycopg.errors.CheckViolation):
-            cursor.execute(
-                """
-                INSERT INTO corpus.courts (
-                    code, name, jurisdiction, judicial_system, court_type
-                ) VALUES (
-                    'DO-INVALID-TYPE', 'Tribunal inválido', 'República Dominicana',
-                    'ordinary_judiciary', 'invented_level'
-                )
-                """
+    with (
+        connection.transaction(force_rollback=True),
+        connection.cursor() as cursor,
+        pytest.raises(psycopg.errors.CheckViolation),
+    ):
+        cursor.execute(
+            """
+            INSERT INTO corpus.courts (
+                code, name, jurisdiction, judicial_system, court_type
+            ) VALUES (
+                'DO-INVALID-TYPE', 'Tribunal inválido', 'República Dominicana',
+                'ordinary_judiciary', 'invented_level'
             )
+            """
+        )
