@@ -17,6 +17,8 @@ The normative guarantee inventory is `docs/testing/current-guarantees.toml`. It 
 
 `docs/testing/test-architecture-migration.md` is also non-normative migration evidence. It records KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL decisions when tests, benchmarks, or execution boundaries are reorganized, especially during the custom-harness -> Agents SDK migration.
 
+`docs/23-pre-production-evolution-and-adversarial-proof-policy.md` is the normative current policy for deliberately superseding a pre-production architecture/test restriction while preserving equal-or-stronger guarantees and attributable historical evidence.
+
 The core rule is:
 
 > A green test is evidence only when a plausible defect in the claimed guarantee would make it fail.
@@ -30,6 +32,7 @@ The core rule is:
 - `evidence-authoring-guide.md` — normative workflow for falsifiable evidence, provenance, PostgreSQL/security boundaries, independent oracles, and benchmark integrity.
 - `backend/tests/AGENTS.md` — operational rules for test authors and coding agents.
 - `docs/22-architecture-fitness-functions.md` — executable architecture policy.
+- `docs/23-pre-production-evolution-and-adversarial-proof-policy.md` — controlled pre-production architecture/test evolution and adversarial replacement proof.
 
 `AGENTS.md` files are operational maps. Durable rationale and contracts belong under `docs/`.
 
@@ -48,9 +51,51 @@ A legitimate feature may change a FLEXIBLE filename/helper/split without an arch
 
 ## Evidence classes
 
-`fitness` proves deterministic repository/architecture constraints. `invariant` proves durable correctness at the real authority boundary. `contract` proves supported API/schema/state semantics. `adversarial` proves rejection of plausible failure modes. `benchmark` proves stochastic/semantic quality against independent controlled inputs/gold. `integration` proves multi-stage/component behavior. `security` proves the real authorization/tenant/credential boundary.
+`fitness` proves deterministic repository/architecture constraints. `invariant` proves durable correctness at the real authority boundary. `contract` proves supported API/schema/state semantics. `adversarial` proves rejection of plausible failure modes. `benchmark` proves stochastic/semantic quality against independent controlled inputs/gold. `integration` proves multi-stage/component behavior. `security` proves the real authorization/tenant/credential boundary. `historical` identifies executable proof whose question belongs to a prior checkpoint rather than current product architecture.
 
 Physical location answers **who owns/runs the proof**. Evidence classes answer **what it proves**.
+
+## Effective classification and test architecture inventory
+
+JurisNexo follows the same core distinction used in Request Engine: physical scope and logical evidence are related but not identical.
+
+`backend/tests/conftest.py` applies stable effective classification during collection:
+
+```text
+backend/tests/architecture/** -> fitness
+backend/tests/historical/**   -> historical, if/when that ownership surface exists
+```
+
+This prevents every architecture file from needing a redundant explicit `pytest.mark.fitness`. Explicit markers should add useful evidence/risk semantics rather than satisfy marker-count aesthetics.
+
+`backend/scripts/ci/audit_test_architecture.py` statically inventories:
+
+```text
+physical test scope
+effective evidence markers
+configured evidence markers
+historical/release contamination in architecture tests
+unclassified current unit/integration files
+```
+
+The audit intentionally distinguishes **blocking governance failures** from **review signals**.
+
+Blocking:
+
+```text
+required evidence markers disappear from pytest configuration
+historical/release/benchmark proof is mixed into the current architecture-fitness lane
+```
+
+Review-only:
+
+```text
+an ordinary unit/integration file has no semantic evidence marker
+```
+
+The latter is not automatically wrong. Forcing every small localization test to claim `invariant`, `contract`, or another semantic class would encourage decorative metadata rather than stronger evidence.
+
+`backend/tests/architecture/test_test_architecture_inventory.py` executes the inventory audit inside the already-blocking architecture suite. Therefore repository CI cannot silently stop enforcing the inventory while still claiming the architecture lane passed.
 
 ## Current-proof map and evidence debt
 
@@ -138,6 +183,8 @@ overall benchmark/product status
 
 Do not leak gold into prompts/tools. Do not weaken scorers solely to make a candidate pass. If the benchmark contract is wrong or ambiguous, change/version it explicitly and retain the reason and adversarial evidence.
 
+Historical benchmark/checkpoint evidence may remain reproducible without freezing the old agent runtime, provider, prompt, test filename, or repository layout. Freeze evidence, not the future.
+
 ## Current test organization
 
 The tree remains intentionally small:
@@ -148,7 +195,7 @@ backend/tests/integration/   multi-component/application/database behavior
 backend/tests/unit/          isolated logic
 ```
 
-Do not create `db/`, `e2e/`, `fixtures/`, or other directory families merely to imitate another repository. Create them only when real proof ownership makes the current tree ambiguous or harmful.
+Do not create `db/`, `e2e/`, `historical/`, `fixtures/`, or other directory families merely to imitate another repository. Create them only when real proof ownership makes the current tree ambiguous or harmful.
 
 ## Removing or restructuring proof
 
@@ -164,6 +211,8 @@ HISTORICAL  proof remains only as provenance for a prior state/version
 
 Never weaken a test solely because implementation currently fails it. When representative evidence changes, update the non-normative proof map. When durable proof changes execution boundary or status, record the reasoning in the migration ledger. Temporary duplicate evidence is preferable to a silent evidence hole.
 
+When the reason for adaptation is an intentional architecture/product change rather than mere test restructuring, also apply the evidence bundle in `docs/23-pre-production-evolution-and-adversarial-proof-policy.md`.
+
 ## Current CI
 
 `backend/tests/architecture/` contains blocking deterministic fitness functions. The backend-quality job runs them explicitly with `pytest tests/architecture`, and the broader PostgreSQL-backed suite also executes them.
@@ -171,6 +220,8 @@ Never weaken a test solely because implementation currently fails it. When repre
 That redundancy is intentional: architecture enforcement remains visible, while governance tests make accidental removal detectable.
 
 Tests inspecting repository-level policy receive `JURISNEXO_REPO_ROOT`; PR topology tests receive actual `GITHUB_BASE_REF` and `GITHUB_HEAD_REF` values.
+
+The architecture lane also executes the test-architecture inventory audit through `test_test_architecture_inventory.py`.
 
 A green architecture suite proves only the structural/governance boundaries it actually checks. It does not prove every semantic guarantee, research behavior, tenant path, or benchmark claim. The proof map must continue to expose gaps.
 
@@ -189,7 +240,7 @@ Tool-specific `.github/instructions/*.instructions.md` files are adapters for sc
 
 ## External governance controls
 
-Repository tests can validate committed CI workflow, observed PR topology, branch cleanup logic, documentation policy, test-authoring policy, proof-map integrity, and dependency boundaries. They cannot configure GitHub branch protection/rulesets or prevent a direct push when the hosting platform still allows one.
+Repository tests can validate committed CI workflow, observed PR topology, branch cleanup logic, documentation policy, test-authoring policy, proof-map integrity, test inventory, and dependency boundaries. They cannot configure GitHub branch protection/rulesets or prevent a direct push when the hosting platform still allows one.
 
 Required status checks, PR-only merge policy, force-push prohibition, and protected long-lived branches must therefore be verified/configured at GitHub as external controls. Do not claim pytest proves those remote settings.
 
@@ -206,6 +257,7 @@ Before accepting a new or changed durable proof, answer:
 7. Are authoritative outcome and important negative side effects inspected?
 8. Is the proof map honest about what remains unproven?
 9. If proof moved or changed status, is its disposition recorded?
-10. Which canonical CI/benchmark lane owns the evidence?
+10. If an old architecture restriction was intentionally superseded, is the evolution evidence bundle complete?
+11. Which canonical CI/benchmark lane owns the evidence?
 
 If those questions cannot be answered, redesign the proof before treating it as evidence.

@@ -20,13 +20,17 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/current-guarantees.toml",
         "docs/testing/current-proof-map.toml",
         "docs/testing/test-architecture-migration.md",
+        "docs/23-pre-production-evolution-and-adversarial-proof-policy.md",
         "backend/tests/AGENTS.md",
+        "backend/tests/conftest.py",
+        "backend/scripts/ci/audit_test_architecture.py",
     ]
     missing = [path for path in required if not (REPO_ROOT / path).is_file()]
     assert not missing, f"Missing canonical test-governance sources: {missing}"
 
     root_agents = _read("AGENTS.md")
     test_agents = _read("backend/tests/AGENTS.md")
+    docs_agents = _read("docs/AGENTS.md")
 
     for reference in (
         "docs/testing/repository-governance-contract.md",
@@ -45,11 +49,15 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/current-guarantees.toml",
         "docs/testing/current-proof-map.toml",
         "docs/testing/test-architecture-migration.md",
+        "docs/23-pre-production-evolution-and-adversarial-proof-policy.md",
     ):
         assert reference in test_agents, (
             "backend/tests/AGENTS.md must route test authors to canonical evidence policy: "
             f"missing {reference}"
         )
+
+    assert "23-pre-production-evolution-and-adversarial-proof-policy.md" in docs_agents
+    assert "freeze evidence" in docs_agents.lower()
 
 
 def test_critical_boundaries_have_local_agent_maps_and_adapters() -> None:
@@ -91,6 +99,7 @@ def test_editor_and_model_instruction_files_are_adapters_not_parallel_manuals() 
     copilot = adapters[".github/copilot-instructions.md"]
     assert "backend/tests/AGENTS.md" in copilot
     assert "docs/testing/evidence-authoring-guide.md" in copilot
+    assert "docs/23-pre-production-evolution-and-adversarial-proof-policy.md" in copilot
 
 
 def test_copilot_path_instructions_route_to_canonical_policy() -> None:
@@ -141,3 +150,18 @@ def test_test_policy_requires_plausible_defect_and_independent_oracle() -> None:
         assert phrase.lower() in combined.lower(), (
             "Test governance lost an evidence-integrity requirement: " f"missing {phrase!r}"
         )
+
+
+def test_preproduction_policy_preserves_evidence_without_freezing_shape() -> None:
+    policy = _read("docs/23-pre-production-evolution-and-adversarial-proof-policy.md")
+
+    for phrase in (
+        "freeze the evidence, not the future",
+        "KEEP",
+        "ADAPT",
+        "REPLACE",
+        "REMOVE",
+        "HISTORICAL",
+        "EXACT-HEAD EVIDENCE",
+    ):
+        assert phrase in policy, f"Pre-production evolution policy lost required concept: {phrase}"
