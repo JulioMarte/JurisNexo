@@ -1,0 +1,71 @@
+name: PostgreSQL connectivity smoke
+
+on:
+  push:
+    branches:
+      - ci/postgres-connectivity-smoke
+    paths:
+      - .github/workflows/postgres-connectivity-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-connectivity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      POSTGRES_HOST: ${{ vars.POSTGRES_HOST || secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ vars.POSTGRES_PORT || secrets.POSTGRES_PORT }}
+      POSTGRES_DB: ${{ vars.POSTGRES_DB || secrets.POSTGRES_DB }}
+      POSTGRES_USER: ${{ vars.POSTGRES_USER || secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || vars.POSTGRES_PASSWORD }}
+      POSTGRES_SSLMODE: ${{ vars.POSTGRES_SSLMODE || secrets.POSTGRES_SSLMODE || 'require' }}
+
+    steps:
+      - name: Check required PostgreSQL configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD POSTGRES_SSLMODE; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub Actions variable/secret: ${name}"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+          if ! [[ "$POSTGRES_PORT" =~ ^[0-9]+$ ]]; then
+            echo "::error::POSTGRES_PORT must be numeric"
+            exit 1
+          fi
+          echo "PostgreSQL configuration is present. Secret values are not printed."
+
+      - name: Install psycopg
+        run: python -m pip install --disable-pip-version-check 'psycopg[binary]>=3.2,<4'
+
+      - name: Verify PostgreSQL connection
+        shell: python
+        run: |
+          import os
+          import psycopg
+
+          with psycopg.connect(
+              host=os.environ["POSTGRES_HOST"],
+              port=int(os.environ["POSTGRES_PORT"]),
+              dbname=os.environ["POSTGRES_DB"],
+              user=os.environ["POSTGRES_USER"],
+              password=os.environ["POSTGRES_PASSWORD"],
+              sslmode=os.environ["POSTGRES_SSLMODE"],
+              connect_timeout=10,
+          ) as conn:
+              with conn.cursor() as cur:
+                  cur.execute("select 1")
+                  row = cur.fetchone()
+                  if row != (1,):
+                      raise RuntimeError(f"Unexpected PostgreSQL smoke result: {row!r}")
+
+          print("PostgreSQL connection succeeded and SELECT 1 returned successfully.")
