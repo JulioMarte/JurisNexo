@@ -48,7 +48,10 @@ def python_files(repo_root: Path) -> list[Path]:
         if not root.is_dir():
             continue
         for path in root.rglob("*.py"):
-            if any(part in {".venv", "__pycache__", "build", "dist"} for part in path.parts):
+            if any(
+                part in {".venv", "__pycache__", "build", "dist"}
+                for part in path.parts
+            ):
                 continue
             files.add(path)
     return sorted(files)
@@ -92,7 +95,11 @@ def discover_components(repo_root: Path) -> set[str]:
         return set()
     components: set[str] = set()
     for child in package_root.iterdir():
-        if not child.is_dir() or child.name in NON_COMPONENT_NAMES or child.name.startswith("__"):
+        if (
+            not child.is_dir()
+            or child.name in NON_COMPONENT_NAMES
+            or child.name.startswith("__")
+        ):
             continue
         if any(child.rglob("*.py")):
             components.add(child.name)
@@ -158,7 +165,11 @@ def component_import_targets_from_source(
             relative_target = _relative_import_target(relative_path, node)
             if relative_target is not None:
                 targets.add(relative_target)
-    return {target for target in targets if target in known_components and target != source_component}
+    return {
+        target
+        for target in targets
+        if target in known_components and target != source_component
+    }
 
 
 def component_import_targets(repo_root: Path, path: Path, source: str) -> set[str]:
@@ -178,14 +189,21 @@ def component_dependency_snapshot_from_sources(
     component_files: dict[str, set[str]] = defaultdict(set)
     component_loc: dict[str, int] = defaultdict(int)
 
-    for relative_path, source in sorted(sources.items(), key=lambda item: item[0].as_posix()):
+    for relative_path, source in sorted(
+        sources.items(),
+        key=lambda item: item[0].as_posix(),
+    ):
         component = _component_from_relative_path(relative_path)
         if component is None:
             continue
         path_text = relative_path.as_posix()
         component_files[component].add(path_text)
         component_loc[component] += effective_code_lines(source)
-        for target in component_import_targets_from_source(relative_path, source, components):
+        for target in component_import_targets_from_source(
+            relative_path,
+            source,
+            components,
+        ):
             edge_sites[(component, target)].add(path_text)
 
     edges = set(edge_sites)
@@ -237,7 +255,10 @@ def _is_docstring(node: ast.stmt) -> bool:
 
 def _is_all_assignment(node: ast.stmt) -> bool:
     if isinstance(node, ast.Assign):
-        return any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+        return any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in node.targets
+        )
     if isinstance(node, ast.AnnAssign):
         return isinstance(node.target, ast.Name) and node.target.id == "__all__"
     return False
@@ -250,7 +271,8 @@ def _is_one_call_forwarder(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool
     statement = body[0]
     if isinstance(statement, ast.Return):
         return isinstance(statement.value, (ast.Call, ast.Await)) and (
-            not isinstance(statement.value, ast.Await) or isinstance(statement.value.value, ast.Call)
+            not isinstance(statement.value, ast.Await)
+            or isinstance(statement.value.value, ast.Call)
         )
     if isinstance(statement, ast.Expr):
         value = statement.value
@@ -270,7 +292,10 @@ def navigation_observation(relative_path: Path, source: str) -> dict[str, object
     ]
     forwarders = [node for node in functions if _is_one_call_forwarder(node)]
     meaningful_top_level = [node for node in tree.body if not _is_docstring(node)]
-    import_count = sum(isinstance(node, (ast.Import, ast.ImportFrom)) for node in meaningful_top_level)
+    import_count = sum(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        for node in meaningful_top_level
+    )
     reexport_only = bool(meaningful_top_level) and import_count > 0 and all(
         isinstance(node, (ast.Import, ast.ImportFrom)) or _is_all_assignment(node)
         for node in meaningful_top_level
@@ -289,7 +314,11 @@ def suppression_observation(source: str) -> dict[str, object]:
     counts: Counter[str] = Counter()
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
-        comments = [token.string.lower() for token in tokens if token.type == tokenize.COMMENT]
+        comments = [
+            token.string.lower()
+            for token in tokens
+            if token.type == tokenize.COMMENT
+        ]
     except tokenize.TokenError:
         comments = []
     for comment in comments:
