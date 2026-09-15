@@ -120,7 +120,7 @@ risk = ["architecture", "operations"]
 
 [[guarantees]]
 id = "FIT-ENGINEERING-SIGNALS-001"
-statement = "Repository quality tooling derives the current JurisNexo component import graph, fan-in/fan-out, import sites and Python effective-LOC measurements from the real tree, while treating file-size and numeric coupling observations as non-blocking review signals rather than arbitrary architecture limits."
+statement = "Repository quality tooling derives the current JurisNexo component import graph, fan-in/fan-out, import sites and Python effective-LOC from the real tree; compares base and tested trees for edge, import-site, component, file-size, suppression and navigation-shape drift; and surfaces file-size, C901 complexity, new dependency, forwarding/re-export and suppression growth as non-blocking review candidates rather than synthetic scores or arbitrary architecture limits."
 severity = "high"
 classification = "CONTROLLED"
 required_evidence = ["fitness"]

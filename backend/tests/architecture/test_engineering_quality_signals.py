@@ -10,6 +10,7 @@ from typing import Any
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
 SCRIPT = REPO_ROOT / "backend/scripts/ci/build_engineering_quality_report.py"
+DIFF_SCRIPT = REPO_ROOT / "backend/scripts/ci/build_architecture_diff.py"
 PACKAGE_ROOT = REPO_ROOT / "backend/src/jurisnexo"
 WORKFLOW = REPO_ROOT / ".github/workflows/engineering-quality.yml"
 POLICY = REPO_ROOT / "docs/24-engineering-quality-signals.md"
@@ -37,7 +38,7 @@ def _build_report(tmp_path: Path) -> dict[str, Any]:
 
 def test_engineering_quality_report_matches_current_component_graph(tmp_path: Path) -> None:
     report = _build_report(tmp_path)
-    assert report["schema_version"] == "jurisnexo-engineering-quality/v1"
+    assert report["schema_version"] == "jurisnexo-engineering-quality/v2"
     assert report["authority"] == "maintainability-signals-are-non-blocking"
 
     coupling: dict[str, Any] = report["component_coupling"]
@@ -69,14 +70,17 @@ def test_engineering_quality_report_matches_current_component_graph(tmp_path: Pa
         assert item["fan_out"] == len(outbound)
 
 
-def test_file_size_signals_are_complete_and_non_blocking(tmp_path: Path) -> None:
+def test_file_size_and_complexity_signals_remain_review_candidates(tmp_path: Path) -> None:
     report = _build_report(tmp_path)
     policy: dict[str, Any] = report["policy"]
-    assert policy["file_loc_threshold_status"] == "review-signal-not-architecture-cliff"
+    assert policy["threshold_status"] == "calibration-triggers-not-architecture-cliffs"
+    assert int(policy["file_loc_review_threshold"]) == 120
+    assert int(policy["mccabe_review_threshold"]) == 10
     assert "no numeric fan-in/fan-out cliff" in str(policy["coupling_policy"])
 
     measurements: list[dict[str, Any]] = report["file_measurements"]
     candidates: list[dict[str, Any]] = report["review_candidates"]
+    size_candidates = [item for item in candidates if item["trigger_id"] == "QR-FSIZE-001"]
 
     threshold = int(policy["file_loc_review_threshold"])
     expected_candidates = {
@@ -84,24 +88,29 @@ def test_file_size_signals_are_complete_and_non_blocking(tmp_path: Path) -> None
         for item in measurements
         if int(item["effective_loc"]) > threshold
     }
-    actual_candidates = {str(item["path"]) for item in candidates}
+    actual_candidates = {str(item["scope"]["path"]) for item in size_candidates}
     assert actual_candidates == expected_candidates
+    assert all(item["classification"] == "REVIEW_CANDIDATE" for item in candidates)
     assert all((REPO_ROOT / str(item["path"])).is_file() for item in measurements)
     assert all(int(item["effective_loc"]) >= 0 for item in measurements)
 
 
 def test_engineering_quality_signals_are_visible_but_not_a_numeric_merge_gate() -> None:
     assert SCRIPT.is_file()
+    assert DIFF_SCRIPT.is_file()
     assert POLICY.is_file()
     workflow = WORKFLOW.read_text(encoding="utf-8")
     policy = POLICY.read_text(encoding="utf-8")
 
     assert "build_engineering_quality_report.py" in workflow
+    assert "build_architecture_diff.py" in workflow
     assert "engineering-quality.json" in workflow
+    assert "architecture-diff.json" in workflow
     assert "actions/upload-artifact" in workflow
-    assert "review-signal-not-architecture-cliff" in (
-        REPO_ROOT / "backend/scripts/ci/build_engineering_quality_report.py"
-    ).read_text(encoding="utf-8")
+    assert "QR-CPLX-001" in SCRIPT.read_text(encoding="utf-8")
+    assert "QR-COUPLING-001" in SCRIPT.read_text(encoding="utf-8")
+    assert "QR-NAV-001" in SCRIPT.read_text(encoding="utf-8")
+    assert "QR-SUPPRESS-001" in SCRIPT.read_text(encoding="utf-8")
     assert "blocking architecture limit" in policy
-    assert "deliberately **not**" in policy
     assert "There is intentionally no synthetic architecture score" in policy
+    assert "HEALTHY_AS_IS" in policy

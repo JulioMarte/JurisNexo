@@ -147,3 +147,8 @@ evidence = ["fitness"]
 guarantee = "FIT-ENGINEERING-SIGNALS-001"
 path = "backend/tests/architecture/test_engineering_quality_signals.py"
 evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-ENGINEERING-SIGNALS-001"
+path = "backend/tests/architecture/test_engineering_quality_diff.py"
+evidence = ["fitness"]
