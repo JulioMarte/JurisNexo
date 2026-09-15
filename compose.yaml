@@ -25,6 +25,23 @@ services:
         condition: service_healthy
     restart: "no"
 
+  bootstrap:
+    build:
+      context: ./backend
+      target: runtime
+    command: ["jurisnexo-db-bootstrap", "apply"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: jurisnexo
+      POSTGRES_USER: jurisnexo
+      POSTGRES_PASSWORD: jurisnexo
+      POSTGRES_SSLMODE: disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   api:
     build:
       context: ./backend
@@ -37,7 +54,7 @@ services:
       POSTGRES_PASSWORD: jurisnexo
       POSTGRES_SSLMODE: disable
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
@@ -59,8 +76,14 @@ services:
       target: test
     environment:
       DATABASE_URL: postgresql://jurisnexo:jurisnexo@db:5432/jurisnexo
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: jurisnexo
+      POSTGRES_USER: jurisnexo
+      POSTGRES_PASSWORD: jurisnexo
+      POSTGRES_SSLMODE: disable
     depends_on:
-      migrate:
+      bootstrap:
         condition: service_completed_successfully
     profiles: ["test"]
 
