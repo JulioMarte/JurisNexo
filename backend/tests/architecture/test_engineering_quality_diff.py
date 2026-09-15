@@ -69,15 +69,22 @@ def decide(value: int) -> int:
     return result
 """
     (repo / "backend/src/jurisnexo/a/complex.py").write_text(complex_source, encoding="utf-8")
+    forwarder_source = (
+        "from jurisnexo.b.target import target\n\n\n"
+        "def forward(value: int) -> int:\n"
+        "    return target(value)\n"
+    )
     (repo / "backend/src/jurisnexo/a/forwarder.py").write_text(
-        "from jurisnexo.b.target import target\n\n\ndef forward(value: int) -> int:\n    return target(value)\n",
+        forwarder_source,
         encoding="utf-8",
     )
     _commit(repo, "head")
     return repo
 
 
-def test_architecture_diff_reports_edges_file_growth_suppressions_and_navigation(tmp_path: Path) -> None:
+def test_architecture_diff_reports_edges_file_growth_suppressions_and_navigation(
+    tmp_path: Path,
+) -> None:
     repo = _synthetic_repo(tmp_path)
     output = repo / ".ci/architecture-diff.json"
     result = _run(
@@ -109,7 +116,8 @@ def test_architecture_diff_reports_edges_file_growth_suppressions_and_navigation
     assert payload["suppressions"]["delta"] == 1
 
     navigation = {item["path"]: item for item in payload["navigation"]}
-    assert navigation["backend/src/jurisnexo/a/forwarder.py"]["forwarding_only_functions"]["after"] is True
+    forwarder = navigation["backend/src/jurisnexo/a/forwarder.py"]
+    assert forwarder["forwarding_only_functions"]["after"] is True
 
 
 def test_quality_report_turns_complexity_coupling_navigation_and_suppression_into_review_candidates(
@@ -136,5 +144,11 @@ def test_quality_report_turns_complexity_coupling_navigation_and_suppression_int
     assert "QR-COUPLING-001" in triggers
     assert "QR-NAV-001" in triggers
     assert "QR-SUPPRESS-001" in triggers
-    assert all(item["classification"] == "REVIEW_CANDIDATE" for item in payload["review_candidates"])
-    assert payload["policy"]["threshold_status"] == "calibration-triggers-not-architecture-cliffs"
+    assert all(
+        item["classification"] == "REVIEW_CANDIDATE"
+        for item in payload["review_candidates"]
+    )
+    assert (
+        payload["policy"]["threshold_status"]
+        == "calibration-triggers-not-architecture-cliffs"
+    )
