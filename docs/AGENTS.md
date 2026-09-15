@@ -14,6 +14,7 @@ Documentation is the system of record for accepted product, architecture, legal-
 - `21-implementation-governance-and-agent-execution.md` owns implementation sequencing and execution discipline.
 - `22-architecture-fitness-functions.md` owns executable architecture-policy intent.
 - `23-pre-production-evolution-and-adversarial-proof-policy.md` owns the current rule for deliberately superseding pre-production architecture/test restrictions while preserving guarantees and evidence.
+- `24-engineering-quality-signals.md` owns file-size, component-connection, fan-in/fan-out and maintainability-signal semantics.
 - `testing/current-guarantees.toml` inventories current semantic guarantees and required evidence classes.
 - `testing/repository-governance-contract.md` owns HARD / CONTROLLED / FLEXIBLE / HISTORICAL repository/test/instruction governance.
 - `testing/evidence-authoring-guide.md` owns durable test-evidence authoring rules.
@@ -38,6 +39,7 @@ Examples:
 - agent methodology/benchmark rationale -> `17-agent-methodology-and-benchmark-map.md`;
 - runtime migration -> `18-migration-plan-custom-harness-to-agents-sdk.md`;
 - architecture/test evolution while pre-production -> `23-pre-production-evolution-and-adversarial-proof-policy.md`;
+- engineering-quality sensors and metric authority -> `24-engineering-quality-signals.md`;
 - test/repository governance -> `testing/`;
 - hard-to-reverse architectural rationale -> ADRs when/where the repository establishes them.
 
@@ -54,6 +56,7 @@ Do not copy executable SQL, migrations, or source code into docs as the canonica
 - Do not silently weaken legal-quality, provenance, security, or benchmark requirements to match current implementation.
 - Do not rewrite historical evidence just to remove disagreement with present architecture; classify it and route readers through the crosswalk.
 - Freeze evidence, not accidental pre-production implementation shape. If current architecture intentionally supersedes an old restriction, preserve the old proof as historical when valuable and document the new authoritative contract.
+- Do not turn file size, fan-in/fan-out, or another maintainability sensor into a HARD architecture rule without a separate accepted policy change and evidence that the blocker protects a real property.
 
 ## Test-document synchronization
 
