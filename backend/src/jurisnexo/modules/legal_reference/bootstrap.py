@@ -127,7 +127,13 @@ SOURCES = (
 COLLECTIONS = (
     CollectionSeed("scj", "principales-sentencias", "judicial_decision", "enabled", "hidden"),
     CollectionSeed("scj", "decisiones", "judicial_decision", "enabled", "hidden"),
-    CollectionSeed("scj", "boletin-judicial", "judicial_decision_compilation", "catalog_only", "hidden"),
+    CollectionSeed(
+        "scj",
+        "boletin-judicial",
+        "judicial_decision_compilation",
+        "catalog_only",
+        "hidden",
+    ),
     CollectionSeed("scj", "sentencias-historicas", "judicial_decision", "catalog_only", "hidden"),
     CollectionSeed("tc", "sentencias", "judicial_decision", "catalog_only", "hidden"),
 )
