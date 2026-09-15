@@ -142,18 +142,29 @@ def _coupling_diff(base: dict[str, object], current: dict[str, object]) -> dict[
             )
     return {
         "added_edges": [
-            {"source": source, "target": target, "import_sites": after[(source, target)]["import_sites"]}
+            {
+                "source": source,
+                "target": target,
+                "import_sites": after[(source, target)]["import_sites"],
+            }
             for source, target in sorted(after_pairs - before_pairs)
         ],
         "removed_edges": [
-            {"source": source, "target": target, "import_sites": before[(source, target)]["import_sites"]}
+            {
+                "source": source,
+                "target": target,
+                "import_sites": before[(source, target)]["import_sites"],
+            }
             for source, target in sorted(before_pairs - after_pairs)
         ],
         "import_site_deltas": site_deltas,
     }
 
 
-def _component_deltas(base: dict[str, object], current: dict[str, object]) -> list[dict[str, object]]:
+def _component_deltas(
+    base: dict[str, object],
+    current: dict[str, object],
+) -> list[dict[str, object]]:
     before = _component_map(base)
     after = _component_map(current)
     deltas: list[dict[str, object]] = []
@@ -176,19 +187,28 @@ def _component_deltas(base: dict[str, object], current: dict[str, object]) -> li
     return deltas
 
 
-def _file_deltas(repo_root: Path, base_ref: str, paths: list[Path]) -> list[dict[str, object]]:
+def _file_deltas(
+    repo_root: Path,
+    base_ref: str,
+    paths: list[Path],
+) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for path in paths:
         before_source = _source_at_ref(repo_root, base_ref, path)
-        after_source = (repo_root / path).read_text(encoding="utf-8") if (repo_root / path).is_file() else None
+        after_path = repo_root / path
+        after_source = after_path.read_text(encoding="utf-8") if after_path.is_file() else None
         before = effective_code_lines(before_source) if before_source is not None else 0
         after = effective_code_lines(after_source) if after_source is not None else 0
+        if before_source is None:
+            status = "added"
+        elif after_source is None:
+            status = "deleted"
+        else:
+            status = "modified"
         records.append(
             {
                 "path": path.as_posix(),
-                "status": (
-                    "added" if before_source is None else "deleted" if after_source is None else "modified"
-                ),
+                "status": status,
                 "effective_loc": {"before": before, "after": after, "delta": after - before},
                 "interpretation": "none",
             }
@@ -196,13 +216,18 @@ def _file_deltas(repo_root: Path, base_ref: str, paths: list[Path]) -> list[dict
     return records
 
 
-def _suppression_diff(repo_root: Path, base_ref: str, paths: list[Path]) -> dict[str, object]:
+def _suppression_diff(
+    repo_root: Path,
+    base_ref: str,
+    paths: list[Path],
+) -> dict[str, object]:
     files: list[dict[str, object]] = []
     total_before = 0
     total_after = 0
     for path in paths:
         before_source = _source_at_ref(repo_root, base_ref, path) or ""
-        after_source = (repo_root / path).read_text(encoding="utf-8") if (repo_root / path).is_file() else ""
+        after_path = repo_root / path
+        after_source = after_path.read_text(encoding="utf-8") if after_path.is_file() else ""
         before = suppression_observation(before_source)
         after = suppression_observation(after_source)
         before_total = int(before["total"])
@@ -240,15 +265,27 @@ def _empty_navigation(path: Path) -> dict[str, object]:
     }
 
 
-def _navigation_diff(repo_root: Path, base_ref: str, paths: list[Path]) -> list[dict[str, object]]:
+def _navigation_diff(
+    repo_root: Path,
+    base_ref: str,
+    paths: list[Path],
+) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for path in paths:
         before_source = _source_at_ref(repo_root, base_ref, path)
         after_path = repo_root / path
         after_source = after_path.read_text(encoding="utf-8") if after_path.is_file() else None
         try:
-            before = navigation_observation(path, before_source) if before_source is not None else _empty_navigation(path)
-            after = navigation_observation(path, after_source) if after_source is not None else _empty_navigation(path)
+            before = (
+                navigation_observation(path, before_source)
+                if before_source is not None
+                else _empty_navigation(path)
+            )
+            after = (
+                navigation_observation(path, after_source)
+                if after_source is not None
+                else _empty_navigation(path)
+            )
         except SyntaxError:
             continue
         before_forwarders = int(before["one_call_forwarder_count"])
@@ -355,14 +392,25 @@ def render_summary(payload: dict[str, object]) -> str:
         f"Suppression delta: **{int(suppressions.get('delta', 0)):+}**",
         f"Navigation-shape deltas: **{len(navigation)}**",
         "",
-        "No architecture score is computed. Deltas are review evidence; HARD invariants remain independently blocking.",
+        (
+            "No architecture score is computed. Deltas are review evidence; "
+            "HARD invariants remain independently blocking."
+        ),
     ]
     if isinstance(added, list) and added:
         lines.extend(["", "### Added connections", ""])
-        lines.extend(f"- `+ {item['source']} -> {item['target']}`" for item in added if isinstance(item, dict))
+        lines.extend(
+            f"- `+ {item['source']} -> {item['target']}`"
+            for item in added
+            if isinstance(item, dict)
+        )
     if isinstance(removed, list) and removed:
         lines.extend(["", "### Removed connections", ""])
-        lines.extend(f"- `- {item['source']} -> {item['target']}`" for item in removed if isinstance(item, dict))
+        lines.extend(
+            f"- `- {item['source']} -> {item['target']}`"
+            for item in removed
+            if isinstance(item, dict)
+        )
     if component_deltas:
         lines.extend(["", "### Component deltas", ""])
         lines.extend(
@@ -423,11 +471,21 @@ def main() -> int:
     output = args.output if args.output.is_absolute() else repo_root / args.output
     try:
         payload = build_architecture_diff(repo_root, args.base_ref)
-    except (OSError, RuntimeError, SyntaxError, tokenize.TokenError, UnicodeDecodeError, ValueError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        SyntaxError,
+        tokenize.TokenError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as exc:
         print(f"[ARCHITECTURE-DIFF-ERROR] evidence collection failed: {exc}")
         return 2
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     summary = render_summary(payload)
     print(summary)
     _write_summary(summary)
