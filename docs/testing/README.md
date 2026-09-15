@@ -2,31 +2,36 @@
 
 ## Purpose
 
-JurisNexo separates **what must remain true** from **which test currently proves it**.
+JurisNexo separates three different questions:
 
-The normative guarantee inventory is:
+```text
+what must remain true?          -> current-guarantees.toml
+what currently proves it?       -> current-proof-map.toml
+how must proof be authored?     -> evidence-authoring-guide.md + backend/tests/AGENTS.md
+```
 
-`docs/testing/current-guarantees.toml`
+The normative guarantee inventory is `docs/testing/current-guarantees.toml`. It names durable guarantees, classification, severity, and required evidence classes without freezing exact test filenames.
 
-It names durable guarantees, their classification, severity, and required evidence classes. It intentionally does not map guarantees to exact test filenames because test organization may change without changing the protected property.
+`docs/testing/current-proof-map.toml` is deliberately **non-normative**. It records representative current proofs and explicit evidence gaps. Test paths may move or be replaced without changing a guarantee, but a guarantee must never silently disappear between documentation and executable proof.
 
-The core testing rule is:
+The core rule is:
 
 > A green test is evidence only when a plausible defect in the claimed guarantee would make it fail.
 
 ## Canonical testing documents
 
-- `current-guarantees.toml` — durable semantic guarantee inventory.
-- `repository-governance-contract.md` — HARD / CONTROLLED / FLEXIBLE / HISTORICAL repository and proof-governance rules.
-- `evidence-authoring-guide.md` — normative workflow for falsifiable evidence, legal-source provenance, PostgreSQL/security boundaries, independent oracles, and benchmark integrity.
-- `backend/tests/AGENTS.md` — path-specific operational rules for test authors and coding agents.
+- `current-guarantees.toml` — normative durable semantic guarantee inventory.
+- `current-proof-map.toml` — non-normative map of representative proof plus explicit evidence debt.
+- `repository-governance-contract.md` — HARD / CONTROLLED / FLEXIBLE / HISTORICAL repository and proof governance.
+- `evidence-authoring-guide.md` — normative workflow for falsifiable evidence, provenance, PostgreSQL/security boundaries, independent oracles, and benchmark integrity.
+- `backend/tests/AGENTS.md` — operational rules for test authors and coding agents.
 - `docs/22-architecture-fitness-functions.md` — executable architecture policy.
 
 `AGENTS.md` files are operational maps. Durable rationale and contracts belong under `docs/`.
 
 ## Rigidity model
 
-Every durable assertion should be understood as one of:
+Every durable assertion is classified as:
 
 ```text
 HARD        legal/security/provenance invariant or semantic boundary; fail closed
@@ -35,37 +40,28 @@ FLEXIBLE    private implementation shape; do not freeze gratuitously
 HISTORICAL  prior benchmark/release/design provenance; not automatic current authority
 ```
 
-A legitimate feature may change a `FLEXIBLE` filename/helper/split without requiring an architecture change. A `HARD` provenance/security/legal-quality guarantee cannot be silently weakened because the current implementation fails it.
+A legitimate feature may change a FLEXIBLE filename/helper/split without an architecture decision. A HARD provenance, security, legal-quality, or authority guarantee cannot be silently weakened because current implementation fails it.
 
 ## Evidence classes
 
-### `fitness`
+`fitness` proves deterministic repository/architecture constraints. `invariant` proves durable correctness at the real authority boundary. `contract` proves supported API/schema/state semantics. `adversarial` proves rejection of plausible failure modes. `benchmark` proves stochastic/semantic quality against independent controlled inputs/gold. `integration` proves multi-stage/component behavior. `security` proves the real authorization/tenant/credential boundary.
 
-Deterministic repository/architecture evidence. Appropriate for dependency direction, supported connection surfaces, CI/governance contracts, provider/runtime isolation, branch topology, and instruction routing.
+Physical location answers **who owns/runs the proof**. Evidence classes answer **what it proves**.
 
-### `invariant`
+## Current-proof map and evidence debt
 
-Behavioral evidence that a durable correctness property holds at the real authority boundary. Use the actual database/application boundary when that is what owns the guarantee.
+Every guarantee must appear in one of two states in `current-proof-map.toml`:
 
-### `contract`
+```text
+[[proofs]] -> representative current evidence exists
+[[gaps]]   -> guarantee is accepted but required evidence is incomplete
+```
 
-Typed/API/schema/state-machine evidence showing that supported callers receive promised semantics. Contract evidence alone is not enough for a critical behavioral invariant unless the guarantee is purely structural.
+A gap is not a failure of honesty and must not be hidden. It is explicit technical/evidence debt. Each gap names the missing evidence classes and explains what is not yet proven.
 
-### `adversarial`
+Do not mark a guarantee covered merely because a nearby unit test exists. The representative proof must exercise the mechanism needed for the claimed evidence. Static fitness does not become runtime security evidence; a scorer smoke test does not become legal-semantic validation; a unit authorization helper test does not automatically prove end-to-end tenant isolation.
 
-Negative evidence designed around a plausible defect: wrong tenant, wrong page/artifact membership, unsupported evidence, stale/replayed state, missing audit gate, contradictory source, gold leakage, or similar failure modes.
-
-### `benchmark`
-
-Independent task-quality evidence over frozen or otherwise controlled inputs/gold. Use for stochastic/semantic claims such as structure discovery, extraction accuracy, adverse-authority recall, navigation, or verifier value.
-
-### `integration`
-
-Evidence spanning multiple real components/stages, such as `Structure -> Audit -> Extraction -> Audit -> canonical commit`.
-
-### `security`
-
-Evidence run against the real authorization/tenant/credential boundary rather than an LLM guardrail or mock that cannot exercise the security claim.
+`backend/tests/architecture/test_current_proof_map.py` enforces that every current guarantee is either mapped or explicitly gapped and that representative proof paths still exist. It intentionally does **not** make those paths permanent architecture.
 
 ## Contributor / agent evidence flow
 
@@ -90,6 +86,8 @@ assert authoritative outcome + important absence of side effects
         ↓
 run narrow proof
         ↓
+update proof map / evidence gap when coverage meaning changed
+        ↓
 run owning canonical CI / benchmark lane
         ↓
 require exact-head evidence before merge
@@ -99,7 +97,7 @@ Do not start from “what assertion makes this implementation green?”. Start f
 
 ## Legal evidence discipline
 
-JurisNexo must preserve the distinction between:
+Preserve the distinction between:
 
 ```text
 primary legal source
@@ -109,21 +107,19 @@ model-derived interpretation
 canonical persisted conclusion/report
 ```
 
-Model output is not an independent oracle for source truth. For extraction/research benchmarks, gold must remain independent from the candidate model execution.
+Model output is never an independent oracle for source truth. Gold for extraction/research benchmarks must remain independent from the candidate model execution.
 
 ## PostgreSQL and security evidence
 
-When PostgreSQL semantics are part of the guarantee, use real PostgreSQL in the repository CI environment. Do not claim constraint, transaction, locking, migration, durable state, or authorization correctness from mocks or SQLite.
+When PostgreSQL semantics are part of the guarantee, use real PostgreSQL. Do not claim constraints, transaction semantics, locking, migration correctness, durable state, or runtime authorization from mocks or SQLite.
 
-Direct SQL may establish valid prerequisites, inspect authoritative state, or directly prove a database backstop. It must not pre-create the final application result or disable the mechanism being tested.
+Direct SQL may establish valid prerequisites, inspect authoritative state, or directly prove a database backstop. It must not pre-create the final application result, disable enforcement, or manufacture a state unavailable through accepted authority unless the test specifically proves rejection of that impossible state.
 
 When tenant/runtime authorization is part of the claim, execute the operation through the real supported runtime/application authority boundary. A privileged setup connection does not prove runtime restriction.
 
 ## Benchmark integrity
 
-A workflow exiting successfully is not proof of semantic success.
-
-Keep distinct:
+A workflow exiting successfully is not semantic success. Keep separate:
 
 ```text
 runtime/provider status
@@ -132,11 +128,11 @@ semantic/evidence status
 overall benchmark/product status
 ```
 
-Do not leak gold answers into prompts/tools. Do not weaken scorers solely to make a candidate pass. If the benchmark contract is genuinely wrong or ambiguous, fix/version it explicitly and preserve the reason.
+Do not leak gold into prompts/tools. Do not weaken scorers solely to make a candidate pass. If the benchmark contract is wrong or ambiguous, change/version it explicitly and retain the reason and adversarial evidence.
 
 ## Current test organization
 
-The current tree is intentionally small:
+The tree remains intentionally small:
 
 ```text
 backend/tests/architecture/  repository/dependency/instruction/CI fitness functions
@@ -144,9 +140,7 @@ backend/tests/integration/   multi-component/application/database behavior
 backend/tests/unit/          isolated logic
 ```
 
-Do not create `db/`, `e2e/`, `fixtures/`, or other directory families merely to imitate another repository. Add them when real proof ownership requires them.
-
-Physical location answers **who owns/runs the proof**. Pytest markers and the guarantee inventory answer **what evidence it provides**.
+Do not create `db/`, `e2e/`, `fixtures/`, or other directory families merely to imitate another repository. Create them only when real proof ownership makes the current tree ambiguous or harmful.
 
 ## Removing or restructuring proof
 
@@ -160,29 +154,36 @@ REMOVE      guarantee no longer applies and normative docs explicitly say why
 HISTORICAL  proof remains only as provenance for a prior state/version
 ```
 
-Never weaken a test solely because implementation currently fails it.
+Never weaken a test solely because implementation currently fails it. When representative evidence changes, update the non-normative proof map in the same coherent change.
 
 ## Current CI
 
-`backend/tests/architecture/` contains blocking deterministic fitness functions.
+`backend/tests/architecture/` contains blocking deterministic fitness functions. The backend-quality job runs them explicitly with `pytest tests/architecture`, and the broader PostgreSQL-backed suite also executes them.
 
-The backend-quality job runs them explicitly as:
+That redundancy is intentional: architecture enforcement remains visible, while governance tests make accidental removal detectable.
+
+Tests inspecting repository-level policy receive `JURISNEXO_REPO_ROOT`; PR topology tests receive actual `GITHUB_BASE_REF` and `GITHUB_HEAD_REF` values.
+
+A green architecture suite proves only the structural/governance boundaries it actually checks. It does not prove every semantic guarantee, research behavior, tenant path, or benchmark claim. The proof map must continue to expose gaps.
+
+## Agent instruction hierarchy
+
+Critical boundaries carry local `AGENTS.md` maps and lightweight Claude/Gemini adapters:
 
 ```text
-pytest tests/architecture
+docs/
+backend/src/jurisnexo/
+backend/migrations/
+backend/tests/
 ```
 
-The full PostgreSQL-backed backend test job also executes them with the repository root mounted read-only. This redundancy is intentional: the explicit architecture step keeps the gate visible, while the broader backend suite makes accidental removal easier to detect through governance tests.
-
-Tests that inspect root-level governance/docs receive `JURISNEXO_REPO_ROOT` from CI instead of assuming the backend container contains the entire checkout. Pull-request topology tests also receive actual `GITHUB_BASE_REF` and `GITHUB_HEAD_REF` values.
-
-Other guarantees are proven through integration/PostgreSQL tests and benchmark/scorer lanes. A green architecture suite means the tested structural boundaries remain intact; it does **not** mean every semantic guarantee is implemented or verified.
+Tool-specific `.github/instructions/*.instructions.md` files are adapters for scoped editor guidance. They do not own architecture. Canonical authority remains repository/local `AGENTS.md` plus current documents under `docs/`.
 
 ## External governance controls
 
-Repository tests can validate committed CI workflow, observed pull-request topology, branch-cleanup logic, documentation policy, test-authoring policy, and dependency boundaries. They cannot configure GitHub branch protection/rulesets or prevent a direct push when the hosting platform still allows one.
+Repository tests can validate committed CI workflow, observed PR topology, branch cleanup logic, documentation policy, test-authoring policy, proof-map integrity, and dependency boundaries. They cannot configure GitHub branch protection/rulesets or prevent a direct push when the hosting platform still allows one.
 
-Required-status checks, PR-only merge policy, force-push prohibition, and deletion protection must therefore be verified/configured at the GitHub repository/ruleset layer. Do not claim pytest proves those remote settings.
+Required status checks, PR-only merge policy, force-push prohibition, and protected long-lived branches must therefore be verified/configured at GitHub as external controls. Do not claim pytest proves those remote settings.
 
 ## Review questions
 
@@ -195,6 +196,7 @@ Before accepting a new or changed durable proof, answer:
 5. Is the real authority/mechanism exercised?
 6. Is the oracle/gold independent?
 7. Are authoritative outcome and important negative side effects inspected?
-8. Which canonical CI/benchmark lane owns the evidence?
+8. Is the proof map honest about what remains unproven?
+9. Which canonical CI/benchmark lane owns the evidence?
 
 If those questions cannot be answered, redesign the proof before treating it as evidence.
