@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import io
 import tokenize
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 IGNORED_TOKEN_TYPES = {
@@ -23,6 +23,12 @@ PYTHON_SCAN_ROOTS = (
 )
 PACKAGE_ROOT = Path("backend/src/jurisnexo")
 NON_COMPONENT_NAMES = {"__pycache__"}
+SUPPRESSION_MARKERS = {
+    "noqa": "noqa",
+    "type_ignore": "type: ignore",
+    "nosec": "nosec",
+    "pragma_no_cover": "pragma: no cover",
+}
 
 
 def effective_code_lines(source: str) -> int:
@@ -62,18 +68,22 @@ def classify_path(repo_root: Path, path: Path) -> str:
     return "python_other"
 
 
-def component_for_path(repo_root: Path, path: Path) -> str | None:
-    package_root = repo_root / PACKAGE_ROOT
-    try:
-        relative = path.relative_to(package_root)
-    except ValueError:
+def _component_from_relative_path(path: Path) -> str | None:
+    parts = path.parts
+    package_parts = PACKAGE_ROOT.parts
+    if parts[: len(package_parts)] != package_parts:
         return None
-    if len(relative.parts) < 2:
+    remainder = parts[len(package_parts) :]
+    if len(remainder) < 2:
         return None
-    component = relative.parts[0]
+    component = remainder[0]
     if component in NON_COMPONENT_NAMES or component.startswith("__"):
         return None
     return component
+
+
+def component_for_path(repo_root: Path, path: Path) -> str | None:
+    return _component_from_relative_path(path.relative_to(repo_root))
 
 
 def discover_components(repo_root: Path) -> set[str]:
@@ -87,6 +97,14 @@ def discover_components(repo_root: Path) -> set[str]:
         if any(child.rglob("*.py")):
             components.add(child.name)
     return components
+
+
+def discover_components_from_sources(sources: dict[Path, str]) -> set[str]:
+    return {
+        component
+        for path in sources
+        if (component := _component_from_relative_path(path)) is not None
+    }
 
 
 def _absolute_import_targets(node: ast.Import | ast.ImportFrom) -> set[str]:
@@ -106,11 +124,11 @@ def _absolute_import_targets(node: ast.Import | ast.ImportFrom) -> set[str]:
     return targets
 
 
-def _relative_import_target(path: Path, package_root: Path, node: ast.ImportFrom) -> str | None:
+def _relative_import_target(relative_path: Path, node: ast.ImportFrom) -> str | None:
     if node.level <= 0:
         return None
-    relative = path.relative_to(package_root)
-    package = list(relative.parts[:-1])
+    package_relative = relative_path.relative_to(PACKAGE_ROOT)
+    package = list(package_relative.parts[:-1])
     climb = node.level - 1
     if climb > len(package):
         return None
@@ -122,42 +140,53 @@ def _relative_import_target(path: Path, package_root: Path, node: ast.ImportFrom
     return resolved[0]
 
 
-def component_import_targets(repo_root: Path, path: Path, source: str) -> set[str]:
-    source_component = component_for_path(repo_root, path)
+def component_import_targets_from_source(
+    relative_path: Path,
+    source: str,
+    known_components: set[str],
+) -> set[str]:
+    source_component = _component_from_relative_path(relative_path)
     if source_component is None:
         return set()
-    package_root = repo_root / PACKAGE_ROOT
-    known_components = discover_components(repo_root)
-    tree = ast.parse(source, filename=path.as_posix())
+    tree = ast.parse(source, filename=relative_path.as_posix())
     targets: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             targets.update(_absolute_import_targets(node))
         elif isinstance(node, ast.ImportFrom):
             targets.update(_absolute_import_targets(node))
-            relative_target = _relative_import_target(path, package_root, node)
+            relative_target = _relative_import_target(relative_path, node)
             if relative_target is not None:
                 targets.add(relative_target)
     return {target for target in targets if target in known_components and target != source_component}
 
 
-def component_dependency_snapshot(repo_root: Path) -> dict[str, object]:
-    components = discover_components(repo_root)
-    package_root = repo_root / PACKAGE_ROOT
+def component_import_targets(repo_root: Path, path: Path, source: str) -> set[str]:
+    return component_import_targets_from_source(
+        path.relative_to(repo_root),
+        source,
+        discover_components(repo_root),
+    )
+
+
+def component_dependency_snapshot_from_sources(
+    sources: dict[Path, str],
+) -> dict[str, object]:
+    """Build a component graph from repo-relative Python source snapshots."""
+    components = discover_components_from_sources(sources)
     edge_sites: dict[tuple[str, str], set[str]] = defaultdict(set)
     component_files: dict[str, set[str]] = defaultdict(set)
     component_loc: dict[str, int] = defaultdict(int)
 
-    for path in sorted(package_root.rglob("*.py")) if package_root.is_dir() else []:
-        component = component_for_path(repo_root, path)
+    for relative_path, source in sorted(sources.items(), key=lambda item: item[0].as_posix()):
+        component = _component_from_relative_path(relative_path)
         if component is None:
             continue
-        relative = path.relative_to(repo_root).as_posix()
-        source = path.read_text(encoding="utf-8")
-        component_files[component].add(relative)
+        path_text = relative_path.as_posix()
+        component_files[component].add(path_text)
         component_loc[component] += effective_code_lines(source)
-        for target in component_import_targets(repo_root, path, source):
-            edge_sites[(component, target)].add(relative)
+        for target in component_import_targets_from_source(relative_path, source, components):
+            edge_sites[(component, target)].add(path_text)
 
     edges = set(edge_sites)
     component_records: list[dict[str, object]] = []
@@ -186,6 +215,89 @@ def component_dependency_snapshot(repo_root: Path) -> dict[str, object]:
         for source, target in sorted(edges)
     ]
     return {"components": component_records, "edges": edge_records}
+
+
+def component_dependency_snapshot(repo_root: Path) -> dict[str, object]:
+    package_root = repo_root / PACKAGE_ROOT
+    sources = {
+        path.relative_to(repo_root): path.read_text(encoding="utf-8")
+        for path in sorted(package_root.rglob("*.py"))
+        if package_root.is_dir()
+    }
+    return component_dependency_snapshot_from_sources(sources)
+
+
+def _is_docstring(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
+
+
+def _is_all_assignment(node: ast.stmt) -> bool:
+    if isinstance(node, ast.Assign):
+        return any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.target, ast.Name) and node.target.id == "__all__"
+    return False
+
+
+def _is_one_call_forwarder(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    body = [statement for statement in node.body if not _is_docstring(statement)]
+    if len(body) != 1:
+        return False
+    statement = body[0]
+    if isinstance(statement, ast.Return):
+        return isinstance(statement.value, (ast.Call, ast.Await)) and (
+            not isinstance(statement.value, ast.Await) or isinstance(statement.value.value, ast.Call)
+        )
+    if isinstance(statement, ast.Expr):
+        value = statement.value
+        return isinstance(value, ast.Call) or (
+            isinstance(value, ast.Await) and isinstance(value.value, ast.Call)
+        )
+    return False
+
+
+def navigation_observation(relative_path: Path, source: str) -> dict[str, object]:
+    """Observe indirection shape without assigning a maintainability verdict."""
+    tree = ast.parse(source, filename=relative_path.as_posix())
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    forwarders = [node for node in functions if _is_one_call_forwarder(node)]
+    meaningful_top_level = [node for node in tree.body if not _is_docstring(node)]
+    import_count = sum(isinstance(node, (ast.Import, ast.ImportFrom)) for node in meaningful_top_level)
+    reexport_only = bool(meaningful_top_level) and import_count > 0 and all(
+        isinstance(node, (ast.Import, ast.ImportFrom)) or _is_all_assignment(node)
+        for node in meaningful_top_level
+    )
+    return {
+        "path": relative_path.as_posix(),
+        "function_count": len(functions),
+        "one_call_forwarder_count": len(forwarders),
+        "forwarding_only_functions": bool(functions) and len(forwarders) == len(functions),
+        "reexport_only_module": reexport_only,
+    }
+
+
+def suppression_observation(source: str) -> dict[str, object]:
+    """Count recognized suppression markers in comments, not arbitrary strings."""
+    counts: Counter[str] = Counter()
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+        comments = [token.string.lower() for token in tokens if token.type == tokenize.COMMENT]
+    except tokenize.TokenError:
+        comments = []
+    for comment in comments:
+        for name, marker in SUPPRESSION_MARKERS.items():
+            if marker in comment:
+                counts[name] += 1
+    normalized = {name: counts.get(name, 0) for name in SUPPRESSION_MARKERS}
+    return {"counts": normalized, "total": sum(normalized.values())}
 
 
 def file_measurements(repo_root: Path) -> list[dict[str, object]]:
