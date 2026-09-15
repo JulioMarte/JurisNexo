@@ -36,12 +36,12 @@ class ApiError(Exception):
         details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
-        self.status_code = status_code
-        self.code = code
-        self.message = message
-        self.retryable = retryable
-        self.resolution = resolution
-        self.details = details or {}
+        self.status_code: int = status_code
+        self.code: str = code
+        self.message: str = message
+        self.retryable: bool = retryable
+        self.resolution: Resolution = resolution
+        self.details: dict[str, Any] = details or {}
 
 
 def request_id_for(request: Request) -> str:
@@ -76,7 +76,7 @@ def install_error_handlers(app: FastAPI) -> None:
             status_code=400,
             code="invalid_request",
             message="The request does not satisfy the API contract.",
-            details={"errors": exc.errors(include_url=False)},
+            details={"errors": exc.errors()},
         )
         return _response(error, request)
 

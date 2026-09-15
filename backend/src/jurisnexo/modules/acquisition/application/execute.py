@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Protocol
 from uuid import UUID
 
-from jurisnexo.modules.acquisition.adapters.db import PostgresAcquisitionLedger
+from jurisnexo.modules.acquisition.application.ports import (
+    AcquisitionLedger,
+    HttpFetcher,
+    ObjectStore,
+)
 from jurisnexo.modules.acquisition.contracts import AcquisitionRunRecord
 
 _SOURCE_STORAGE_CODES = {
@@ -13,23 +16,6 @@ _SOURCE_STORAGE_CODES = {
     "constitutional_court": "tc",
 }
 _STORAGE_SEGMENT = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-
-
-class HttpFetcher(Protocol):
-    def get_bytes(self, url: str) -> bytes: ...
-
-
-class ObjectStore(Protocol):
-    def exists(self, key: str) -> bool: ...
-
-    def put(
-        self,
-        *,
-        key: str,
-        content: bytes,
-        content_type: str,
-        metadata: dict[str, str],
-    ) -> None: ...
 
 
 def storage_key_for(*, source_code: str, collection: str, sha256: str) -> str:
@@ -60,7 +46,7 @@ def _safe_failure(exc: Exception) -> tuple[str, str]:
 def execute_acquisition_run(
     *,
     run_id: UUID,
-    ledger: PostgresAcquisitionLedger,
+    ledger: AcquisitionLedger,
     fetcher: HttpFetcher,
     object_store: ObjectStore,
 ) -> AcquisitionRunRecord:

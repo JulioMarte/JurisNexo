@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, LiteralString
 from urllib.parse import unquote, urlparse
 from uuid import UUID
 
@@ -412,7 +412,7 @@ class PostgresAcquisitionLedger:
             return tuple(ArtifactRecord(**row) for row in cursor.fetchall())
 
     @staticmethod
-    def _run_select() -> str:
+    def _run_select() -> LiteralString:
         return """
             SELECT ar.id, ar.source_collection_id, sr.code AS source_code,
                    sc.code AS collection_code, ar.status, ar.requested_at,

@@ -17,7 +17,8 @@ from jurisnexo.platform.http.middleware import decode_uuid_cursor, encode_uuid_c
 
 
 class HasId(Protocol):
-    id: UUID
+    @property
+    def id(self) -> UUID: ...
 
 
 class StrictModel(BaseModel):
