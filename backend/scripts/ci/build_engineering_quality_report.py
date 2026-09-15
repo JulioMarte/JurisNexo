@@ -60,7 +60,11 @@ def _changed_python_paths(repo_root: Path, base_ref: str | None) -> list[Path]:
         "backend/migrations",
         "backend/scripts",
     )
-    return sorted(Path(path) for path in result.stdout.splitlines() if path.endswith(".py"))
+    return sorted(
+        Path(path)
+        for path in result.stdout.splitlines()
+        if path.endswith(".py")
+    )
 
 
 def _source_at_ref(repo_root: Path, base_ref: str, path: Path) -> str | None:
@@ -88,10 +92,18 @@ def _file_size_candidates(
         if current <= FILE_LOC_REVIEW_THRESHOLD:
             continue
         previous_source = _source_at_ref(repo_root, base_ref, path) if base_ref else None
-        previous = effective_code_lines(previous_source) if previous_source is not None else None
+        previous = (
+            effective_code_lines(previous_source)
+            if previous_source is not None
+            else None
+        )
         candidates.append(
             {
-                "candidate_id": _candidate_id("QR-FSIZE-001", path.as_posix(), path.name),
+                "candidate_id": _candidate_id(
+                    "QR-FSIZE-001",
+                    path.as_posix(),
+                    path.name,
+                ),
                 "classification": "REVIEW_CANDIDATE",
                 "trigger_id": "QR-FSIZE-001",
                 "scope": {"path": path.as_posix(), "subject": path.name},
@@ -112,8 +124,14 @@ def _file_size_candidates(
                     }
                 ],
                 "review_questions": [
-                    "Does this file contain more than one independently changing responsibility?",
-                    "Would extraction reduce reasoning cost without adding forwarding ceremony?",
+                    (
+                        "Does this file contain more than one independently changing "
+                        "responsibility?"
+                    ),
+                    (
+                        "Would extraction reduce reasoning cost without adding "
+                        "forwarding ceremony?"
+                    ),
                     "Is the size mostly declarative or linear rather than decision-heavy?",
                 ],
             }
@@ -142,7 +160,11 @@ def _navigation_candidates(
             continue
         candidates.append(
             {
-                "candidate_id": _candidate_id("QR-NAV-001", path.as_posix(), path.name),
+                "candidate_id": _candidate_id(
+                    "QR-NAV-001",
+                    path.as_posix(),
+                    path.name,
+                ),
                 "classification": "REVIEW_CANDIDATE",
                 "trigger_id": "QR-NAV-001",
                 "scope": {"path": path.as_posix(), "subject": path.name},
@@ -162,9 +184,18 @@ def _navigation_candidates(
                 ],
                 "deltas": [],
                 "review_questions": [
-                    "Does this indirection represent a real ownership or substitution boundary?",
-                    "Does it shorten the reasoning path or only move a call/re-export elsewhere?",
-                    "Would keeping behavior local be easier to navigate without weakening a boundary?",
+                    (
+                        "Does this indirection represent a real ownership or "
+                        "substitution boundary?"
+                    ),
+                    (
+                        "Does it shorten the reasoning path or only move a "
+                        "call/re-export elsewhere?"
+                    ),
+                    (
+                        "Would keeping behavior local be easier to navigate without "
+                        "weakening a boundary?"
+                    ),
                 ],
             }
         )
@@ -189,7 +220,11 @@ def _coupling_candidates(diff: dict[str, object] | None) -> list[dict[str, objec
         subject = f"{source}->{target}"
         candidates.append(
             {
-                "candidate_id": _candidate_id("QR-COUPLING-001", source, subject),
+                "candidate_id": _candidate_id(
+                    "QR-COUPLING-001",
+                    source,
+                    subject,
+                ),
                 "classification": "REVIEW_CANDIDATE",
                 "trigger_id": "QR-COUPLING-001",
                 "scope": {
@@ -212,9 +247,18 @@ def _coupling_candidates(diff: dict[str, object] | None) -> list[dict[str, objec
                 ],
                 "deltas": [],
                 "review_questions": [
-                    "Does this dependency represent a real capability need and correct ownership?",
-                    "Does it cross a trust, persistence, provider, or legal-data authority boundary?",
-                    "Would a helper or service locator merely hide the same dependency from the graph?",
+                    (
+                        "Does this dependency represent a real capability need and "
+                        "correct ownership?"
+                    ),
+                    (
+                        "Does it cross a trust, persistence, provider, or legal-data "
+                        "authority boundary?"
+                    ),
+                    (
+                        "Would a helper or service locator merely hide the same "
+                        "dependency from the graph?"
+                    ),
                 ],
             }
         )
@@ -258,9 +302,18 @@ def _suppression_candidates(diff: dict[str, object] | None) -> list[dict[str, ob
                     }
                 ],
                 "review_questions": [
-                    "Is each new suppression narrowly justified by a real tool limitation?",
-                    "Can the underlying type/lint/security/coverage issue be fixed without obscuring intent?",
-                    "Does the suppression hide behavior that should remain visible to a blocking gate?",
+                    (
+                        "Is each new suppression narrowly justified by a real tool "
+                        "limitation?"
+                    ),
+                    (
+                        "Can the underlying type/lint/security/coverage issue be fixed "
+                        "without obscuring intent?"
+                    ),
+                    (
+                        "Does the suppression hide behavior that should remain visible "
+                        "to a blocking gate?"
+                    ),
                 ],
             }
         )
@@ -286,10 +339,18 @@ def parse_ruff_c901(diagnostics: list[dict[str, Any]]) -> list[dict[str, object]
         line = location.get("row") if isinstance(location, dict) else None
         candidates.append(
             {
-                "candidate_id": _candidate_id("QR-CPLX-001", path.as_posix(), subject),
+                "candidate_id": _candidate_id(
+                    "QR-CPLX-001",
+                    path.as_posix(),
+                    subject,
+                ),
                 "classification": "REVIEW_CANDIDATE",
                 "trigger_id": "QR-CPLX-001",
-                "scope": {"path": path.as_posix(), "subject": subject, "line": line},
+                "scope": {
+                    "path": path.as_posix(),
+                    "subject": subject,
+                    "line": line,
+                },
                 "facts": [
                     {
                         "kind": "function_mccabe",
@@ -300,9 +361,18 @@ def parse_ruff_c901(diagnostics: list[dict[str, Any]]) -> list[dict[str, object]
                 ],
                 "deltas": [],
                 "review_questions": [
-                    "Where does the reasoning load come from: branches, state, ordering, or effects?",
-                    "Can decision structure be simplified without distributing it across helpers?",
-                    "Would extraction create a real responsibility boundary and preserve locality?",
+                    (
+                        "Where does the reasoning load come from: branches, state, "
+                        "ordering, or effects?"
+                    ),
+                    (
+                        "Can decision structure be simplified without distributing it "
+                        "across helpers?"
+                    ),
+                    (
+                        "Would extraction create a real responsibility boundary and "
+                        "preserve locality?"
+                    ),
                 ],
             }
         )
@@ -330,7 +400,11 @@ def run_ruff_c901(repo_root: Path, paths: list[Path]) -> list[dict[str, object]]
         check=False,
     )
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "Ruff produced no diagnostic"
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or "Ruff produced no diagnostic"
+        )
         raise RuntimeError(f"Ruff C901 sensor failed: {detail}")
     try:
         payload = json.loads(result.stdout or "[]")
@@ -345,7 +419,9 @@ def build_report(repo_root: Path, *, base_ref: str | None = None) -> dict[str, o
     measurements = file_measurements(repo_root)
     coupling = component_dependency_snapshot(repo_root)
     changed_paths = _changed_python_paths(repo_root, base_ref)
-    architecture_diff = build_architecture_diff(repo_root, base_ref) if base_ref else None
+    architecture_diff = (
+        build_architecture_diff(repo_root, base_ref) if base_ref else None
+    )
     candidates: list[dict[str, object]] = []
     candidates.extend(_file_size_candidates(repo_root, changed_paths, base_ref))
     candidates.extend(run_ruff_c901(repo_root, changed_paths))
@@ -354,7 +430,10 @@ def build_report(repo_root: Path, *, base_ref: str | None = None) -> dict[str, o
     candidates.extend(_suppression_candidates(architecture_diff))
     largest_files = sorted(
         measurements,
-        key=lambda record: (int(record["effective_loc"]), str(record["path"])),
+        key=lambda record: (
+            int(record["effective_loc"]),
+            str(record["path"]),
+        ),
         reverse=True,
     )[:20]
     components = coupling.get("components", [])
@@ -368,17 +447,30 @@ def build_report(repo_root: Path, *, base_ref: str | None = None) -> dict[str, o
         "authority": "maintainability-signals-are-non-blocking",
         "provenance": {
             "base_ref": base_ref,
-            "candidate_scope": "all-python-files" if base_ref is None else "changed-python-files",
+            "candidate_scope": (
+                "all-python-files" if base_ref is None else "changed-python-files"
+            ),
             "changed_python_file_count": len(changed_paths),
         },
         "policy": {
             "file_loc_review_threshold": FILE_LOC_REVIEW_THRESHOLD,
             "mccabe_review_threshold": MCCABE_REVIEW_THRESHOLD,
             "threshold_status": "calibration-triggers-not-architecture-cliffs",
-            "coupling_policy": "new component edges trigger review; no numeric fan-in/fan-out cliff",
-            "navigation_policy": "new forwarding/re-export-only files trigger review, not automatic rejection",
-            "suppression_policy": "growth triggers review; deterministic lint/type/security gates remain authoritative",
-            "agent_action": "review ownership, locality, reasoning complexity and authority before refactoring; never game metrics",
+            "coupling_policy": (
+                "new component edges trigger review; no numeric fan-in/fan-out cliff"
+            ),
+            "navigation_policy": (
+                "new forwarding/re-export-only files trigger review, not automatic "
+                "rejection"
+            ),
+            "suppression_policy": (
+                "growth triggers review; deterministic lint/type/security gates remain "
+                "authoritative"
+            ),
+            "agent_action": (
+                "review ownership, locality, reasoning complexity and authority before "
+                "refactoring; never game metrics"
+            ),
         },
         "summary": {
             "python_file_count": len(measurements),
@@ -420,7 +512,10 @@ def render_summary(report: dict[str, object]) -> str:
         f"Review candidates: **{summary['review_candidate_count']}**",
         f"Candidate scope: **{provenance['candidate_scope']}**",
         "",
-        "These are review signals. eLOC, C901, suppression counts and fan-in/fan-out are not blocking architecture limits.",
+        (
+            "These are review signals. eLOC, C901, suppression counts and "
+            "fan-in/fan-out are not blocking architecture limits."
+        ),
         "",
         "### Component coupling",
         "",
@@ -429,7 +524,13 @@ def render_summary(report: dict[str, object]) -> str:
         _markdown_table(
             ["Component", "Files", "eLOC", "Fan-in", "Fan-out"],
             [
-                [item["component"], item["python_files"], item["effective_loc"], item["fan_in"], item["fan_out"]]
+                [
+                    item["component"],
+                    item["python_files"],
+                    item["effective_loc"],
+                    item["fan_in"],
+                    item["fan_out"],
+                ]
                 for item in components
             ],
         )
@@ -437,7 +538,10 @@ def render_summary(report: dict[str, object]) -> str:
     lines.extend(["", "### Connections", ""])
     if edges:
         lines.extend(
-            f"- `{edge['source']} -> {edge['target']}` ({edge['import_site_count']} import site(s))"
+            (
+                f"- `{edge['source']} -> {edge['target']}` "
+                f"({edge['import_site_count']} import site(s))"
+            )
             for edge in edges
         )
     else:
@@ -446,24 +550,51 @@ def render_summary(report: dict[str, object]) -> str:
     lines.extend(
         _markdown_table(
             ["Path", "Category", "eLOC"],
-            [[item["path"], item["category"], item["effective_loc"]] for item in largest[:15]],
+            [
+                [item["path"], item["category"], item["effective_loc"]]
+                for item in largest[:15]
+            ],
         )
     )
     if candidates:
-        lines.extend(["", "### Review candidates", "", "A candidate is not a defect. Semantic review decides HEALTHY_AS_IS vs a concrete concern.", ""])
+        lines.extend(
+            [
+                "",
+                "### Review candidates",
+                "",
+                (
+                    "A candidate is not a defect. Semantic review decides "
+                    "HEALTHY_AS_IS vs a concrete concern."
+                ),
+                "",
+            ]
+        )
         for item in candidates:
             facts = item.get("facts", [])
-            fact = facts[0] if isinstance(facts, list) and facts and isinstance(facts[0], dict) else {}
+            fact = (
+                facts[0]
+                if isinstance(facts, list)
+                and facts
+                and isinstance(facts[0], dict)
+                else {}
+            )
             scope = item.get("scope", {})
             lines.append(
-                f"- `{item['trigger_id']}` `{scope.get('path')}` :: `{scope.get('subject')}` — {fact.get('kind')}={fact.get('value')}"
+                (
+                    f"- `{item['trigger_id']}` `{scope.get('path')}` :: "
+                    f"`{scope.get('subject')}` — {fact.get('kind')}="
+                    f"{fact.get('value')}"
+                )
             )
     return "\n".join(lines)
 
 
 def write_report(report: dict[str, object], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def write_github_summary(text: str) -> None:
@@ -483,7 +614,13 @@ def main() -> int:
     output = args.output if args.output.is_absolute() else repo_root / args.output
     try:
         report = build_report(repo_root, base_ref=args.base_ref)
-    except (OSError, RuntimeError, SyntaxError, tokenize.TokenError, ValueError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        SyntaxError,
+        tokenize.TokenError,
+        ValueError,
+    ) as exc:
         print(f"[ENGINEERING-QUALITY-ERROR] evidence collection failed: {exc}")
         return 2
     write_report(report, output)
