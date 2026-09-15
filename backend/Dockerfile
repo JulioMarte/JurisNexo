@@ -22,6 +22,7 @@ EXPOSE 8000
 CMD ["uvicorn", "jurisnexo.entrypoints.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS test
+ENV RUFF_CACHE_DIR=/tmp/ruff-cache
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
