@@ -1,0 +1,46 @@
+name: Engineering quality signals
+
+on:
+  pull_request:
+  push:
+    branches:
+      - development
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engineering-quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signals:
+    name: Component graph and file-size signals
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Build engineering quality report
+        env:
+          QUALITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          args=(
+            python3 backend/scripts/ci/build_engineering_quality_report.py
+            --repo-root .
+            --output .ci/engineering-quality.json
+          )
+          if [ -n "$QUALITY_BASE_REF" ] && git cat-file -e "$QUALITY_BASE_REF^{commit}" 2>/dev/null; then
+            args+=(--base-ref "$QUALITY_BASE_REF")
+          fi
+          "${args[@]}"
+      - name: Upload engineering quality evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: engineering-quality-${{ github.sha }}
+          path: .ci/engineering-quality.json
+          if-no-files-found: error
+          retention-days: 14

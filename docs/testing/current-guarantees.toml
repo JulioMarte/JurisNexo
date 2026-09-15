@@ -117,3 +117,11 @@ severity = "critical"
 classification = "CONTROLLED"
 required_evidence = ["fitness"]
 risk = ["architecture", "operations"]
+
+[[guarantees]]
+id = "FIT-ENGINEERING-SIGNALS-001"
+statement = "Repository quality tooling derives the current JurisNexo component import graph, fan-in/fan-out, import sites and Python effective-LOC measurements from the real tree, while treating file-size and numeric coupling observations as non-blocking review signals rather than arbitrary architecture limits."
+severity = "high"
+classification = "CONTROLLED"
+required_evidence = ["fitness"]
+risk = ["architecture"]

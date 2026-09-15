@@ -21,6 +21,22 @@ Prefer capability/domain names over generic buckets. Do not create `utils.py`, `
 
 A new abstraction must make ownership, authority, failure handling, or testability clearer. A forwarding wrapper that only hides coupling is not an improvement.
 
+## Engineering-quality signals
+
+Read `docs/24-engineering-quality-signals.md` when a change adds a component connection, materially grows a Python file, or restructures package ownership.
+
+The engineering-quality report exposes current top-level component imports, fan-in/fan-out, import sites, effective LOC, and large-file review candidates.
+
+These measurements are sensors, not automatic refactor commands:
+
+- do not split a cohesive file only because it exceeds the eLOC review threshold;
+- do not hide a real dependency behind runtime imports, re-exports, service locators, or generic shared code to improve fan-in/fan-out;
+- treat a new cross-component edge as review evidence: identify why the dependency exists and whether the source component remains the correct owner/coordinator;
+- `HEALTHY_AS_IS` is a valid result when the measured structure is coherent;
+- deterministic architecture, security, provenance, and legal-quality invariants remain independently blocking.
+
+If structural code changes after reviewing a quality signal, rerun architecture fitness and the relevant behavioral proof.
+
 ## Provider/model changes
 
 When touching `model_providers` or agent-runtime integration, verify the role actually requires and supports the relevant capabilities: structured outputs, tool calling, multimodal input, accounting, retry/error semantics, tracing, latency, and cost.
