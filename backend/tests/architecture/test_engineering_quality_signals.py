@@ -10,6 +10,8 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
 SCRIPT = REPO_ROOT / "backend/scripts/ci/build_engineering_quality_report.py"
 PACKAGE_ROOT = REPO_ROOT / "backend/src/jurisnexo"
+WORKFLOW = REPO_ROOT / ".github/workflows/engineering-quality.yml"
+POLICY = REPO_ROOT / "docs/24-engineering-quality-signals.md"
 
 
 def _build_report(tmp_path: Path) -> dict[str, object]:
@@ -53,7 +55,10 @@ def test_engineering_quality_report_matches_current_component_graph(tmp_path: Pa
 
     edge_pairs = {(str(edge["source"]), str(edge["target"])) for edge in edges}
     assert all(source != target for source, target in edge_pairs)
-    assert all(source in actual_components and target in actual_components for source, target in edge_pairs)
+    assert all(
+        source in actual_components and target in actual_components
+        for source, target in edge_pairs
+    )
 
     for item in components:
         component = str(item["component"])
@@ -87,3 +92,19 @@ def test_file_size_signals_are_complete_and_non_blocking(tmp_path: Path) -> None
     assert actual_candidates == expected_candidates
     assert all((REPO_ROOT / str(item["path"])).is_file() for item in measurements)
     assert all(int(item["effective_loc"]) >= 0 for item in measurements)
+
+
+def test_engineering_quality_signals_are_visible_but_not_a_numeric_merge_gate() -> None:
+    assert SCRIPT.is_file()
+    assert POLICY.is_file()
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    policy = POLICY.read_text(encoding="utf-8")
+
+    assert "build_engineering_quality_report.py" in workflow
+    assert "engineering-quality.json" in workflow
+    assert "actions/upload-artifact" in workflow
+    assert "review-signal-not-architecture-cliff" in (
+        REPO_ROOT / "backend/scripts/ci/build_engineering_quality_report.py"
+    ).read_text(encoding="utf-8")
+    assert "not a blocking architecture limit" in policy
+    assert "There is intentionally no synthetic architecture score" in policy
