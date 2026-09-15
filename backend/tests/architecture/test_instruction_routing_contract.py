@@ -68,7 +68,9 @@ def test_critical_boundaries_have_local_agent_maps_and_adapters() -> None:
         for adapter_name in ("CLAUDE.md", "GEMINI.md"):
             adapter_path = f"{boundary}/{adapter_name}"
             content = _read(adapter_path)
-            assert "adapter" in content.lower(), f"{adapter_path} must identify itself as an adapter"
+            assert "adapter" in content.lower(), (
+                f"{adapter_path} must identify itself as an adapter"
+            )
             assert "AGENTS.md" in content, f"{adapter_path} must route to AGENTS.md"
 
 
