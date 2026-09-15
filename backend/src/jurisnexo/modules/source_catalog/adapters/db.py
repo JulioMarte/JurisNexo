@@ -21,7 +21,10 @@ class PostgresSourceCatalog:
     def list_sources(
         self, *, after_id: UUID | None, limit: int
     ) -> tuple[SourceRecord, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT id, code, name, institution, authority_class, base_locator,
@@ -46,9 +49,11 @@ class PostgresSourceCatalog:
         active: bool,
     ) -> SourceRecord:
         try:
-            with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-                row_factory=dict_row
-            ) as cursor:
+            with (
+                self._connection_factory() as connection,
+                connection.transaction(),
+                connection.cursor(row_factory=dict_row) as cursor,
+            ):
                 cursor.execute(
                     """
                     INSERT INTO corpus.source_registries (
@@ -67,9 +72,11 @@ class PostgresSourceCatalog:
         return self._source(row)
 
     def set_source_active(self, *, source_id: UUID, active: bool) -> SourceRecord:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-            row_factory=dict_row
-        ) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 UPDATE corpus.source_registries
@@ -92,7 +99,10 @@ class PostgresSourceCatalog:
         after_id: UUID | None,
         limit: int,
     ) -> tuple[SourceCollectionRecord, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT sc.id, sc.source_registry_id, sr.code AS source_code,
@@ -121,9 +131,11 @@ class PostgresSourceCatalog:
         active: bool,
     ) -> SourceCollectionRecord:
         try:
-            with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-                row_factory=dict_row
-            ) as cursor:
+            with (
+                self._connection_factory() as connection,
+                connection.transaction(),
+                connection.cursor(row_factory=dict_row) as cursor,
+            ):
                 cursor.execute(
                     """
                     INSERT INTO corpus.source_collections (
@@ -164,9 +176,11 @@ class PostgresSourceCatalog:
         active: bool,
         expected_revision: int,
     ) -> SourceCollectionRecord:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-            row_factory=dict_row
-        ) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 UPDATE corpus.source_collections
@@ -210,7 +224,10 @@ class PostgresSourceCatalog:
         after_id: UUID | None,
         limit: int,
     ) -> tuple[SourceDocumentRecord, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT sd.id, sd.source_registry_id, sr.code AS source_code,
@@ -246,7 +263,10 @@ class PostgresSourceCatalog:
 
     @staticmethod
     def _source_code(cursor: Any, source_id: UUID) -> str:
-        cursor.execute("SELECT code FROM corpus.source_registries WHERE id = %s", (source_id,))
+        cursor.execute(
+            "SELECT code FROM corpus.source_registries WHERE id = %s",
+            (source_id,),
+        )
         row = cursor.fetchone()
         if row is None:
             raise LookupError("source_not_found")

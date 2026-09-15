@@ -71,6 +71,40 @@ def api_client(
         yield client, fetcher, store
 
 
+def _delete_fixture(
+    connection_factory: ConnectionFactory,
+    *,
+    source_id: UUID,
+    collection_id: UUID | None = None,
+    document_id: UUID | None = None,
+    artifact_id: UUID | None = None,
+    run_id: UUID | None = None,
+) -> None:
+    with (
+        connection_factory() as connection,
+        connection.transaction(),
+        connection.cursor() as cursor,
+    ):
+        if run_id is not None:
+            cursor.execute("DELETE FROM corpus.acquisition_runs WHERE id = %s", (run_id,))
+        if document_id is not None:
+            cursor.execute(
+                "DELETE FROM corpus.source_documents WHERE id = %s",
+                (document_id,),
+            )
+        if artifact_id is not None:
+            cursor.execute(
+                "DELETE FROM corpus.source_artifacts WHERE id = %s",
+                (artifact_id,),
+            )
+        if collection_id is not None:
+            cursor.execute(
+                "DELETE FROM corpus.source_collections WHERE id = %s",
+                (collection_id,),
+            )
+        cursor.execute("DELETE FROM corpus.source_registries WHERE id = %s", (source_id,))
+
+
 def test_ingestion_control_api_acquires_and_catalogs_artifact(
     api_client: tuple[TestClient, FakeFetcher, FakeObjectStore],
     connection_factory: ConnectionFactory,
@@ -163,9 +197,8 @@ def test_ingestion_control_api_acquires_and_catalogs_artifact(
         assert fetcher.urls == [document_url]
         assert len(store.objects) == 1
         stored_key = next(iter(store.objects))
-        assert stored_key.startswith(
-            f"jurisdictions/do/{source_code.replace('_', '-')}/decisions/"
-        )
+        expected_prefix = f"jurisdictions/do/{source_code.replace('_', '-')}/decisions/"
+        assert stored_key.startswith(expected_prefix)
 
         items_response = client.get(f"/v1/acquisition-runs/{run_id}/items")
         assert items_response.status_code == 200
@@ -182,28 +215,14 @@ def test_ingestion_control_api_acquires_and_catalogs_artifact(
         assert artifact["storage_locator"].startswith("s3://unconfigured/")
     finally:
         if source_id is not None:
-            with connection_factory() as connection, connection.transaction(), connection.cursor() as cursor:
-                if run_id is not None:
-                    cursor.execute("DELETE FROM corpus.acquisition_runs WHERE id = %s", (run_id,))
-                if document_id is not None:
-                    cursor.execute(
-                        "DELETE FROM corpus.source_document_artifacts WHERE source_document_id = %s",
-                        (document_id,),
-                    )
-                    cursor.execute(
-                        "DELETE FROM corpus.source_document_observations WHERE source_document_id = %s",
-                        (document_id,),
-                    )
-                    cursor.execute("DELETE FROM corpus.source_documents WHERE id = %s", (document_id,))
-                if artifact_id is not None:
-                    cursor.execute(
-                        "DELETE FROM corpus.source_artifact_locations WHERE artifact_id = %s",
-                        (artifact_id,),
-                    )
-                    cursor.execute("DELETE FROM corpus.source_artifacts WHERE id = %s", (artifact_id,))
-                if collection_id is not None:
-                    cursor.execute("DELETE FROM corpus.source_collections WHERE id = %s", (collection_id,))
-                cursor.execute("DELETE FROM corpus.source_registries WHERE id = %s", (source_id,))
+            _delete_fixture(
+                connection_factory,
+                source_id=source_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                artifact_id=artifact_id,
+                run_id=run_id,
+            )
 
 
 def test_collection_policy_blocks_acquisition_until_explicitly_enabled(
@@ -267,9 +286,9 @@ def test_collection_policy_blocks_acquisition_until_explicitly_enabled(
         assert blocked.json()["error"]["code"] == "acquisition_policy_blocks_run"
     finally:
         if source_id is not None:
-            with connection_factory() as connection, connection.transaction(), connection.cursor() as cursor:
-                if document_id is not None:
-                    cursor.execute("DELETE FROM corpus.source_documents WHERE id = %s", (document_id,))
-                if collection_id is not None:
-                    cursor.execute("DELETE FROM corpus.source_collections WHERE id = %s", (collection_id,))
-                cursor.execute("DELETE FROM corpus.source_registries WHERE id = %s", (source_id,))
+            _delete_fixture(
+                connection_factory,
+                source_id=source_id,
+                collection_id=collection_id,
+                document_id=document_id,
+            )

@@ -33,7 +33,9 @@ class ObjectStore(Protocol):
 
 
 def storage_key_for(*, source_code: str, collection: str, sha256: str) -> str:
-    if len(sha256) != 64 or any(character not in "0123456789abcdef" for character in sha256):
+    if len(sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in sha256
+    ):
         raise ValueError("sha256 must be a lowercase 64-character hexadecimal digest")
     source_segment = _SOURCE_STORAGE_CODES.get(source_code, source_code.replace("_", "-"))
     if not _STORAGE_SEGMENT.fullmatch(source_segment):
@@ -48,7 +50,10 @@ def storage_key_for(*, source_code: str, collection: str, sha256: str) -> str:
 
 def _safe_failure(exc: Exception) -> tuple[str, str]:
     if isinstance(exc, ValueError):
-        return "invalid_source_artifact", "The source returned bytes that failed acquisition validation."
+        return (
+            "invalid_source_artifact",
+            "The source returned bytes that failed acquisition validation.",
+        )
     return "acquisition_failed", f"Acquisition failed ({type(exc).__name__})."
 
 
@@ -95,7 +100,9 @@ def execute_acquisition_run(
                 byte_size=len(content),
                 object_key=object_key,
             )
-        except Exception as exc:  # one bad official record must not abort the run ledger
+        except Exception as exc:
+            # One malformed or unavailable source record should be represented as
+            # an item failure instead of erasing the rest of the durable run.
             error_code, error_message = _safe_failure(exc)
             ledger.mark_item_failed(
                 item_id=target.item_id,

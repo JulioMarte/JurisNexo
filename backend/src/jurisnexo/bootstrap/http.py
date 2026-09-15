@@ -6,7 +6,7 @@ from typing import Protocol
 from fastapi import FastAPI, Response, status
 from pydantic import ValidationError
 
-from jurisnexo.acquisition.http_fetcher import BoundedHttpFetcher, OFFICIAL_SOURCE_HOSTS
+from jurisnexo.acquisition.http_fetcher import OFFICIAL_SOURCE_HOSTS, BoundedHttpFetcher
 from jurisnexo.acquisition.s3_object_store import (
     S3ObjectStore,
     S3RuntimeSettings,

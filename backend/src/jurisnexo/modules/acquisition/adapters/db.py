@@ -30,9 +30,11 @@ class PostgresAcquisitionLedger:
         source_document_ids: tuple[UUID, ...] | None,
         limit: int,
     ) -> AcquisitionRunRecord:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-            row_factory=dict_row
-        ) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT sc.id, sc.source_registry_id, sc.code, sc.acquisition_policy,
@@ -100,6 +102,9 @@ class PostgresAcquisitionLedger:
             run_id = inserted["id"]
 
             for document in documents:
+                item_status = (
+                    "already_present" if document["already_present"] else "pending"
+                )
                 cursor.execute(
                     """
                     INSERT INTO corpus.acquisition_run_items (
@@ -109,18 +114,16 @@ class PostgresAcquisitionLedger:
                         CASE WHEN %s = 'already_present' THEN clock_timestamp() ELSE NULL END
                     )
                     """,
-                    (
-                        run_id,
-                        document["id"],
-                        "already_present" if document["already_present"] else "pending",
-                        "already_present" if document["already_present"] else "pending",
-                    ),
+                    (run_id, document["id"], item_status, item_status),
                 )
 
         return self.get_run(run_id)
 
     def get_run(self, run_id: UUID) -> AcquisitionRunRecord:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(self._run_select() + " WHERE ar.id = %s", (run_id,))
             row = cursor.fetchone()
         if row is None:
@@ -130,7 +133,10 @@ class PostgresAcquisitionLedger:
     def list_runs(
         self, *, after_id: UUID | None, limit: int
     ) -> tuple[AcquisitionRunRecord, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 self._run_select()
                 + " WHERE (%s::uuid IS NULL OR ar.id > %s::uuid) ORDER BY ar.id LIMIT %s",
@@ -141,7 +147,10 @@ class PostgresAcquisitionLedger:
     def list_run_items(
         self, *, run_id: UUID, after_id: UUID | None, limit: int
     ) -> tuple[AcquisitionRunItemRecord, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT ari.id, ari.run_id, ari.source_document_id,
@@ -158,15 +167,20 @@ class PostgresAcquisitionLedger:
             )
             rows = cursor.fetchall()
             if not rows:
-                cursor.execute("SELECT 1 FROM corpus.acquisition_runs WHERE id = %s", (run_id,))
+                cursor.execute(
+                    "SELECT 1 FROM corpus.acquisition_runs WHERE id = %s",
+                    (run_id,),
+                )
                 if cursor.fetchone() is None:
                     raise LookupError("acquisition_run_not_found")
             return tuple(AcquisitionRunItemRecord(**row) for row in rows)
 
     def claim_run(self, run_id: UUID) -> AcquisitionRunRecord:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-            row_factory=dict_row
-        ) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 UPDATE corpus.acquisition_runs
@@ -178,7 +192,10 @@ class PostgresAcquisitionLedger:
             )
             row = cursor.fetchone()
             if row is None:
-                cursor.execute("SELECT status FROM corpus.acquisition_runs WHERE id = %s", (run_id,))
+                cursor.execute(
+                    "SELECT status FROM corpus.acquisition_runs WHERE id = %s",
+                    (run_id,),
+                )
                 existing = cursor.fetchone()
                 if existing is None:
                     raise LookupError("acquisition_run_not_found")
@@ -186,7 +203,10 @@ class PostgresAcquisitionLedger:
         return self.get_run(run_id)
 
     def pending_targets(self, run_id: UUID) -> tuple[AcquisitionTarget, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT ari.id AS item_id, ari.run_id, sd.id AS source_document_id,
@@ -206,7 +226,11 @@ class PostgresAcquisitionLedger:
             return tuple(AcquisitionTarget(**row) for row in cursor.fetchall())
 
     def mark_item_started(self, item_id: UUID) -> None:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor() as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
             cursor.execute(
                 """
                 UPDATE corpus.acquisition_run_items
@@ -225,10 +249,13 @@ class PostgresAcquisitionLedger:
         object_key: str,
     ) -> UUID:
         storage_locator = f"s3://{self._storage_bucket}/{object_key}"
-        observed_filename = PurePosixPath(unquote(urlparse(target.document_url).path)).name or None
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-            row_factory=dict_row
-        ) as cursor:
+        path = PurePosixPath(unquote(urlparse(target.document_url).path))
+        observed_filename = path.name or None
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 INSERT INTO corpus.source_artifacts (
@@ -290,8 +317,14 @@ class PostgresAcquisitionLedger:
             )
         return artifact_id
 
-    def mark_item_failed(self, *, item_id: UUID, error_code: str, error_message: str) -> None:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor() as cursor:
+    def mark_item_failed(
+        self, *, item_id: UUID, error_code: str, error_message: str
+    ) -> None:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
             cursor.execute(
                 """
                 UPDATE corpus.acquisition_run_items
@@ -303,9 +336,11 @@ class PostgresAcquisitionLedger:
             )
 
     def finalize_run(self, run_id: UUID) -> AcquisitionRunRecord:
-        with self._connection_factory() as connection, connection.transaction(), connection.cursor(
-            row_factory=dict_row
-        ) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.transaction(),
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT
@@ -349,7 +384,10 @@ class PostgresAcquisitionLedger:
     def list_artifacts(
         self, *, after_id: UUID | None, limit: int
     ) -> tuple[ArtifactRecord, ...]:
-        with self._connection_factory() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        with (
+            self._connection_factory() as connection,
+            connection.cursor(row_factory=dict_row) as cursor,
+        ):
             cursor.execute(
                 """
                 SELECT sa.id, sa.source_registry_id, sr.code AS source_code,

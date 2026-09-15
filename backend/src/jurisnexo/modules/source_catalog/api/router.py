@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TypeVar
+from typing import Literal, Protocol
 from uuid import UUID
 
 from fastapi import APIRouter, Query, status
@@ -15,7 +15,9 @@ from jurisnexo.modules.source_catalog.contracts import (
 from jurisnexo.platform.http.errors import ApiError
 from jurisnexo.platform.http.middleware import decode_uuid_cursor, encode_uuid_cursor
 
-T = TypeVar("T")
+
+class HasId(Protocol):
+    id: UUID
 
 
 class StrictModel(BaseModel):
@@ -128,15 +130,14 @@ def _document_view(value: SourceDocumentRecord) -> SourceDocumentView:
     )
 
 
-def _page(records: tuple[T, ...], limit: int) -> tuple[tuple[T, ...], str | None, bool]:
+def _page[T: HasId](
+    records: tuple[T, ...], limit: int
+) -> tuple[tuple[T, ...], str | None, bool]:
     has_more = len(records) > limit
     visible = records[:limit]
     next_cursor = None
     if has_more and visible:
-        record_id = getattr(visible[-1], "id")
-        if not isinstance(record_id, UUID):
-            raise TypeError("paginated records must expose a UUID id")
-        next_cursor = encode_uuid_cursor(record_id)
+        next_cursor = encode_uuid_cursor(visible[-1].id)
     return visible, next_cursor, has_more
 
 
