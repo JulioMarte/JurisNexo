@@ -36,6 +36,9 @@ src = ["src", "tests", "migrations"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
 [tool.ruff.lint.per-file-ignores]
 # Long SQL literals are more readable and auditable when they preserve their SQL shape.
 "migrations/versions/*.py" = ["E501"]
