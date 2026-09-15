@@ -22,6 +22,9 @@ EXPOSE 8000
 CMD ["uvicorn", "jurisnexo.entrypoints.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS test
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 COPY tests ./tests
 RUN uv sync --frozen --all-groups
 CMD ["pytest", "-q"]
