@@ -64,4 +64,5 @@ markers = [
     "temporal: protects legal-date and as-of semantics",
     "retrieval: protects supported retrieval behavior",
     "concurrency: exercises contested state with independent actors or transactions",
+    "historical: release, benchmark, or implementation provenance for a prior checkpoint",
 ]
