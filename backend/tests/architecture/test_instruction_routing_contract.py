@@ -18,6 +18,7 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/repository-governance-contract.md",
         "docs/testing/evidence-authoring-guide.md",
         "docs/testing/current-guarantees.toml",
+        "docs/testing/current-proof-map.toml",
         "backend/tests/AGENTS.md",
     ]
     missing = [path for path in required if not (REPO_ROOT / path).is_file()]
@@ -30,6 +31,7 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/repository-governance-contract.md",
         "docs/testing/evidence-authoring-guide.md",
         "docs/testing/current-guarantees.toml",
+        "docs/testing/current-proof-map.toml",
     ):
         assert reference in root_agents, (
             "Repository AGENTS.md must route agents to canonical test governance: "
@@ -46,6 +48,26 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
             "backend/tests/AGENTS.md must route test authors to canonical evidence policy: "
             f"missing {reference}"
         )
+
+
+def test_critical_boundaries_have_local_agent_maps_and_adapters() -> None:
+    boundaries = (
+        "docs",
+        "backend/tests",
+        "backend/migrations",
+        "backend/src/jurisnexo",
+    )
+
+    for boundary in boundaries:
+        agents_path = f"{boundary}/AGENTS.md"
+        assert (REPO_ROOT / agents_path).is_file(), (
+            f"Critical boundary {boundary} must have a local AGENTS.md operational map"
+        )
+        for adapter_name in ("CLAUDE.md", "GEMINI.md"):
+            adapter_path = f"{boundary}/{adapter_name}"
+            content = _read(adapter_path)
+            assert "adapter" in content.lower(), f"{adapter_path} must identify itself as an adapter"
+            assert "AGENTS.md" in content, f"{adapter_path} must route to AGENTS.md"
 
 
 def test_editor_and_model_instruction_files_are_adapters_not_parallel_manuals() -> None:
