@@ -26,6 +26,12 @@ jobs:
           fetch-depth: 0
       - name: Build backend quality environment
         run: docker compose --profile test build test
+      - name: Lint engineering quality module
+        run: >-
+          docker compose --profile test run --rm --no-deps
+          -v "$PWD:/repo:ro"
+          -w /repo/backend
+          test ruff check scripts/ci tests/architecture/test_engineering_quality_signals.py tests/architecture/test_engineering_quality_diff.py
       - name: Build engineering quality evidence
         env:
           QUALITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -43,10 +49,12 @@ jobs:
           fi
           docker compose --profile test run --rm --no-deps \
             -v "$PWD:/repo" \
+            -v "$PWD/.git:/repo/.git:ro" \
             -w /repo/backend \
             -e QUALITY_SOURCE_HEAD_SHA="$QUALITY_SOURCE_HEAD_SHA" \
             -e QUALITY_TEST_MODE="$test_mode" \
             test sh -ec '
+              git config --global --add safe.directory /repo
               python /repo/backend/scripts/ci/build_engineering_quality_report.py \
                 --repo-root /repo \
                 --base-ref "$1" \
