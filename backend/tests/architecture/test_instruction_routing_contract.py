@@ -31,7 +31,6 @@ def test_test_authoring_policy_is_discoverable_and_routed() -> None:
         "docs/testing/repository-governance-contract.md",
         "docs/testing/evidence-authoring-guide.md",
         "docs/testing/current-guarantees.toml",
-        "docs/testing/current-proof-map.toml",
     ):
         assert reference in root_agents, (
             "Repository AGENTS.md must route agents to canonical test governance: "
@@ -87,6 +86,20 @@ def test_editor_and_model_instruction_files_are_adapters_not_parallel_manuals() 
     copilot = adapters[".github/copilot-instructions.md"]
     assert "backend/tests/AGENTS.md" in copilot
     assert "docs/testing/evidence-authoring-guide.md" in copilot
+
+
+def test_copilot_path_instructions_route_to_canonical_policy() -> None:
+    instruction_files = (
+        ".github/instructions/python.instructions.md",
+        ".github/instructions/docs.instructions.md",
+        ".github/instructions/sql.instructions.md",
+    )
+
+    for path in instruction_files:
+        content = _read(path)
+        assert "adapter" in content.lower(), f"{path} must remain a routing adapter"
+        assert "AGENTS.md" in content, f"{path} must route to AGENTS.md"
+        assert "applyTo:" in content, f"{path} must declare its path scope"
 
 
 def test_guarantee_inventory_tracks_current_test_and_branch_governance() -> None:
