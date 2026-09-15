@@ -142,3 +142,8 @@ reason = "Repository fitness now enforces guarantee/proof/gap bookkeeping and in
 guarantee = "FIT-BRANCH-WORKFLOW-001"
 path = "backend/tests/architecture/test_branch_workflow_contract.py"
 evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-ENGINEERING-SIGNALS-001"
+path = "backend/tests/architecture/test_engineering_quality_signals.py"
+evidence = ["fitness"]
