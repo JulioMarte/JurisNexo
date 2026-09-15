@@ -2,17 +2,20 @@
 
 ## Purpose
 
-JurisNexo separates three different questions:
+JurisNexo separates four different questions:
 
 ```text
 what must remain true?          -> current-guarantees.toml
 what currently proves it?       -> current-proof-map.toml
 how must proof be authored?     -> evidence-authoring-guide.md + backend/tests/AGENTS.md
+why did proof change shape?      -> test-architecture-migration.md
 ```
 
 The normative guarantee inventory is `docs/testing/current-guarantees.toml`. It names durable guarantees, classification, severity, and required evidence classes without freezing exact test filenames.
 
 `docs/testing/current-proof-map.toml` is deliberately **non-normative**. It records representative current proofs and explicit evidence gaps. Test paths may move or be replaced without changing a guarantee, but a guarantee must never silently disappear between documentation and executable proof.
+
+`docs/testing/test-architecture-migration.md` is also non-normative migration evidence. It records KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL decisions when tests, benchmarks, or execution boundaries are reorganized, especially during the custom-harness -> Agents SDK migration.
 
 The core rule is:
 
@@ -20,8 +23,9 @@ The core rule is:
 
 ## Canonical testing documents
 
-- `current-guarantees.toml` — normative durable semantic guarantee inventory.
+- `current-guarantees.toml` — **normative** durable semantic guarantee inventory.
 - `current-proof-map.toml` — non-normative map of representative proof plus explicit evidence debt.
+- `test-architecture-migration.md` — non-normative ledger explaining why durable proof moves, changes, is replaced, or becomes historical.
 - `repository-governance-contract.md` — HARD / CONTROLLED / FLEXIBLE / HISTORICAL repository and proof governance.
 - `evidence-authoring-guide.md` — normative workflow for falsifiable evidence, provenance, PostgreSQL/security boundaries, independent oracles, and benchmark integrity.
 - `backend/tests/AGENTS.md` — operational rules for test authors and coding agents.
@@ -57,11 +61,13 @@ Every guarantee must appear in one of two states in `current-proof-map.toml`:
 [[gaps]]   -> guarantee is accepted but required evidence is incomplete
 ```
 
+A guarantee may have both representative proof and an explicit gap when some required evidence classes are still missing.
+
 A gap is not a failure of honesty and must not be hidden. It is explicit technical/evidence debt. Each gap names the missing evidence classes and explains what is not yet proven.
 
 Do not mark a guarantee covered merely because a nearby unit test exists. The representative proof must exercise the mechanism needed for the claimed evidence. Static fitness does not become runtime security evidence; a scorer smoke test does not become legal-semantic validation; a unit authorization helper test does not automatically prove end-to-end tenant isolation.
 
-`backend/tests/architecture/test_current_proof_map.py` enforces that every current guarantee is either mapped or explicitly gapped and that representative proof paths still exist. It intentionally does **not** make those paths permanent architecture.
+`backend/tests/architecture/test_current_proof_map.py` enforces that every current guarantee is mapped or explicitly gapped, every required evidence class is either represented or explicitly missing, and representative proof paths still exist. It intentionally does **not** make those paths permanent architecture.
 
 ## Contributor / agent evidence flow
 
@@ -87,6 +93,8 @@ assert authoritative outcome + important absence of side effects
 run narrow proof
         ↓
 update proof map / evidence gap when coverage meaning changed
+        ↓
+record KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL when restructuring proof
         ↓
 run owning canonical CI / benchmark lane
         ↓
@@ -144,17 +152,17 @@ Do not create `db/`, `e2e/`, `fixtures/`, or other directory families merely to 
 
 ## Removing or restructuring proof
 
-Before deleting, weakening, moving, or consolidating meaningful evidence, give the protected guarantee one explicit disposition:
+Before deleting, weakening, moving, replacing, or consolidating meaningful evidence, give the protected guarantee one explicit disposition:
 
 ```text
 KEEP        guarantee and proof remain valid
-ADAPT       guarantee remains; proof changes with architecture
+ADAPT       guarantee remains; proof changes with architecture/execution boundary
 REPLACE     old proof is superseded by equal/stronger evidence
 REMOVE      guarantee no longer applies and normative docs explicitly say why
 HISTORICAL  proof remains only as provenance for a prior state/version
 ```
 
-Never weaken a test solely because implementation currently fails it. When representative evidence changes, update the non-normative proof map in the same coherent change.
+Never weaken a test solely because implementation currently fails it. When representative evidence changes, update the non-normative proof map. When durable proof changes execution boundary or status, record the reasoning in the migration ledger. Temporary duplicate evidence is preferable to a silent evidence hole.
 
 ## Current CI
 
@@ -197,6 +205,7 @@ Before accepting a new or changed durable proof, answer:
 6. Is the oracle/gold independent?
 7. Are authoritative outcome and important negative side effects inspected?
 8. Is the proof map honest about what remains unproven?
-9. Which canonical CI/benchmark lane owns the evidence?
+9. If proof moved or changed status, is its disposition recorded?
+10. Which canonical CI/benchmark lane owns the evidence?
 
 If those questions cannot be answered, redesign the proof before treating it as evidence.
