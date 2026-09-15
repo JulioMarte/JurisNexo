@@ -2,12 +2,16 @@
 
 Applies to `backend/tests/**` in addition to repository-wide `AGENTS.md`.
 
-Before adding, deleting, moving, or weakening durable proof, read:
+Before adding, deleting, moving, replacing, or weakening durable proof, read:
 
 - `docs/testing/README.md`
 - `docs/testing/repository-governance-contract.md`
 - `docs/testing/evidence-authoring-guide.md`
 - `docs/testing/current-guarantees.toml`
+- `docs/testing/current-proof-map.toml`
+- `docs/testing/test-architecture-migration.md` when restructuring or retiring proof
+
+The guarantee inventory is normative. The proof map and migration ledger are review/migration evidence: they explain current representative proof, explicit gaps, and why a proof changed shape without making exact test paths permanent architecture.
 
 ## Rigidity versus flexibility
 
@@ -43,6 +47,8 @@ canonical CI / benchmark lane
 Do not write tests whose setup manufactures the expected result, whose expected value is computed by the production helper under test, or whose assertions merely mirror incidental implementation shape.
 
 For important bug fixes, use a mutation mindset: name the regression that would reintroduce the defect and ensure the proof would turn red.
+
+When a new or changed test materially changes what evidence exists for a guarantee, update the non-normative proof map. If required evidence is still missing, record the gap instead of overstating coverage.
 
 ## Test ownership
 
@@ -124,6 +130,6 @@ Instruction-governance tests should ensure editor/model adapters route back to c
 
 CI-governance tests should verify that architecture fitness functions remain explicitly blocking in the canonical quality lane. They must not pretend to prove GitHub rulesets or branch protection that live outside the repository.
 
-Removing or weakening a safety/architecture/provenance/security/benchmark proof requires an explicit `KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL` disposition tied to the protected guarantee.
+Removing, moving, replacing, or weakening a safety/architecture/provenance/security/benchmark proof requires an explicit `KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL` disposition tied to the protected guarantee. Record meaningful restructuring in `docs/testing/test-architecture-migration.md`.
 
 Never weaken a test solely because the implementation currently fails it.
