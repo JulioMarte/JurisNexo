@@ -10,6 +10,7 @@ Before adding, deleting, moving, replacing, or weakening durable proof, read:
 - `docs/testing/current-guarantees.toml`
 - `docs/testing/current-proof-map.toml`
 - `docs/testing/test-architecture-migration.md` when restructuring or retiring proof
+- `docs/23-pre-production-evolution-and-adversarial-proof-policy.md` when a current architecture/test restriction is intentionally superseded
 
 The guarantee inventory is normative. The proof map and migration ledger are review/migration evidence: they explain current representative proof, explicit gaps, and why a proof changed shape without making exact test paths permanent architecture.
 
@@ -50,7 +51,7 @@ For important bug fixes, use a mutation mindset: name the regression that would 
 
 When a new or changed test materially changes what evidence exists for a guarantee, update the non-normative proof map. If required evidence is still missing, record the gap instead of overstating coverage.
 
-## Test ownership
+## Test ownership and evidence metadata
 
 Current physical locations answer ownership/execution boundary:
 
@@ -60,7 +61,18 @@ backend/tests/integration/   multi-component/application/database behavior
 backend/tests/architecture/  dependency, repository, CI and instruction-governance fitness
 ```
 
-Create `db/`, `e2e/`, shared `fixtures/`, or other durable trees only when real evidence ownership requires them. Do not create ceremonial structure.
+Create `db/`, `e2e/`, `historical/`, shared `fixtures/`, or other durable trees only when real evidence ownership requires them. Do not create ceremonial structure.
+
+`backend/tests/conftest.py` applies stable scope classification:
+
+```text
+architecture/** -> fitness
+historical/**   -> historical (if/when that ownership surface exists)
+```
+
+Do not redundantly stamp every architecture test with `pytest.mark.fitness` just to satisfy style. Explicit markers should add evidence/risk meaning beyond what physical ownership already says.
+
+`backend/scripts/ci/audit_test_architecture.py` inventories physical scope and effective evidence markers. Its blocking purpose is narrow: required evidence markers must remain configured and historical/release proof must not silently drift into the current architecture lane. It may report ordinary unclassified unit/integration files as review debt without failing CI; marker density is not a correctness metric.
 
 Markers answer what evidence a test provides. Use existing declared pytest markers and add new ones only when they materially improve selection or proof meaning.
 
@@ -114,6 +126,8 @@ overall benchmark/product status
 
 Do not leak gold answers into prompts/tools. Do not weaken scorers solely to make a candidate pass. If the benchmark contract itself is wrong or ambiguous, change/version it explicitly and preserve the reason.
 
+Historical benchmark/checkpoint proof may be preserved as `historical` without forcing current product code to keep the old runtime, provider, prompt, or repository shape. Freeze evidence, not the future.
+
 ## Correctness-sensitive evidence
 
 - Do not make a race or state-transition proof pass by mocking the mechanism under test.
@@ -126,10 +140,14 @@ Do not leak gold answers into prompts/tools. Do not weaken scorers solely to mak
 
 Architecture tests should strongly enforce `HARD` boundaries, detect `CONTROLLED` drift with actionable messages, and avoid freezing `FLEXIBLE` shape.
 
+Prefer open-world fitness rules that inspect all newly discovered relevant code over exact inventories that let additions escape enforcement or turn a historical snapshot into a permanent ceiling.
+
 Instruction-governance tests should ensure editor/model adapters route back to canonical `AGENTS.md` and `docs/`, rather than becoming independent architecture manuals.
 
 CI-governance tests should verify that architecture fitness functions remain explicitly blocking in the canonical quality lane. They must not pretend to prove GitHub rulesets or branch protection that live outside the repository.
 
 Removing, moving, replacing, or weakening a safety/architecture/provenance/security/benchmark proof requires an explicit `KEEP / ADAPT / REPLACE / REMOVE / HISTORICAL` disposition tied to the protected guarantee. Record meaningful restructuring in `docs/testing/test-architecture-migration.md`.
+
+When an accepted current architecture intentionally supersedes an older restriction, follow the evidence bundle in `docs/23-pre-production-evolution-and-adversarial-proof-policy.md`: old rule, why insufficient, new contract, guarantee disposition, test disposition, adversarial proof, compatibility decision, and exact-head evidence.
 
 Never weaken a test solely because the implementation currently fails it.
