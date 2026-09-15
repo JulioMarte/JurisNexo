@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import tokenize
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -48,8 +49,14 @@ def build_report(repo_root: Path) -> dict[str, object]:
         "policy": {
             "file_loc_review_threshold": FILE_LOC_REVIEW_THRESHOLD,
             "file_loc_threshold_status": "review-signal-not-architecture-cliff",
-            "coupling_policy": "all current component import edges are observable; no numeric fan-in/fan-out cliff",
-            "agent_action": "review ownership/locality before refactoring; never split or hide dependencies solely to lower metrics",
+            "coupling_policy": (
+                "all current component import edges are observable; "
+                "no numeric fan-in/fan-out cliff"
+            ),
+            "agent_action": (
+                "review ownership/locality before refactoring; never split or hide "
+                "dependencies solely to lower metrics"
+            ),
         },
         "summary": {
             "python_file_count": len(measurements),
@@ -89,7 +96,10 @@ def render_summary(report: dict[str, object]) -> str:
         f"Observed component connections: **{summary['connection_count']}**",
         f"File-size review candidates: **{summary['file_size_review_candidates']}**",
         "",
-        "These are maintainability/review signals. File size and fan-in/fan-out are not blocking architecture limits.",
+        (
+            "These are maintainability/review signals. File size and fan-in/fan-out "
+            "are not blocking architecture limits."
+        ),
         "",
         "### Component coupling",
         "",
@@ -112,7 +122,8 @@ def render_summary(report: dict[str, object]) -> str:
     lines.extend(["", "### Connections", ""])
     if edges:
         lines.extend(
-            f"- `{edge['source']} -> {edge['target']}` ({edge['import_site_count']} import site(s))"
+            f"- `{edge['source']} -> {edge['target']}` "
+            f"({edge['import_site_count']} import site(s))"
             for edge in edges
         )
     else:
@@ -131,7 +142,10 @@ def render_summary(report: dict[str, object]) -> str:
                 "",
                 "### Review candidates",
                 "",
-                "A candidate is not a defect. Review responsibility, locality and reasoning cost before changing code.",
+                (
+                    "A candidate is not a defect. Review responsibility, locality and "
+                    "reasoning cost before changing code."
+                ),
                 "",
             ]
         )
@@ -164,7 +178,7 @@ def main() -> int:
     output = args.output if args.output.is_absolute() else repo_root / args.output
     try:
         report = build_report(repo_root)
-    except (OSError, SyntaxError, tokenize.TokenError, ValueError) as exc:  # type: ignore[name-defined]
+    except (OSError, SyntaxError, tokenize.TokenError, ValueError) as exc:
         print(f"[ENGINEERING-QUALITY-ERROR] evidence collection failed: {exc}")
         return 2
     write_report(report, output)
