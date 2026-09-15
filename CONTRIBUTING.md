@@ -1,14 +1,41 @@
 # Contributing to JurisNexo
 
-## Branch model
+## Canonical branch model
 
-JurisNexo currently uses trunk-based development with short-lived branches.
+JurisNexo uses the same two-stage integration model as Request Engine:
 
-`main` is the canonical integration and deployable branch. Do not create a permanent `dev` or `development` branch until JurisNexo has a real staging environment whose lifecycle is intentionally different from production.
+```text
+current development
+        |
+        v
+one feature / fix / docs / hardening branch
+        |
+        v
+PR -> development
+        |
+        v
+CI aggregate passes
+        |
+        v
+merge + delete branch
+        |
+        v
+next branch starts from NEW development
+        |
+        v
+release promotion PR
+        |
+        v
+development -> main
+```
 
-Create every new work branch from the latest `main`.
+`development` is the canonical integration branch. `main` is the validated release branch.
 
-Recommended prefixes:
+## `development`
+
+All ordinary work starts from the latest `origin/development` and targets `development` through a pull request.
+
+Recommended branch prefixes:
 
 ```text
 feature/*
@@ -18,59 +45,112 @@ docs/*
 chore/*
 ```
 
-Do not reuse a branch after its pull request has been merged. If additional work is required, create a fresh branch from the updated `main`.
+Before starting work:
 
-## Pull requests
+```bash
+git fetch origin
+git switch development
+git pull --ff-only origin development
+git switch -c <branch-name>
+```
 
-All normal changes should enter `main` through a pull request.
+Do not infer the development base from GitHub's default branch. Agents and automation must resolve `development` explicitly.
 
-Before merge, the required CI aggregate must pass. Individual jobs may evolve over time; `CI aggregate` is the stable release gate.
+Do not reuse a branch after its pull request has been merged. Start the next change from the new `development` HEAD.
 
-The intended flow is:
+## `main`
+
+`main` is the release branch, not the normal development base.
+
+Normal feature, fix, refactor, benchmark, documentation, ingestion, migration, and agent pull requests must not target `main` directly.
+
+The normal promotion path to `main` is:
 
 ```text
-latest main
+development -> main
+```
+
+That promotion should happen only after the integrated `development` state has passed the required release evidence.
+
+## Pull requests and CI
+
+For ordinary work:
+
+```text
+latest development
     -> short-lived branch
-    -> pull request
+    -> pull request to development
     -> CI aggregate passes
-    -> squash/approved merge into main
+    -> merge
     -> merged branch is deleted automatically
 ```
 
-A branch must not be deleted merely because its pull request was closed. Automatic cleanup runs only when GitHub reports that the pull request was actually merged.
+CI also runs on pushes to `development` and `main`, so the exact integrated commit receives its own canonical run after merge.
+
+`CI aggregate` is the stable required gate. Individual CI jobs may evolve, but the aggregate must represent the required repository checks.
+
+## Development integration lane
+
+`.github/development-integration-lane` records the short-lived branch currently claiming the ordinary integration lane.
+
+A work branch that is being prepared for merge should set this file to exactly its own branch name, one line only. This makes the intended integration owner explicit and gives architecture tests a durable value to validate.
+
+Exploratory parallel branches may exist, but they are provisional. They must reconcile with the newest `development` before being presented as merge-ready.
 
 ## Automatic branch cleanup
 
-`.github/workflows/branch-hygiene.yml` deletes merged head branches automatically when all of the following are true:
+`.github/workflows/branch-hygiene.yml` deletes successfully merged short-lived branches automatically.
 
-- the pull request was merged;
-- the head branch belongs to this repository rather than a fork;
-- the head branch is not the repository default branch;
-- the GitHub Actions token has the required `contents: write` permission.
+Cleanup must never delete:
 
-The cleanup is idempotent: if GitHub or another repository setting already deleted the branch, the workflow treats the branch as clean instead of failing.
+- an unmerged branch;
+- a branch from a fork;
+- `main`;
+- `development`.
 
-## Main branch protection
+The workflow is idempotent: if GitHub or another cleanup mechanism already removed the branch, cleanup succeeds without treating that state as an error.
 
-The desired repository policy for `main` is:
+## Expected GitHub repository policy
 
-- require a pull request before merge;
-- require `CI aggregate` to succeed;
+The intended rules are:
+
+### `development`
+
+- require pull requests for ordinary changes;
+- require `CI aggregate` to pass;
 - disallow routine direct pushes;
-- keep `main` as the default branch;
-- keep force pushes disabled;
-- keep branch deletion disabled for `main`;
-- require branches to be updated with `main` when a materially stale branch could invalidate the CI result.
+- disable force pushes;
+- disable branch deletion.
 
-These are repository-level GitHub settings/rulesets. They are intentionally separate from application code and must be enabled in GitHub repository settings when administrative mutation access is available.
+### `main`
 
-## When to introduce a `dev` branch
+- accept normal promotion only from `development`;
+- require the release/integration checks selected for promotion;
+- disallow routine direct pushes;
+- disable force pushes;
+- disable branch deletion.
 
-Do not introduce `dev` as ceremony. Add it only when it represents a real operational environment, for example:
+These protections are GitHub repository settings/rulesets and are separate from application code.
+
+## Canonical topology
+
+Allowed:
 
 ```text
-feature/* -> dev -> staging
-                 -> release PR -> main -> production
+feature-x -> development
+# merge and delete feature-x
+fix-y     -> development
+# merge and delete fix-y
+
+development -> main
 ```
 
-At that point the branch must have an explicit deployment, QA, promotion, and migration policy. Until then, an additional long-lived integration branch increases drift and Alembic migration-conflict risk without providing a corresponding operational benefit.
+Not allowed for normal work:
+
+```text
+feature-x -> main
+fix-y     -> main
+main      -> feature-x
+```
+
+The purpose of the model is simple: `development` is where changes are integrated and proven together; `main` is the clean release line.
