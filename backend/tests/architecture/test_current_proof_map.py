@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections import defaultdict
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -13,6 +14,7 @@ PROOF_MAP = REPO_ROOT / "docs" / "testing" / "current-proof-map.toml"
 
 class Guarantee(TypedDict):
     id: str
+    required_evidence: list[str]
 
 
 class Proof(TypedDict):
@@ -57,6 +59,26 @@ def test_every_current_guarantee_is_mapped_or_explicitly_gapped() -> None:
         "Current guarantees must not disappear into undocumented evidence debt. "
         f"Map them to representative proof or record an explicit gap: {sorted(missing)}"
     )
+
+
+def test_required_evidence_is_proven_or_explicitly_gapped() -> None:
+    _, proofs, gaps = _proof_map()
+    provided: defaultdict[str, set[str]] = defaultdict(set)
+    missing: defaultdict[str, set[str]] = defaultdict(set)
+
+    for proof in proofs:
+        provided[proof["guarantee"]].update(proof["evidence"])
+    for gap in gaps:
+        missing[gap["guarantee"]].update(gap["missing_evidence"])
+
+    for guarantee in _guarantees():
+        required = set(guarantee["required_evidence"])
+        accounted_for = provided[guarantee["id"]] | missing[guarantee["id"]]
+        unaccounted = required - accounted_for
+        assert not unaccounted, (
+            f"{guarantee['id']} requires evidence that is neither proven nor explicitly gapped: "
+            f"{sorted(unaccounted)}"
+        )
 
 
 def test_representative_proof_paths_exist_but_are_not_normative() -> None:
