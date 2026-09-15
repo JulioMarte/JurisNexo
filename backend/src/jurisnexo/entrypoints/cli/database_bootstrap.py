@@ -8,10 +8,14 @@ from jurisnexo.modules.legal_reference.bootstrap import (
     apply_database_bootstrap,
     verify_database_bootstrap,
 )
-from jurisnexo.platform.db.connection import PostgresConnectionConfig, build_connection_factory
+from jurisnexo.platform.db.connection import (
+    ConnectionFactory,
+    PostgresConnectionConfig,
+    build_connection_factory,
+)
 
 
-def _connection_factory():  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+def _connection_factory() -> ConnectionFactory:
     settings = get_postgres_settings()
     return build_connection_factory(
         PostgresConnectionConfig(
