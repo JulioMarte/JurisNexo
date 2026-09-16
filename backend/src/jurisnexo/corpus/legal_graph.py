@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Literal
 from uuid import UUID
 
@@ -55,7 +55,7 @@ AssertionMethod = Literal[
     "human_verified",
 ]
 
-RequirementSourceRole = Literal[
+NormSourceRole = Literal[
     "establishes",
     "defines",
     "amends",
@@ -101,7 +101,8 @@ class RelationObservationInput:
 
 @dataclass(frozen=True, slots=True)
 class LegalRelationRecord:
-    id: UUID
+    assertion_id: UUID
+    relation_identity_id: UUID
     source_document_id: UUID
     source_provision_id: UUID | None
     relation_type: str
@@ -112,39 +113,43 @@ class LegalRelationRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class RequirementInput:
-    jurisdiction_code: str
-    requirement_type: str
-    canonical_text: str
+class LegalNormInput:
+    jurisdiction_code: str | None
+    norm_kind: str
+    statement_text: str
+    derivation_kind: Literal[
+        "explicit_primary_text",
+        "derived_from_sources",
+        "synthesized_interpretation",
+        "human_legal_analysis",
+    ]
     scope_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
-    status: str = "active"
-    effective_from: date | None = None
-    effective_to: date | None = None
+    valid_from: date | None = None
+    valid_to: date | None = None
+    assertion_kind: Literal[
+        "explicit_primary_text",
+        "derived_from_primary_text",
+        "synthesized_interpretation",
+        "human_authored",
+    ] = "synthesized_interpretation"
+
+
+# Transitional import alias only. The persisted legal_requirements abstraction no
+# longer exists; callers should migrate to LegalNormInput/create_legal_norm.
+RequirementInput = LegalNormInput
 
 
 def relation_observation_key(observation: RelationObservationInput) -> str:
-    """Create a stable idempotency key from semantically relevant observation fields."""
-
     payload = {
         "source_document_id": str(observation.source_document_id),
-        "source_provision_id": (
-            str(observation.source_provision_id) if observation.source_provision_id else None
-        ),
+        "source_provision_id": str(observation.source_provision_id) if observation.source_provision_id else None,
         "relation_type": observation.relation_type,
-        "target_document_id": (
-            str(observation.target_document_id) if observation.target_document_id else None
-        ),
-        "target_provision_id": (
-            str(observation.target_provision_id) if observation.target_provision_id else None
-        ),
+        "target_document_id": str(observation.target_document_id) if observation.target_document_id else None,
+        "target_provision_id": str(observation.target_provision_id) if observation.target_provision_id else None,
         "raw_target_citation": observation.raw_target_citation,
         "assertion_method": observation.assertion_method,
         "method_name": observation.method_name,
-        "evidence_artifact_page_id": (
-            str(observation.evidence_artifact_page_id)
-            if observation.evidence_artifact_page_id
-            else None
-        ),
+        "evidence_artifact_page_id": str(observation.evidence_artifact_page_id) if observation.evidence_artifact_page_id else None,
         "evidence_char_start": observation.evidence_char_start,
         "evidence_char_end": observation.evidence_char_end,
     }
@@ -154,36 +159,25 @@ def relation_observation_key(observation: RelationObservationInput) -> str:
 
 @dataclass(slots=True)
 class PostgresLegalGraphRepository:
-    """Deterministic persistence boundary for provisions, relations, and requirements.
-
-    Agents may propose observations through a narrow application tool, but canonical
-    relations are promoted separately so model output is never canonical merely by
-    being emitted.
-    """
+    """Deterministic persistence boundary for source structure and legal assertions."""
 
     connection: psycopg.Connection[Any]
 
     def upsert_provision(self, provision: ProvisionInput) -> UUID:
         if provision.normalized_label is None:
             return self._insert_unlabelled_provision(provision)
-
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
                 """
                 insert into corpus.legal_document_provisions (
                     document_id, parent_provision_id, provision_type, label,
                     normalized_label, ordinal, heading, text, effective_from, effective_to
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 on conflict (
                     document_id,
-                    (coalesce(
-                        parent_provision_id,
-                        '00000000-0000-0000-0000-000000000000'::uuid
-                    )),
+                    (coalesce(parent_provision_id, '00000000-0000-0000-0000-000000000000'::uuid)),
                     normalized_label
-                )
-                    where normalized_label is not null
+                ) where normalized_label is not null
                 do update set
                     provision_type = excluded.provision_type,
                     label = excluded.label,
@@ -220,9 +214,7 @@ class PostgresLegalGraphRepository:
                 insert into corpus.legal_document_provisions (
                     document_id, parent_provision_id, provision_type, label,
                     ordinal, heading, text, effective_from, effective_to
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                returning id
+                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id
                 """,
                 (
                     provision.document_id,
@@ -247,20 +239,15 @@ class PostgresLegalGraphRepository:
             cursor.execute(
                 """
                 insert into corpus.legal_relation_observations (
-                    ingestion_job_id, observation_key,
-                    source_document_id, source_provision_id, relation_type,
-                    target_document_id, target_provision_id, raw_target_citation,
-                    assertion_method, method_name, confidence,
-                    evidence_artifact_page_id, evidence_excerpt,
-                    evidence_char_start, evidence_char_end
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ingestion_job_id, observation_key, source_document_id,
+                    source_provision_id, relation_type, target_document_id,
+                    target_provision_id, raw_target_citation, assertion_method,
+                    method_name, confidence, evidence_artifact_page_id,
+                    evidence_excerpt, evidence_char_start, evidence_char_end
+                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 on conflict (observation_key) do update set
                     confidence = excluded.confidence,
-                    evidence_excerpt = coalesce(
-                        excluded.evidence_excerpt,
-                        corpus.legal_relation_observations.evidence_excerpt
-                    )
+                    evidence_excerpt = coalesce(excluded.evidence_excerpt, corpus.legal_relation_observations.evidence_excerpt)
                 returning id
                 """,
                 (
@@ -287,13 +274,7 @@ class PostgresLegalGraphRepository:
             return row[0]
 
     def promote_relation(self, observation_id: UUID, *, verification_method: str) -> UUID:
-        """Promote a global structural/citation relation and preserve its evidence.
-
-        Context-dependent judicial treatments may be observed here during extraction,
-        but they cannot become canonical document relations. They require an issue or
-        proposition context and must be promoted through ``legal_treatment_assertions``.
-        """
-
+        """Promote one structural relation observation into a current assertion."""
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -303,8 +284,7 @@ class PostgresLegalGraphRepository:
                        evidence_char_start, evidence_char_end,
                        assertion_method, status
                 from corpus.legal_relation_observations
-                where id = %s
-                for update
+                where id = %s for update
                 """,
                 (observation_id,),
             )
@@ -336,51 +316,53 @@ class PostgresLegalGraphRepository:
 
             cursor.execute(
                 """
-                insert into corpus.legal_relations (
+                insert into corpus.legal_relation_identities (
                     source_document_id, source_provision_id, relation_type,
-                    target_document_id, target_provision_id,
-                    verification_method, promoted_from_observation_id
-                )
-                values (%s, %s, %s, %s, %s, %s, %s)
-                on conflict do nothing
-                returning id
+                    target_document_id, target_provision_id
+                ) values (%s,%s,%s,%s,%s)
+                on conflict do nothing returning id
                 """,
-                (
-                    source_document_id,
-                    source_provision_id,
-                    relation_type,
-                    target_document_id,
-                    target_provision_id,
-                    verification_method,
-                    observation_id,
-                ),
+                (source_document_id, source_provision_id, relation_type, target_document_id, target_provision_id),
             )
-            inserted = cursor.fetchone()
-            if inserted is not None:
-                relation_id: UUID = inserted[0]
-            else:
+            identity = cursor.fetchone()
+            if identity is None:
                 cursor.execute(
                     """
-                    select id
-                    from corpus.legal_relations
+                    select id from corpus.legal_relation_identities
                     where source_document_id = %s
                       and source_provision_id is not distinct from %s
                       and relation_type = %s
                       and target_document_id = %s
                       and target_provision_id is not distinct from %s
                     """,
-                    (
-                        source_document_id,
-                        source_provision_id,
-                        relation_type,
-                        target_document_id,
-                        target_provision_id,
-                    ),
+                    (source_document_id, source_provision_id, relation_type, target_document_id, target_provision_id),
                 )
-                existing = cursor.fetchone()
-                if existing is None:
-                    raise RuntimeError("relation conflict occurred but canonical row was not found")
-                relation_id = existing[0]
+                identity = cursor.fetchone()
+            if identity is None:
+                raise RuntimeError("relation identity could not be resolved")
+            relation_identity_id = identity[0]
+
+            cursor.execute(
+                "select id from corpus.legal_relation_assertions where relation_identity_id = %s and known_to is null for update",
+                (relation_identity_id,),
+            )
+            current = cursor.fetchone()
+            if current is None:
+                cursor.execute(
+                    """
+                    insert into corpus.legal_relation_assertions (
+                        relation_identity_id, status, verification_method,
+                        promoted_from_observation_id
+                    ) values (%s, 'verified', %s, %s) returning id
+                    """,
+                    (relation_identity_id, verification_method, observation_id),
+                )
+                inserted = cursor.fetchone()
+                if inserted is None:
+                    raise RuntimeError("relation assertion insert did not return an identifier")
+                assertion_id: UUID = inserted[0]
+            else:
+                assertion_id = current[0]
 
             cursor.execute(
                 "update corpus.legal_relation_observations set status = 'accepted' where id = %s",
@@ -394,62 +376,84 @@ class PostgresLegalGraphRepository:
                 }.get(assertion_method, "primary_text")
                 cursor.execute(
                     """
-                    insert into corpus.legal_relation_evidence (
-                        relation_id, observation_id, artifact_page_id, evidence_kind,
+                    insert into corpus.legal_relation_assertion_evidence (
+                        assertion_id, observation_id, artifact_page_id, evidence_kind,
                         evidence_excerpt, evidence_char_start, evidence_char_end
                     )
-                    select %s, %s, %s, %s, %s, %s, %s
+                    select %s,%s,%s,%s,%s,%s,%s
                     where not exists (
-                        select 1 from corpus.legal_relation_evidence
-                        where relation_id = %s and observation_id = %s
+                        select 1 from corpus.legal_relation_assertion_evidence
+                        where assertion_id = %s and observation_id = %s
                     )
                     """,
                     (
-                        relation_id,
+                        assertion_id,
                         observation_id,
                         evidence_page_id,
                         evidence_kind,
                         evidence_excerpt,
                         evidence_char_start,
                         evidence_char_end,
-                        relation_id,
+                        assertion_id,
                         observation_id,
                     ),
                 )
-            return relation_id
+            return assertion_id
 
-    def create_requirement(self, requirement: RequirementInput) -> UUID:
+    def create_legal_norm(self, norm: LegalNormInput, *, verification_method: str) -> tuple[UUID, UUID]:
+        """Create an analytical norm proposition and its first temporal assertion."""
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                insert into corpus.legal_requirements (
-                    scope_id, jurisdiction_code, requirement_type, canonical_text,
-                    status, effective_from, effective_to
-                )
-                values (%s, %s, %s, %s, %s, %s, %s)
-                returning id
+                insert into corpus.legal_propositions (
+                    scope_id, proposition_type, canonical_text, assertion_kind,
+                    verification_status
+                ) values (%s, 'legal_requirement', %s, %s, 'candidate') returning id
+                """,
+                (norm.scope_id, norm.statement_text, norm.assertion_kind),
+            )
+            proposition = cursor.fetchone()
+            if proposition is None:
+                raise RuntimeError("legal norm proposition insert did not return an identifier")
+            proposition_id: UUID = proposition[0]
+            cursor.execute(
+                """
+                insert into corpus.legal_proposition_subjects (
+                    proposition_id, scope_id, subject_type
+                ) values (%s, %s, 'general_law')
+                """,
+                (proposition_id, norm.scope_id),
+            )
+            cursor.execute(
+                """
+                insert into corpus.legal_norm_assertions (
+                    scope_id, proposition_id, jurisdiction_code, norm_kind,
+                    derivation_kind, valid_from, valid_to,
+                    verification_status, verification_method
+                ) values (%s,%s,%s,%s,%s,%s,%s,'candidate',%s) returning id
                 """,
                 (
-                    requirement.scope_id,
-                    requirement.jurisdiction_code,
-                    requirement.requirement_type,
-                    requirement.canonical_text,
-                    requirement.status,
-                    requirement.effective_from,
-                    requirement.effective_to,
+                    norm.scope_id,
+                    proposition_id,
+                    norm.jurisdiction_code,
+                    norm.norm_kind,
+                    norm.derivation_kind,
+                    norm.valid_from,
+                    norm.valid_to,
+                    verification_method,
                 ),
             )
-            row = cursor.fetchone()
-            if row is None:
-                raise RuntimeError("requirement insert did not return an identifier")
-            return row[0]
+            assertion = cursor.fetchone()
+            if assertion is None:
+                raise RuntimeError("legal norm assertion insert did not return an identifier")
+            return proposition_id, assertion[0]
 
-    def attach_requirement_source(
+    def attach_norm_source(
         self,
         *,
-        requirement_id: UUID,
+        norm_assertion_id: UUID,
         document_id: UUID,
-        source_role: RequirementSourceRole,
+        source_role: NormSourceRole,
         verification_method: str,
         provision_id: UUID | None = None,
         verification_status: str = "candidate",
@@ -459,16 +463,14 @@ class PostgresLegalGraphRepository:
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                insert into corpus.legal_requirement_sources (
-                    requirement_id, document_id, provision_id, source_role,
-                    verification_status, verification_method,
+                insert into corpus.legal_norm_sources (
+                    norm_assertion_id, source_document_id, source_document_provision_id,
+                    source_role, verification_status, verification_method,
                     evidence_artifact_page_id, evidence_excerpt
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
-                returning id
+                ) values (%s,%s,%s,%s,%s,%s,%s,%s) returning id
                 """,
                 (
-                    requirement_id,
+                    norm_assertion_id,
                     document_id,
                     provision_id,
                     source_role,
@@ -480,18 +482,34 @@ class PostgresLegalGraphRepository:
             )
             row = cursor.fetchone()
             if row is None:
-                raise RuntimeError("requirement source insert did not return an identifier")
+                raise RuntimeError("legal norm source insert did not return an identifier")
             return row[0]
+
+    def verify_legal_norm(self, norm_assertion_id: UUID, *, reviewer: str) -> None:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                update corpus.legal_norm_assertions
+                set verification_status = 'verified', reviewed_by = %s
+                where id = %s
+                """,
+                (reviewer, norm_assertion_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown legal norm assertion: {norm_assertion_id}")
 
     def relations_for_document(self, document_id: UUID) -> tuple[LegalRelationRecord, ...]:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                select id, source_document_id, source_provision_id, relation_type,
-                       target_document_id, target_provision_id, status, verification_method
-                from corpus.legal_relations
-                where source_document_id = %s or target_document_id = %s
-                order by created_at, id
+                select a.id, i.id, i.source_document_id, i.source_provision_id,
+                       i.relation_type, i.target_document_id, i.target_provision_id,
+                       a.status, a.verification_method
+                from corpus.legal_relation_assertions a
+                join corpus.legal_relation_identities i on i.id = a.relation_identity_id
+                where a.known_to is null
+                  and (i.source_document_id = %s or i.target_document_id = %s)
+                order by a.created_at, a.id
                 """,
                 (document_id, document_id),
             )
