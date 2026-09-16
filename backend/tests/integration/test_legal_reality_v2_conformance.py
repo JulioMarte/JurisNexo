@@ -234,14 +234,18 @@ def test_claim_parent_and_asserting_party_must_belong_to_same_proceeding(
         )
         participant = _one(cursor)
         cursor.execute(
+            "SELECT id FROM corpus.procedural_role_concepts WHERE code='appellant'"
+        )
+        role_concept = _one(cursor)
+        cursor.execute(
             """
             INSERT INTO corpus.proceeding_party_roles(
-                proceeding_id, participant_id, role_type,
+                proceeding_id, participant_id, role_concept_id,
                 verification_status, verification_method
-            ) VALUES (%s,%s,'appellant','verified','official_metadata')
+            ) VALUES (%s,%s,%s,'verified','official_metadata')
             RETURNING id
             """,
-            (second, participant),
+            (second, participant, role_concept),
         )
         second_role = _one(cursor)
         cursor.execute(
