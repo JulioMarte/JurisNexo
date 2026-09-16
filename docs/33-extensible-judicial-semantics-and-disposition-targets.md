@@ -4,6 +4,8 @@
 
 This document is the canonical refinement of `28-legal-reality-v2.md` and `31-comprehensive-legal-semantics.md` for judicial opinion type, judicial stance type, contextual judicial authority, and judicial-disposition targets.
 
+Alembic revision: `0035_extensible_judicial`.
+
 The goal is not to invent a universal ontology of world law. The goal is to prevent the database from treating one jurisdiction's vocabulary as the legal universe while retaining deterministic, queryable identities.
 
 ## Principle: concepts are extensible identities, source language is evidence
@@ -112,7 +114,7 @@ The database rejects the following contradictory states:
 - an effect concept whose declared target type differs from the row's target type;
 - a compatibility opinion/stance/authority text value that contradicts its canonical concept FK.
 
-Proceeding and decision targets are not overconstrained to a same-proceeding rule. An appellate decision may legitimately remand to another proceeding or act on another judicial decision. Those cross-proceeding/cross-decision legal relationships require correct scope and evidence, but they must not be prohibited merely because they are not the source proceeding itself.
+Proceeding and decision targets are not overconstrained to a same-proceeding rule. An appellate decision may legitimately remand to another proceeding or act on another judicial decision. Those cross-proceeding/cross-decision legal relationships require correct scope and evidence, but they must not be prohibited merely porque they are not the source proceeding itself.
 
 ## Compatibility without double truth
 
