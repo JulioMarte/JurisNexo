@@ -114,7 +114,7 @@ The database rejects the following contradictory states:
 - an effect concept whose declared target type differs from the row's target type;
 - a compatibility opinion/stance/authority text value that contradicts its canonical concept FK.
 
-Proceeding and decision targets are not overconstrained to a same-proceeding rule. An appellate decision may legitimately remand to another proceeding or act on another judicial decision. Those cross-proceeding/cross-decision legal relationships require correct scope and evidence, but they must not be prohibited merely porque they are not the source proceeding itself.
+Proceeding and decision targets are not overconstrained to a same-proceeding rule. An appellate decision may legitimately remand to another proceeding or act on another judicial decision. Those cross-proceeding/cross-decision legal relationships require correct scope and evidence, but they must not be prohibited merely because they are not the source proceeding itself.
 
 ## Compatibility without double truth
 
