@@ -19,6 +19,8 @@ from jurisnexo.bootstrap.settings import (
 )
 from jurisnexo.modules.acquisition.adapters.db import PostgresAcquisitionLedger
 from jurisnexo.modules.acquisition.api.router import create_acquisition_router
+from jurisnexo.modules.corpus.adapters.db import PostgresAnalysisObservationStore
+from jurisnexo.modules.corpus.api.router import create_corpus_analysis_router
 from jurisnexo.modules.legal_reference.bootstrap import verify_database_bootstrap
 from jurisnexo.modules.source_catalog.adapters.db import PostgresSourceCatalog
 from jurisnexo.modules.source_catalog.api.router import create_source_catalog_router
@@ -96,6 +98,7 @@ def create_http_app(
     install_error_handlers(app)
 
     source_catalog = PostgresSourceCatalog(connections)
+    analysis_observations = PostgresAnalysisObservationStore(connections)
     storage_bucket = resolved_s3.bucket if resolved_s3 is not None else "unconfigured"
     acquisition_ledger = PostgresAcquisitionLedger(
         connections,
@@ -119,6 +122,7 @@ def create_http_app(
         object_store_factory = configured_object_store
 
     app.include_router(create_source_catalog_router(source_catalog))
+    app.include_router(create_corpus_analysis_router(analysis_observations))
     app.include_router(
         create_acquisition_router(
             ledger=acquisition_ledger,
