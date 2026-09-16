@@ -537,7 +537,7 @@ def _generalize_disposition_targets() -> None:
                     proceeding_id, judicial_decision_id, proposition_id, target_role
                 ),
             CONSTRAINT judicial_disposition_targets_claim_effect_unique
-                UNIQUE NULLS NOT DISTINCT (source_claim_effect_id)
+                UNIQUE (source_claim_effect_id)
         )
         """
     )
