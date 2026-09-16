@@ -26,6 +26,49 @@ JurisNexo adopts the parts of that pattern that are appropriate at the current s
 
 JurisNexo does **not** yet freeze the entire database into a Request Engine-style immutable giant `0001` baseline. The product/data model is still evolving rapidly, and pretending the schema is already mature enough for a destructive rebaseline would create false stability. A future accepted-baseline process can be introduced once the corpus model has real production data and a deliberate rebaseline audit.
 
+## CI database policy: ephemeral by default
+
+Canonical pull-request and `main` CI must use a fresh ephemeral PostgreSQL instance created for that workflow run. CI must prove that the repository can reproduce the accepted database from an empty server using migrations and bootstrap alone.
+
+The canonical CI sequence is therefore:
+
+```text
+fresh ephemeral PostgreSQL
+    -> alembic upgrade head
+    -> jurisnexo-db-bootstrap apply
+    -> database/integration tests
+    -> destroy database/volume
+```
+
+A shared cloud development database is **not** a CI dependency and must not be required for a PR to pass. In particular:
+
+- normal CI must not read from or mutate the shared development database;
+- repository secrets for the development database must not be necessary for canonical PR validation;
+- tests that claim PostgreSQL constraints, migrations, bootstrap or schema reproducibility must run against the ephemeral database created by the workflow;
+- external development/staging databases may have separate deployment, smoke or read-only audit workflows, but those are environment checks, not substitutes for ephemeral CI;
+- a green external-database smoke check does not prove clean database reproducibility, and a green ephemeral CI run does not prove a particular shared environment has already been migrated.
+
+This separation is intentional. CI validates the repository artifact. Environment deployment validates a concrete running environment.
+
+## PostgreSQL configuration contract
+
+The canonical JurisNexo PostgreSQL configuration is component based:
+
+```text
+POSTGRES_HOST
+POSTGRES_PORT
+POSTGRES_DB
+POSTGRES_USER
+POSTGRES_PASSWORD
+POSTGRES_SSLMODE
+```
+
+The application, bootstrap and migrations can reconstruct the PostgreSQL/SQLAlchemy connection URL from these values. `DATABASE_URL` is therefore **not required**.
+
+`MIGRATION_DATABASE_URL` and `DATABASE_URL` remain optional compatibility/operational overrides for cases such as a separately privileged migrator role or an external platform that injects a single DSN. When no override is present, Alembic must use the same `POSTGRES_*` configuration contract as the rest of JurisNexo.
+
+Do not maintain a second mandatory copy of the same database credentials merely to satisfy Alembic.
+
 ## Canonical startup sequence
 
 ```text
@@ -42,7 +85,7 @@ In Docker Compose this is represented explicitly as:
 db -> migrate -> bootstrap -> api/test
 ```
 
-The bootstrap uses `POSTGRES_*` runtime settings. It does not require application code to depend on `DATABASE_URL`.
+Migration, bootstrap and API processes can all consume `POSTGRES_*`. A URL may be supplied as an explicit override, but it is not the canonical source of configuration.
 
 ## Multi-court model
 
@@ -166,4 +209,4 @@ Integration tests additionally prove that:
 - a new appellate/first-instance/specialized court can be represented without schema changes;
 - invalid court taxonomy values are rejected by PostgreSQL constraints.
 
-This is structural/database evidence. It does not prove that a future connector has correctly identified every Dominican court or every historical appeal relationship; those facts require source-specific evidence and ingestion tests.
+These tests run against a clean ephemeral PostgreSQL database in canonical CI. They are structural/database evidence. They do not prove that a future connector has correctly identified every Dominican court or every historical appeal relationship; those facts require source-specific evidence and ingestion tests.
