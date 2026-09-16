@@ -58,7 +58,7 @@ def _evidence_page(connection: psycopg.Connection[Any]) -> UUID:
             insert into corpus.artifact_pages (
                 artifact_id, page_number, extracted_text, extraction_status
             )
-            values (%s, 1, 'La sentencia interpreta el artículo 17.', 'native_text')
+            values (%s, 1, 'La sentencia cita el artículo 17.', 'native_text')
             returning id
             """,
             (artifact[0],),
@@ -94,16 +94,16 @@ def test_relation_observation_requires_explicit_promotion_and_preserves_evidence
         observation_id = repository.record_relation_observation(
             RelationObservationInput(
                 source_document_id=decision,
-                relation_type="interprets",
+                relation_type="cites",
                 target_document_id=statute,
                 target_provision_id=article_17,
-                assertion_method="llm_extracted",
-                method_name="fixture-agent-v1",
-                confidence=0.83,
+                assertion_method="explicit_primary_text",
+                method_name="citation-parser-v1",
+                confidence=0.99,
                 evidence_artifact_page_id=evidence_page,
-                evidence_excerpt="interpreta el artículo 17",
+                evidence_excerpt="cita el artículo 17",
                 evidence_char_start=13,
-                evidence_char_end=37,
+                evidence_char_end=32,
             )
         )
 
@@ -118,7 +118,7 @@ def test_relation_observation_requires_explicit_promotion_and_preserves_evidence
         relations = repository.relations_for_document(decision)
         assert len(relations) == 1
         assert relations[0].id == relation_id
-        assert relations[0].relation_type == "interprets"
+        assert relations[0].relation_type == "cites"
         assert relations[0].target_document_id == statute
         assert relations[0].target_provision_id == article_17
 
@@ -136,7 +136,48 @@ def test_relation_observation_requires_explicit_promotion_and_preserves_evidence
                 """,
                 (relation_id,),
             )
-            assert cursor.fetchone() == (evidence_page, "interpreta el artículo 17")
+            assert cursor.fetchone() == (evidence_page, "cita el artículo 17")
+
+
+def test_contextual_relation_observation_cannot_be_promoted_globally(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True):
+        repository = PostgresLegalGraphRepository(connection)
+        statute = _document(connection, document_type="statute", title="Ley interpretada")
+        decision = _document(
+            connection,
+            document_type="judicial_decision",
+            title="Sentencia interpretativa",
+        )
+        observation_id = repository.record_relation_observation(
+            RelationObservationInput(
+                source_document_id=decision,
+                relation_type="interprets",
+                target_document_id=statute,
+                assertion_method="llm_extracted",
+                method_name="fixture-agent-v1",
+                confidence=0.83,
+            )
+        )
+
+        with pytest.raises(ValueError, match="requires issue/proposition context"):
+            repository.promote_relation(
+                observation_id,
+                verification_method="independent_auditor",
+            )
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select count(*) from corpus.legal_relations where source_document_id = %s",
+                (decision,),
+            )
+            assert cursor.fetchone() == (0,)
+            cursor.execute(
+                "select status from corpus.legal_relation_observations where id = %s",
+                (observation_id,),
+            )
+            assert cursor.fetchone() == ("observed",)
 
 
 def test_unresolved_citation_is_observable_but_not_canonical(
