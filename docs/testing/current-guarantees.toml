@@ -31,6 +31,30 @@ required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["provenance", "legal_quality"]
 
 [[guarantees]]
+id = "INV-LEGAL-IDENTITY-001"
+statement = "The corpus keeps litigation controversy, court-specific proceeding, procedural event and judicial decision as distinct legal identities; grouping one into another requires explicit persisted relations rather than inferred table-name semantics."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-PROPOSITION-EPISTEMICS-001"
+statement = "Legal propositions retain whether they are explicit source text, derived structure, synthesized interpretation or human-authored analysis, and verification never silently converts interpretation into primary-source fact."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-PROVISION-HIERARCHY-001"
+statement = "Provision identity respects hierarchical source structure: repeated child labels under different parents are valid, while duplicate normalized sibling labels within the same document/parent are rejected."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
 id = "INV-INGESTION-GATES-001"
 statement = "Canonical agent-assisted ingestion preserves the mandatory Structure -> Structure Audit -> Extraction -> Extraction Audit -> commit ordering, and dynamic handoffs cannot bypass those business gates."
 severity = "critical"
