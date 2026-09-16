@@ -333,3 +333,19 @@ severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["legal_quality", "provenance", "architecture"]
+
+[[guarantees]]
+id = "INV-COMPAT-CANONICAL-SYNC-001"
+statement = "Writes through singular compatibility fields promote into normalized canonical relations without leaving stale compatibility-originated primary facts or deleting independently verified richer relations."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-CLAIM-PROCEEDING-CONTEXT-001"
+statement = "A legal claim, its parent claim and its asserting procedural party role belong to the same proceeding; same-scope identity alone is insufficient to establish procedural membership."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
