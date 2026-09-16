@@ -385,16 +385,19 @@ def test_decision_finality_does_not_mutate_decision_record(
         )
         before = cursor.fetchone()
         cursor.execute(
+            "SELECT id FROM corpus.decision_state_concepts WHERE code = 'final'"
+        )
+        final_state = _one(cursor)
+        cursor.execute(
             """
-            INSERT INTO corpus.decision_legal_status_events (
-                case_id, status_type, occurred_on, date_status,
+            INSERT INTO corpus.decision_legal_states (
+                decision_id, state_concept_id, valid_from,
                 verification_status, verification_method
             ) VALUES (
-                %s, 'final', '2025-01-15', 'verified_official_metadata',
-                'verified', 'official_metadata'
+                %s, %s, '2025-01-15', 'verified', 'official_metadata'
             )
             """,
-            (decision,),
+            (decision, final_state),
         )
         cursor.execute(
             "SELECT updated_at FROM corpus.judicial_decisions WHERE id = %s",
