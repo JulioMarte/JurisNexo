@@ -63,6 +63,78 @@ required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["provenance", "legal_quality", "architecture"]
 
 [[guarantees]]
+id = "INV-BITEMPORAL-KNOWLEDGE-001"
+statement = "Legal validity time and JurisNexo knowledge/system time remain independently queryable; later corrections append non-overlapping knowledge history and cannot rewrite what the system knew at an earlier time."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-LEGAL-TAXONOMY-DAG-001"
+statement = "Matter and procedure classifications support multiple broader concepts while hierarchical cycles are rejected; canonical classification is a DAG rather than a single-parent tree."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-PARTY-ROLE-REPRESENTATION-001"
+statement = "Party identity, procedural role and legal representation are distinct persisted identities; raw source role wording cannot substitute for canonical party-role or representative relationships."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-JUDICIAL-STANCE-001"
+statement = "Judicial officer identity, temporal court position, panel membership, vote and authored/joined opinion remain distinct; dissent or concurrence is never encoded merely as panel membership."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-DECISION-LEGAL-STATUS-001"
+statement = "A judicial decision's legal status and finality are temporal legal facts independent from corpus extraction, verification or review quality."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-CONTEXTUAL-AUTHORITY-001"
+statement = "Binding or persuasive authority is represented as a contextual, evidenced assertion over jurisdiction, court, subject and time; the corpus never assigns a global authority score or timeless binding label to a decision."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality"]
+
+[[guarantees]]
+id = "INV-CONTEXTUAL-TREATMENT-001"
+statement = "Substantive judicial treatments such as follows, distinguishes, applies, overrules or conflicts_with require issue/proposition context and cannot be promoted as timeless global document relations."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-AMENDMENT-RECONSTRUCTION-001"
+statement = "Provision renumbering, continuation, split/merge lineage and character-level amendment operations remain explicit and traceable to a specific target provision version rather than being inferred by destructive text replacement."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-LEGAL-AUTHORITY-IDENTITY-001"
+statement = "Issuing, promulgating, publishing and administering institutions have normalized authority identities and typed roles while preserving source-native wording separately."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
 id = "INV-INGESTION-GATES-001"
 statement = "Canonical agent-assisted ingestion preserves the mandatory Structure -> Structure Audit -> Extraction -> Extraction Audit -> commit ordering, and dynamic handoffs cannot bypass those business gates."
 severity = "critical"
