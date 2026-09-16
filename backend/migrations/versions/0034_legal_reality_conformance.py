@@ -185,6 +185,32 @@ def _separate_decision_events_from_states() -> None:
         ")"
     )
     op.execute(
+        """
+        CREATE FUNCTION corpus.validate_decision_state_concept() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        DECLARE concept_code text;
+        BEGIN
+            SELECT code INTO concept_code
+            FROM corpus.decision_state_concepts
+            WHERE id = NEW.state_concept_id;
+            IF concept_code IN (
+                'vacated', 'annulled', 'reversed', 'partially_reversed'
+            ) THEN
+                RAISE EXCEPTION
+                    'point-in-time judicial acts cannot be persisted as decision legal states'
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END $$
+        """
+    )
+    op.execute(
+        "CREATE TRIGGER decision_legal_states_validate_concept "
+        "BEFORE INSERT OR UPDATE OF state_concept_id "
+        "ON corpus.decision_legal_states FOR EACH ROW "
+        "EXECUTE FUNCTION corpus.validate_decision_state_concept()"
+    )
+    op.execute(
         "COMMENT ON TABLE corpus.decision_legal_status_events IS "
         "'Point-in-time lifecycle acts only. New state-like facts such as finality, res judicata, appealability, stays and suspension belong in decision_legal_states.'"
     )
