@@ -40,9 +40,12 @@ def _court(cursor: psycopg.Cursor[Any]) -> Any:
     return _one(cursor)
 
 
-def _case(cursor: psycopg.Cursor[Any], court_id: Any) -> Any:
+def _decision(cursor: psycopg.Cursor[Any], court_id: Any) -> Any:
     cursor.execute(
-        "INSERT INTO corpus.cases (court_id) VALUES (%s) RETURNING id",
+        """
+        INSERT INTO corpus.judicial_decisions (court_id)
+        VALUES (%s) RETURNING id
+        """,
         (court_id,),
     )
     return _one(cursor)
@@ -109,7 +112,8 @@ def _proposition(cursor: psycopg.Cursor[Any], kind: str, text: str) -> Any:
     cursor.execute(
         """
         INSERT INTO corpus.legal_propositions (
-            proposition_type, canonical_text, assertion_kind, verification_status
+            proposition_type, canonical_text,
+            assertion_kind, verification_status
         ) VALUES (%s, %s, 'human_authored', 'verified') RETURNING id
         """,
         (kind, text),
@@ -236,23 +240,29 @@ def test_party_role_and_representation_are_distinct(
             participants.append(_one(cursor))
         party, lawyer = participants
         cursor.execute(
+            "SELECT id FROM corpus.procedural_role_concepts WHERE code = 'appellant'"
+        )
+        role_concept = _one(cursor)
+        cursor.execute(
             """
             INSERT INTO corpus.proceeding_party_roles (
-                proceeding_id, participant_id, role_type, party_side, raw_role,
-                verification_status, verification_method
+                proceeding_id, participant_id, role_concept_id,
+                party_side, raw_role, verification_status,
+                verification_method
             ) VALUES (
-                %s, %s, 'appellant', 'claimant', 'Parte recurrente',
+                %s, %s, %s, 'claimant', 'Parte recurrente',
                 'verified', 'primary_text'
             ) RETURNING id
             """,
-            (proceeding, party),
+            (proceeding, party, role_concept),
         )
         role = _one(cursor)
         cursor.execute(
             """
             INSERT INTO corpus.party_representations (
-                party_role_id, representative_participant_id, representation_type,
-                verification_status, verification_method
+                party_role_id, representative_participant_id,
+                representation_type, verification_status,
+                verification_method
             ) VALUES (%s, %s, 'counsel', 'verified', 'primary_text')
             RETURNING party_role_id, representative_participant_id
             """,
@@ -266,7 +276,7 @@ def test_panel_vote_and_separate_opinion_are_not_conflated(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
-        decision = _case(cursor, court)
+        decision = _decision(cursor, court)
         cursor.execute(
             """
             INSERT INTO corpus.judicial_officers (display_name, identity_status)
@@ -321,10 +331,11 @@ def test_panel_vote_and_separate_opinion_are_not_conflated(
                     case_id, officer_id, role_raw, panel_role,
                     verification_status, verification_method
                 ) VALUES (
-                    %s, %s, 'Disidente', 'dissenting', 'verified', 'primary_text'
+                    %s, %s, 'Disidente', 'dissenting',
+                    'verified', 'primary_text'
                 )
                 """,
-                (_case(cursor, court), officer),
+                (_decision(cursor, court), officer),
             )
 
 
@@ -362,13 +373,16 @@ def test_judicial_career_is_temporal(connection: psycopg.Connection[Any]) -> Non
         assert cursor.fetchone() == (2,)
 
 
-def test_decision_finality_does_not_mutate_case_record(
+def test_decision_finality_does_not_mutate_decision_record(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
-        decision = _case(cursor, court)
-        cursor.execute("SELECT updated_at FROM corpus.cases WHERE id = %s", (decision,))
+        decision = _decision(cursor, court)
+        cursor.execute(
+            "SELECT updated_at FROM corpus.judicial_decisions WHERE id = %s",
+            (decision,),
+        )
         before = cursor.fetchone()
         cursor.execute(
             """
@@ -382,7 +396,10 @@ def test_decision_finality_does_not_mutate_case_record(
             """,
             (decision,),
         )
-        cursor.execute("SELECT updated_at FROM corpus.cases WHERE id = %s", (decision,))
+        cursor.execute(
+            "SELECT updated_at FROM corpus.judicial_decisions WHERE id = %s",
+            (decision,),
+        )
         assert cursor.fetchone() == before
 
 
@@ -392,7 +409,7 @@ def test_precedential_authority_varies_by_context(
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         source_court = _court(cursor)
         other_court = _court(cursor)
-        decision = _case(cursor, source_court)
+        decision = _decision(cursor, source_court)
         cursor.execute(
             """
             INSERT INTO corpus.precedential_authority_assertions (
@@ -416,13 +433,13 @@ def test_precedential_authority_varies_by_context(
         assert {row[0] for row in cursor.fetchall()} == {"binding", "persuasive"}
 
 
-def test_substantive_treatment_requires_issue_context(
+def test_substantive_treatment_requires_issue_context_and_evidence(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
-        source = _case(cursor, court)
-        target = _case(cursor, court)
+        source = _decision(cursor, court)
+        target = _decision(cursor, court)
         issue = _proposition(cursor, "issue", "¿Cuál es el plazo aplicable?")
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
@@ -440,9 +457,11 @@ def test_substantive_treatment_requires_issue_context(
             """
             INSERT INTO corpus.legal_treatment_assertions (
                 source_case_id, target_case_id, treatment_type,
-                issue_proposition_id, verification_status, verification_method
+                issue_proposition_id, verification_status,
+                verification_method
             ) VALUES (
-                %s, %s, 'distinguishes', %s, 'verified', 'human_legal_review'
+                %s, %s, 'distinguishes', %s, 'candidate',
+                'human_legal_review'
             ) RETURNING issue_proposition_id
             """,
             (source, target, issue),
@@ -455,7 +474,9 @@ def test_substantive_treatment_requires_issue_context(
                 """
                 INSERT INTO corpus.legal_documents (
                     document_type, title, identity_status
-                ) VALUES ('judicial_decision', %s, 'canonical') RETURNING id
+                ) VALUES (
+                    'judicial_decision', %s, 'canonical'
+                ) RETURNING id
                 """,
                 (title,),
             )
@@ -463,10 +484,9 @@ def test_substantive_treatment_requires_issue_context(
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
-                INSERT INTO corpus.legal_relations (
-                    source_document_id, relation_type, target_document_id,
-                    verification_method
-                ) VALUES (%s, 'distinguishes', %s, 'contract_test')
+                INSERT INTO corpus.legal_relation_identities (
+                    source_document_id, relation_type, target_document_id
+                ) VALUES (%s, 'distinguishes', %s)
                 """,
                 (documents[0], documents[1]),
             )
@@ -481,8 +501,9 @@ def test_provision_lineage_can_model_split(
         for _ in range(3):
             cursor.execute(
                 """
-                INSERT INTO corpus.legal_provisions (instrument_id, identity_status)
-                VALUES (%s, 'canonical') RETURNING id
+                INSERT INTO corpus.legal_provisions (
+                    instrument_id, identity_status
+                ) VALUES (%s, 'canonical') RETURNING id
                 """,
                 (instrument,),
             )
@@ -521,10 +542,12 @@ def test_amendment_operation_rejects_invalid_coordinates(
         cursor.execute(
             """
             INSERT INTO corpus.legal_amendment_effects (
-                source_instrument_id, target_instrument_id, target_provision_id,
-                effect_type, verification_status, verification_method
+                source_instrument_id, target_instrument_id,
+                target_provision_id, effect_type,
+                verification_status, verification_method
             ) VALUES (
-                %s, %s, %s, 'replaces', 'verified', 'explicit_primary_text'
+                %s, %s, %s, 'replaces',
+                'verified', 'explicit_primary_text'
             ) RETURNING id
             """,
             (instrument, instrument, provision),
@@ -537,7 +560,9 @@ def test_amendment_operation_rejects_invalid_coordinates(
                     amendment_effect_id, target_provision_version_id,
                     sequence_number, operation_type, char_start, char_end,
                     verification_method
-                ) VALUES (%s, %s, 1, 'replace', 10, 5, 'contract_test')
+                ) VALUES (
+                    %s, %s, 1, 'replace', 10, 5, 'contract_test'
+                )
                 """,
                 (effect, provision_version),
             )
@@ -564,8 +589,9 @@ def test_issuing_authority_has_normalized_identity(
             INSERT INTO corpus.legal_instrument_authority_roles (
                 instrument_id, authority_id, authority_role,
                 verification_status, verification_method
-            ) VALUES (%s, %s, 'enacted_by', 'verified', 'official_text')
-            RETURNING instrument_id, authority_id, authority_role
+            ) VALUES (
+                %s, %s, 'enacted_by', 'verified', 'official_text'
+            ) RETURNING instrument_id, authority_id, authority_role
             """,
             (instrument, authority),
         )
