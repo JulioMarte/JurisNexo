@@ -20,9 +20,6 @@ ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 
 
 def upgrade() -> None:
-    # A row is a judicial decision, not a litigation case. Keep an updatable
-    # compatibility view only so older migration-era tests/tools fail softly;
-    # production code must use judicial_decisions.
     op.execute("ALTER TABLE corpus.cases RENAME TO judicial_decisions")
     op.execute("CREATE VIEW corpus.cases AS SELECT * FROM corpus.judicial_decisions")
     op.execute(
@@ -34,10 +31,8 @@ def upgrade() -> None:
         "'One judicial decision. It is distinct from a controversy, proceeding, publication and source artifact.'"
     )
 
-    # Extensible dispositive taxonomy. The decision disposition keeps source
-    # wording; canonical meaning is a concept identity, not a closed enum.
     op.execute(
-        f"""
+        """
         CREATE TABLE corpus.disposition_concepts (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             code text NOT NULL UNIQUE,
@@ -79,11 +74,8 @@ def upgrade() -> None:
     op.execute("ALTER TABLE corpus.case_dispositions RENAME TO judicial_decision_dispositions")
     op.execute("CREATE VIEW corpus.case_dispositions AS SELECT * FROM corpus.judicial_decision_dispositions")
 
-    # Canonical procedural roles are concepts. Source-native wording remains on
-    # the role assignment, but expanding Dominican procedural vocabulary no
-    # longer requires altering a CHECK constraint.
     op.execute(
-        f"""
+        """
         CREATE TABLE corpus.procedural_role_concepts (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             code text NOT NULL UNIQUE,
@@ -132,9 +124,6 @@ def upgrade() -> None:
         "UNIQUE NULLS NOT DISTINCT (proceeding_id, participant_id, role_concept_id, valid_from)"
     )
 
-    # A proposition can be anchored to its actual legal subject. This supports
-    # hard database validation that treatment propositions really belong to the
-    # source/target decisions they purport to summarize.
     op.execute(
         f"""
         CREATE TABLE corpus.legal_proposition_subjects (
@@ -164,9 +153,6 @@ def upgrade() -> None:
         """
     )
 
-    # Requirements are not promulgated strings. They are legal propositions with
-    # a norm assertion that says how JurisNexo derives and temporally understands
-    # the proposition. Evidence remains in legal_proposition_evidence.
     op.execute("DROP TABLE corpus.legal_requirement_sources")
     op.execute("DROP TABLE corpus.legal_requirements")
     op.execute("ALTER TABLE corpus.legal_propositions DROP CONSTRAINT legal_propositions_type_check")
@@ -211,8 +197,6 @@ def upgrade() -> None:
         "CREATE UNIQUE INDEX legal_norm_assertions_current_idx ON corpus.legal_norm_assertions (proposition_id) WHERE known_to IS NULL"
     )
 
-    # Structural document relations have stable identity. Assertions carry
-    # legal-valid time, system-knowledge time, verification and evidence.
     op.execute("DROP TABLE corpus.legal_relation_evidence")
     op.execute("DROP TABLE corpus.legal_relations")
     op.execute(
@@ -241,7 +225,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        f"""
+        """
         CREATE TABLE corpus.legal_relation_assertions (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
             relation_identity_id uuid NOT NULL REFERENCES corpus.legal_relation_identities(id) ON DELETE CASCADE,
@@ -261,7 +245,9 @@ def upgrade() -> None:
         )
         """
     )
-    op.execute("CREATE UNIQUE INDEX legal_relation_assertions_current_idx ON corpus.legal_relation_assertions (relation_identity_id) WHERE known_to IS NULL")
+    op.execute(
+        "CREATE UNIQUE INDEX legal_relation_assertions_current_idx ON corpus.legal_relation_assertions (relation_identity_id) WHERE known_to IS NULL"
+    )
     op.execute(
         """
         CREATE TABLE corpus.legal_relation_assertion_evidence (
@@ -281,8 +267,6 @@ def upgrade() -> None:
         """
     )
 
-    # Verified substantive judicial treatment requires evidence and proposition
-    # membership must agree with source/target decision identity.
     op.execute("ALTER TABLE corpus.legal_treatment_assertions ADD COLUMN known_from timestamptz NOT NULL DEFAULT now()")
     op.execute("ALTER TABLE corpus.legal_treatment_assertions ADD COLUMN known_to timestamptz")
     op.execute("ALTER TABLE corpus.legal_treatment_assertions DROP CONSTRAINT legal_treatment_assertions_unique")
@@ -332,7 +316,6 @@ def upgrade() -> None:
         "CREATE TRIGGER legal_treatment_assertions_membership BEFORE INSERT OR UPDATE ON corpus.legal_treatment_assertions FOR EACH ROW EXECUTE FUNCTION corpus.validate_treatment_proposition_membership()"
     )
 
-    # Opinion joiners must have actually sat on the decision's panel.
     op.execute("ALTER TABLE corpus.judicial_opinion_joiners ADD COLUMN case_id uuid")
     op.execute(
         """
@@ -348,8 +331,6 @@ def upgrade() -> None:
         "ALTER TABLE corpus.judicial_opinion_joiners ADD CONSTRAINT judicial_opinion_joiners_panel_member_fkey FOREIGN KEY (case_id, officer_id) REFERENCES corpus.decision_panel_members(case_id, officer_id)"
     )
 
-    # Competence is multi-dimensional: territory, subject matter and function are
-    # independent legal facts, not one overloaded jurisdiction string.
     op.execute(
         """
         CREATE TABLE corpus.territorial_units (
@@ -416,9 +397,6 @@ def upgrade() -> None:
         """
     )
 
-    # Bitemporal boundary outside legislation: mutable legal assertions receive
-    # system-knowledge intervals. Immutable propositions themselves do not; a
-    # corrected semantic claim is a new proposition linked by supersedes.
     op.execute("ALTER TABLE corpus.precedential_authority_assertions ADD COLUMN known_from timestamptz NOT NULL DEFAULT now()")
     op.execute("ALTER TABLE corpus.precedential_authority_assertions ADD COLUMN known_to timestamptz")
     op.execute("ALTER TABLE corpus.precedential_authority_assertions ADD CONSTRAINT precedential_authority_known_range_check CHECK (known_to IS NULL OR known_to > known_from)")
@@ -441,4 +419,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("0026 is an intentional pre-ingestion normalization boundary and is not safely downgradeable")
+    raise RuntimeError(
+        "0026 is an intentional pre-ingestion normalization boundary "
+        "and is not safely downgradeable"
+    )
