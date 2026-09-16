@@ -114,16 +114,24 @@ def _bind_proposition_stances_to_decisions() -> None:
         CREATE FUNCTION corpus.validate_vote_stance_target() RETURNS trigger
         LANGUAGE plpgsql AS $$
         BEGIN
-            IF NEW.scope_type = 'proposition' AND NOT EXISTS (
-                SELECT 1
-                FROM corpus.legal_proposition_subjects s
-                WHERE s.proposition_id = NEW.proposition_id
-                  AND s.scope_id = NEW.scope_id
-                  AND s.subject_type = 'judicial_decision'
-                  AND s.judicial_decision_id = NEW.case_id
-            ) THEN
+            IF NEW.scope_type = 'proposition'
+               AND EXISTS (
+                    SELECT 1
+                    FROM corpus.legal_proposition_subjects s
+                    WHERE s.proposition_id = NEW.proposition_id
+                      AND s.scope_id = NEW.scope_id
+                      AND s.subject_type = 'judicial_decision'
+               )
+               AND NOT EXISTS (
+                    SELECT 1
+                    FROM corpus.legal_proposition_subjects s
+                    WHERE s.proposition_id = NEW.proposition_id
+                      AND s.scope_id = NEW.scope_id
+                      AND s.subject_type = 'judicial_decision'
+                      AND s.judicial_decision_id = NEW.case_id
+               ) THEN
                 RAISE EXCEPTION
-                    'proposition-scoped judicial stance must target a proposition about the same decision'
+                    'proposition-scoped judicial stance cannot target another decision'
                     USING ERRCODE = '23514';
             END IF;
             RETURN NEW;
