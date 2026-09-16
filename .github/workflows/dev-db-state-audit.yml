@@ -76,8 +76,16 @@ jobs:
                   cur.execute("select current_database(), current_user, current_setting('server_version')")
                   db_name, db_user, server_version = cur.fetchone()
 
-                  cur.execute("select version_num from alembic_version")
-                  alembic_rows = [row[0] for row in cur.fetchall()]
+                  cur.execute("select to_regclass('public.alembic_version')")
+                  has_alembic = cur.fetchone()[0] is not None
+                  if has_alembic:
+                      cur.execute("select version_num from alembic_version")
+                      alembic_rows = [row[0] for row in cur.fetchall()]
+                  else:
+                      alembic_rows = []
+
+                  cur.execute("select exists (select 1 from information_schema.schemata where schema_name = 'corpus')")
+                  has_corpus_schema = cur.fetchone()[0]
 
                   cur.execute("""
                       select table_name
@@ -103,7 +111,9 @@ jobs:
                   core_courts = []
                   if "courts" in table_set:
                       cur.execute("""
-                          select code, judicial_system, court_type
+                          select code,
+                                 coalesce(judicial_system, 'n/a'),
+                                 coalesce(court_type, 'n/a')
                           from corpus.courts
                           where code in ('DO-SCJ', 'DO-TC')
                           order by code
@@ -117,7 +127,9 @@ jobs:
               "database": db_name,
               "connected_user": db_user,
               "postgres_version": server_version,
+              "has_alembic_version_table": has_alembic,
               "alembic_versions": alembic_rows,
+              "has_corpus_schema": has_corpus_schema,
               "corpus_table_count": len(tables),
               "missing_0019_tables": sorted(expected_0019_tables - table_set),
               "core_courts": core_courts,
