@@ -24,7 +24,12 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
         yield conn
 
 
-def _document(connection: psycopg.Connection[Any], *, document_type: str, title: str) -> UUID:
+def _document(
+    connection: psycopg.Connection[Any],
+    *,
+    document_type: str,
+    title: str,
+) -> UUID:
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -54,7 +59,9 @@ def _evidence_page(connection: psycopg.Connection[Any]) -> UUID:
             """
             insert into corpus.artifact_pages (
                 artifact_id, page_number, extracted_text, extraction_status
-            ) values (%s, 1, 'La sentencia cita el artículo 17.', 'native_text') returning id
+            ) values (
+                %s, 1, 'La sentencia cita el artículo 17.', 'native_text'
+            ) returning id
             """,
             (artifact[0],),
         )
@@ -68,8 +75,16 @@ def test_relation_observation_promotes_to_identity_assertion_and_evidence(
 ) -> None:
     with connection.transaction(force_rollback=True):
         repository = PostgresLegalGraphRepository(connection)
-        statute = _document(connection, document_type="statute", title="Ley de prueba")
-        decision = _document(connection, document_type="judicial_decision", title="Sentencia")
+        statute = _document(
+            connection,
+            document_type="statute",
+            title="Ley de prueba",
+        )
+        decision = _document(
+            connection,
+            document_type="judicial_decision",
+            title="Sentencia",
+        )
         article = repository.upsert_provision(
             ProvisionInput(
                 document_id=statute,
@@ -118,8 +133,16 @@ def test_contextual_relation_observation_cannot_be_promoted_globally(
 ) -> None:
     with connection.transaction(force_rollback=True):
         repository = PostgresLegalGraphRepository(connection)
-        statute = _document(connection, document_type="statute", title="Ley interpretada")
-        decision = _document(connection, document_type="judicial_decision", title="Sentencia")
+        statute = _document(
+            connection,
+            document_type="statute",
+            title="Ley interpretada",
+        )
+        decision = _document(
+            connection,
+            document_type="judicial_decision",
+            title="Sentencia",
+        )
         observation_id = repository.record_relation_observation(
             RelationObservationInput(
                 source_document_id=decision,
@@ -129,8 +152,14 @@ def test_contextual_relation_observation_cannot_be_promoted_globally(
                 method_name="fixture-agent-v1",
             )
         )
-        with pytest.raises(ValueError, match="requires issue/proposition context"):
-            repository.promote_relation(observation_id, verification_method="auditor")
+        with pytest.raises(
+            ValueError,
+            match="requires issue/proposition context",
+        ):
+            repository.promote_relation(
+                observation_id,
+                verification_method="auditor",
+            )
         with connection.cursor() as cursor:
             cursor.execute("select count(*) from corpus.legal_relation_identities")
             assert cursor.fetchone() == (0,)
@@ -141,7 +170,11 @@ def test_unresolved_citation_is_observable_but_not_canonical(
 ) -> None:
     with connection.transaction(force_rollback=True):
         repository = PostgresLegalGraphRepository(connection)
-        source = _document(connection, document_type="judicial_decision", title="Caso")
+        source = _document(
+            connection,
+            document_type="judicial_decision",
+            title="Caso",
+        )
         observation_id = repository.record_relation_observation(
             RelationObservationInput(
                 source_document_id=source,
@@ -152,7 +185,10 @@ def test_unresolved_citation_is_observable_but_not_canonical(
             )
         )
         with pytest.raises(ValueError, match="unresolved target"):
-            repository.promote_relation(observation_id, verification_method="resolver")
+            repository.promote_relation(
+                observation_id,
+                verification_method="resolver",
+            )
 
 
 def test_derived_norm_is_not_primary_text_and_requires_verified_source(
@@ -160,7 +196,11 @@ def test_derived_norm_is_not_primary_text_and_requires_verified_source(
 ) -> None:
     with connection.transaction(force_rollback=True):
         repository = PostgresLegalGraphRepository(connection)
-        regulation = _document(connection, document_type="regulation", title="Reglamento")
+        regulation = _document(
+            connection,
+            document_type="regulation",
+            title="Reglamento",
+        )
         article = repository.upsert_provision(
             ProvisionInput(
                 document_id=regulation,
@@ -171,7 +211,7 @@ def test_derived_norm_is_not_primary_text_and_requires_verified_source(
         )
         proposition_id, assertion_id = repository.create_legal_norm(
             LegalNormInput(
-                jurisdiction_code="do",
+                jurisdiction_code=None,
                 norm_kind="document_submission",
                 statement_text="Presentar certificación vigente.",
                 derivation_kind="synthesized_interpretation",
@@ -180,12 +220,18 @@ def test_derived_norm_is_not_primary_text_and_requires_verified_source(
         )
         with connection.cursor() as cursor:
             cursor.execute(
-                "select assertion_kind from corpus.legal_propositions where id = %s",
+                """
+                select assertion_kind
+                from corpus.legal_propositions
+                where id = %s
+                """,
                 (proposition_id,),
             )
             assert cursor.fetchone() == ("synthesized_interpretation",)
 
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+        with pytest.raises(
+            psycopg.errors.CheckViolation
+        ), connection.transaction():
             repository.verify_legal_norm(assertion_id, reviewer="lawyer-1")
 
         repository.attach_norm_source(
@@ -199,7 +245,11 @@ def test_derived_norm_is_not_primary_text_and_requires_verified_source(
         repository.verify_legal_norm(assertion_id, reviewer="lawyer-1")
         with connection.cursor() as cursor:
             cursor.execute(
-                "select verification_status, reviewed_by from corpus.legal_norm_assertions where id = %s",
+                """
+                select verification_status, reviewed_by
+                from corpus.legal_norm_assertions
+                where id = %s
+                """,
                 (assertion_id,),
             )
             assert cursor.fetchone() == ("verified", "lawyer-1")
@@ -209,22 +259,35 @@ def test_tags_remain_classification_not_relation_identity(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True):
-        document = _document(connection, document_type="statute", title="Ley tributaria")
+        document = _document(
+            connection,
+            document_type="statute",
+            title="Ley tributaria",
+        )
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 insert into corpus.legal_tags (slug, label, tag_type)
-                values ('tributario', 'Tributario', 'practice_area') returning id
+                values ('tributario', 'Tributario', 'practice_area')
+                returning id
                 """
             )
             tag = cursor.fetchone()
             assert tag is not None
             cursor.execute(
-                "insert into corpus.legal_document_tags (document_id, tag_id, provenance) values (%s, %s, 'human_reviewed')",
+                """
+                insert into corpus.legal_document_tags (
+                    document_id, tag_id, provenance
+                ) values (%s, %s, 'human_reviewed')
+                """,
                 (document, tag[0]),
             )
             cursor.execute(
-                "select count(*) from corpus.legal_relation_identities where source_document_id = %s",
+                """
+                select count(*)
+                from corpus.legal_relation_identities
+                where source_document_id = %s
+                """,
                 (document,),
             )
             assert cursor.fetchone() == (0,)
