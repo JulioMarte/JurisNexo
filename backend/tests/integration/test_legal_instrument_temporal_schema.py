@@ -239,7 +239,7 @@ def test_derived_version_must_belong_to_same_instrument(
         instrument_b = _instrument(cursor, "Ley derivada B")
         version_b = _version(cursor, instrument_b, kind="original", valid_from="2020-01-01")
 
-        with connection.transaction(), pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.legal_instrument_versions (
@@ -292,7 +292,7 @@ def test_verified_lifecycle_date_cannot_be_invented(
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         instrument_id = _instrument(cursor, "Ley con fecha desconocida")
 
-        with connection.transaction(), pytest.raises(psycopg.errors.CheckViolation):
+        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.legal_instrument_events (
