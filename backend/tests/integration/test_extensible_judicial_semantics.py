@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg import sql
 
 pytestmark = [
     pytest.mark.integration,
@@ -268,11 +269,13 @@ def test_judicial_authority_effects_are_extensible_and_compat_view_survives(
             """,
             (decision, concept, court),
         )
-        assertion, mirrored_code = cursor.fetchone() or (None, None)
+        row = cursor.fetchone()
+        assert row is not None
+        assertion, mirrored_code = row
         assert mirrored_code == code
         cursor.execute(
-            "SELECT authority_effect_concept_id FROM corpus.precedential_authority_assertions "
-            "WHERE id=%s",
+            "SELECT authority_effect_concept_id "
+            "FROM corpus.precedential_authority_assertions WHERE id=%s",
             (assertion,),
         )
         assert cursor.fetchone() == (concept,)
@@ -302,15 +305,15 @@ def test_disposition_targets_cover_claim_party_proceeding_decision_and_propositi
         )
         for target_type, column, target_id, effect_code in targets:
             effect = _effect(cursor, target_type, effect_code)
-            cursor.execute(
-                f"""
+            query = sql.SQL(
+                """
                 INSERT INTO corpus.disposition_targets(
-                    disposition_id,target_type,{column},effect_concept_id,
+                    disposition_id,target_type,{},effect_concept_id,
                     verification_status,verification_method
                 ) VALUES (%s,%s,%s,%s,'verified','primary_text')
-                """,
-                (disposition, target_type, target_id, effect),
-            )
+                """
+            ).format(sql.Identifier(column))
+            cursor.execute(query, (disposition, target_type, target_id, effect))
 
         cursor.execute(
             "SELECT target_type FROM corpus.disposition_targets "
