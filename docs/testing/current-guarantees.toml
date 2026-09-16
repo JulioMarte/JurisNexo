@@ -349,3 +349,35 @@ severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-OPINION-001"
+statement = "Canonical judicial opinion type uses an extensible concept identity rather than a closed common-law text enum; compatibility text cannot disagree with the referenced concept."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-STANCE-001"
+statement = "Canonical judicial stance meaning uses an extensible concept identity rather than a closed persisted text enum, while stance scope remains independently bound to the same judicial decision."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-AUTHORITY-001"
+statement = "Judicial authority is a contextual assertion whose canonical effect is an extensible concept; common-law labels such as binding and persuasive are seed concepts, not the universal ontology or physical table identity."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-DISPOSITION-TARGET-001"
+statement = "A judicial dispositive act may canonically target a claim, procedural party role, proceeding, judicial decision or proposition; exactly one target is present, its effect concept matches the target type, and claim/party/proposition targets cannot borrow unrelated procedural or decision context."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
