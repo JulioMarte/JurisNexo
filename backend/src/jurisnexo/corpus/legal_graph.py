@@ -159,10 +159,16 @@ class PostgresLegalGraphRepository:
                     normalized_label, ordinal, heading, text, effective_from, effective_to
                 )
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (document_id, normalized_label)
+                on conflict (
+                    document_id,
+                    (coalesce(
+                        parent_provision_id,
+                        '00000000-0000-0000-0000-000000000000'::uuid
+                    )),
+                    normalized_label
+                )
                     where normalized_label is not null
                 do update set
-                    parent_provision_id = excluded.parent_provision_id,
                     provision_type = excluded.provision_type,
                     label = excluded.label,
                     ordinal = excluded.ordinal,
