@@ -62,6 +62,8 @@ A judicial decision may concern several legal matters and several procedural con
 
 The historical single-valued fields on `judicial_decisions` are compatibility/preferred classifications only. New analytical code must not infer that a decision has exactly one legal matter or one procedure.
 
+Writes through those compatibility fields are mirrored into the canonical relations. The reverse is intentionally not automatic because a genuinely multi-valued classification has no lossless single value to write back.
+
 ## Judicial panel, opinion, authorship and stance
 
 These are separate identities:
@@ -79,9 +81,9 @@ judicial_opinion
 
 A judge can concur as to one issue, dissent as to another, join only part of an opinion, or record a saved/reserved vote. `decision_votes.vote_type` is retained only as a coarse compatibility summary. Canonical mixed or partial positions live in `judicial_vote_stances` and are scoped to the whole decision, an opinion, a proposition, or a disposition.
 
-An opinion may have zero, one, or multiple identified authors. Canonical authorship is N:N in `judicial_opinion_authors`; the historical single-author field is compatibility-only.
+An opinion may have zero, one, or multiple identified authors. Canonical authorship is N:N in `judicial_opinion_authors`; the historical single-author field is compatibility-only. Writes through that legacy field are synchronized into the canonical authorship relation.
 
-Database constraints must ensure that an opinion author and a vote stance refer to members of the same decision panel and that a stance cannot borrow a `vote_id` from a different judge or decision.
+Database constraints ensure that an opinion author and a vote stance refer to members of the same decision panel and that a stance cannot borrow a `vote_id` from a different judge or decision.
 
 ## Common legal entity identity
 
@@ -94,7 +96,7 @@ Database constraints must ensure that an opinion author and a vote stance refer 
 
 Those rows point to `legal_entities`. The same real person may therefore be a participant in one historical proceeding and a judicial officer in a later period without becoming two unrelated real-world identities. The same institution can likewise be represented as a court and as a legal authority where both roles are legally meaningful.
 
-Identity resolution remains explicit. Equal normalized names are not sufficient proof that two records are the same entity.
+Identity resolution remains explicit. Equal normalized names are not sufficient proof that two records are the same entity. When no resolved entity is supplied, compatibility triggers create an unresolved/shared-role entity rather than guessing that similarly named records are identical.
 
 ## Claims and requested relief
 
@@ -104,7 +106,7 @@ Arguments, issues and holdings do not replace the procedural question "what did 
 
 `disposition_claim_effects` links a judicial disposition to the claim it resolves and an extensible effect concept such as granted, partially granted, denied, or inadmissible.
 
-A later hardening rule may require the claim's proceeding to be one of the proceedings linked to the decision before a verified disposition effect can be committed. Until that rule is implemented, ingestion/audit code must not treat mere foreign-key validity as proof of procedural membership.
+The database rejects a disposition/claim effect when the claim belongs to a proceeding that is not linked to the judicial decision through `proceeding_decisions`. This is a deterministic membership invariant, not an LLM judgment.
 
 ## Contextual legal norm identity
 
@@ -146,12 +148,16 @@ Jurisdiction-sensitive legal categories should move toward concept identities ra
 
 Not every text field should become a taxonomy. Raw source wording stays raw; normalized concepts exist only where cross-source semantics are valuable.
 
+`judicial_vote_stances.stance_type` and `judicial_opinions.opinion_type` remain closed compatibility-era vocabularies in this revision. They are deliberately not claimed to be globally complete taxonomies; internationalization may justify promoting them to concept registries once real corpus evidence demonstrates the needed distinctions.
+
 ## Compatibility rule
 
 Compatibility fields are not competing sources of truth. New code should prefer the normalized relations named in this document. Compatibility fields exist to let the MVP evolve without forcing an unrelated rewrite of every caller in the same migration.
 
 No compatibility layer may reintroduce a false HARD invariant such as one matter per decision, one proceeding per decision, one author per opinion, or one judicial stance per judge/decision.
 
+Compatibility synchronization is one-way where the richer representation cannot be losslessly collapsed back into a singular field. A legacy write is promoted into the canonical representation; adding a second canonical value does not overwrite the legacy convenience value.
+
 ## Pre-ingestion boundary
 
-Migrations `0031_legal_reality_v2` and `0032_harden_legal_reality_v2` form part of the intentional pre-ingestion normalization boundary. Their downgrade functions fail deliberately rather than pretending that collapsing the richer identities is lossless.
+Migrations `0031_legal_reality_v2`, `0032_harden_legal_reality_v2`, and `0033_legal_reality_compat_sync` form part of the intentional pre-ingestion normalization boundary. Their downgrade functions fail deliberately rather than pretending that collapsing the richer identities is lossless.
