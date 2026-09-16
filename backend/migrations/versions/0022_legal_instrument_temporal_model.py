@@ -124,7 +124,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        f"""
+        """
         ALTER TABLE corpus.legal_instrument_versions
         ADD CONSTRAINT legal_instrument_versions_same_instrument_parent_fkey
         FOREIGN KEY (instrument_id, derived_from_version_id)
