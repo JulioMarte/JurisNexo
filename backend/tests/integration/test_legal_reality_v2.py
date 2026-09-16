@@ -31,7 +31,8 @@ def _one(cursor: psycopg.Cursor[Any]) -> Any:
 def _court(cursor: psycopg.Cursor[Any]) -> Any:
     suffix = uuid4().hex[:10]
     cursor.execute(
-        "INSERT INTO corpus.courts(code,name,jurisdiction) VALUES (%s,%s,'DO') RETURNING id",
+        "INSERT INTO corpus.courts(code,name,jurisdiction) "
+        "VALUES (%s,%s,'DO') RETURNING id",
         (f"DO-V2-{suffix}", f"Tribunal V2 {suffix}"),
     )
     return _one(cursor)
@@ -77,14 +78,16 @@ def test_proposition_may_have_multiple_same_type_subjects_and_identity_is_immuta
             (proposition, first, proposition, second),
         )
         cursor.execute(
-            "SELECT count(*) FROM corpus.legal_proposition_subjects WHERE proposition_id=%s",
+            "SELECT count(*) FROM corpus.legal_proposition_subjects "
+            "WHERE proposition_id=%s",
             (proposition,),
         )
         assert cursor.fetchone() == (2,)
 
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
-                "UPDATE corpus.legal_propositions SET canonical_text='reescritura' WHERE id=%s",
+                "UPDATE corpus.legal_propositions "
+                "SET canonical_text='reescritura' WHERE id=%s",
                 (proposition,),
             )
 
@@ -99,7 +102,8 @@ def test_decision_supports_multiple_matters_and_multiple_equal_proceedings(
         for label in ("Civil", "Constitucional"):
             code = f"matter_{uuid4().hex[:10]}"
             cursor.execute(
-                "INSERT INTO corpus.legal_matter_concepts(code,name) VALUES (%s,%s) RETURNING id",
+                "INSERT INTO corpus.legal_matter_concepts(code,name) "
+                "VALUES (%s,%s) RETURNING id",
                 (code, label),
             )
             matters.append(_one(cursor))
@@ -122,7 +126,8 @@ def test_decision_supports_multiple_matters_and_multiple_equal_proceedings(
         proceedings: list[Any] = []
         for title in ("Expediente acumulado A", "Expediente acumulado B"):
             cursor.execute(
-                "INSERT INTO corpus.legal_proceedings(canonical_title) VALUES (%s) RETURNING id",
+                "INSERT INTO corpus.legal_proceedings(canonical_title) "
+                "VALUES (%s) RETURNING id",
                 (title,),
             )
             proceedings.append(_one(cursor))
@@ -132,12 +137,14 @@ def test_decision_supports_multiple_matters_and_multiple_equal_proceedings(
                 INSERT INTO corpus.proceeding_decisions(
                     proceeding_id, case_id, relation_type, is_primary,
                     verification_status, verification_method
-                ) VALUES (%s,%s,'decision_in_proceeding',true,'verified','official_metadata')
+                ) VALUES (%s,%s,'decision_in_proceeding',true,'verified',
+                          'official_metadata')
                 """,
                 (proceeding, decision),
             )
         cursor.execute(
-            "SELECT count(*) FROM corpus.proceeding_decisions WHERE case_id=%s AND is_primary",
+            "SELECT count(*) FROM corpus.proceeding_decisions "
+            "WHERE case_id=%s AND is_primary",
             (decision,),
         )
         assert cursor.fetchone() == (2,)
@@ -152,7 +159,8 @@ def test_opinions_have_multiple_authors_and_one_judge_has_multiple_stances(
         officers: list[Any] = []
         for name in ("Magistrada A", "Magistrado B"):
             cursor.execute(
-                "INSERT INTO corpus.judicial_officers(display_name,identity_status) VALUES (%s,'canonical') RETURNING id",
+                "INSERT INTO corpus.judicial_officers(display_name,identity_status) "
+                "VALUES (%s,'canonical') RETURNING id",
                 (name,),
             )
             officer = _one(cursor)
@@ -215,7 +223,8 @@ def test_opinions_have_multiple_authors_and_one_judge_has_multiple_stances(
             INSERT INTO corpus.judicial_vote_stances(
                 vote_id, case_id, officer_id, stance_type, scope_type,
                 proposition_id, verification_status, verification_method
-            ) VALUES (%s,%s,%s,'dissents_in_part','proposition',%s,'verified','primary_text')
+            ) VALUES (%s,%s,%s,'dissents_in_part','proposition',%s,
+                      'verified','primary_text')
             """,
             (vote, decision, officers[0], proposition),
         )
@@ -247,8 +256,10 @@ def test_norm_identity_is_contextual_not_just_proposition_text(
                 INSERT INTO corpus.legal_norm_assertions(
                     proposition_id, jurisdiction_code, norm_kind, derivation_kind,
                     known_from, verification_status, verification_method
-                ) VALUES (%s,%s,'rule','human_legal_analysis','2026-01-01Z','candidate','human_review')
-                RETURNING id
+                ) VALUES (
+                    %s,%s,'rule','human_legal_analysis','2026-01-01Z',
+                    'candidate','human_review'
+                ) RETURNING id
                 """,
                 (proposition, code),
             )
@@ -268,7 +279,10 @@ def test_norm_identity_is_contextual_not_just_proposition_text(
                 INSERT INTO corpus.legal_norm_assertions(
                     proposition_id, jurisdiction_code, norm_kind, derivation_kind,
                     known_from, verification_status, verification_method
-                ) VALUES (%s,%s,'rule','human_legal_analysis','2026-02-01Z','candidate','human_review')
+                ) VALUES (
+                    %s,%s,'rule','human_legal_analysis','2026-02-01Z',
+                    'candidate','human_review'
+                )
                 """,
                 (proposition, jurisdiction_codes[0]),
             )
@@ -286,12 +300,20 @@ def test_common_entity_identity_and_claim_to_disposition_effect(
         )
         entity = _one(cursor)
         cursor.execute(
-            "INSERT INTO corpus.participants(participant_kind,display_name,legal_entity_id) VALUES ('person','Persona jurídica compartida',%s) RETURNING id",
+            """
+            INSERT INTO corpus.participants(
+                participant_kind, display_name, legal_entity_id
+            ) VALUES ('person','Persona jurídica compartida',%s) RETURNING id
+            """,
             (entity,),
         )
         participant = _one(cursor)
         cursor.execute(
-            "INSERT INTO corpus.judicial_officers(display_name,identity_status,legal_entity_id) VALUES ('Persona jurídica compartida','canonical',%s) RETURNING id",
+            """
+            INSERT INTO corpus.judicial_officers(
+                display_name, identity_status, legal_entity_id
+            ) VALUES ('Persona jurídica compartida','canonical',%s) RETURNING id
+            """,
             (entity,),
         )
         officer = _one(cursor)
@@ -307,7 +329,8 @@ def test_common_entity_identity_and_claim_to_disposition_effect(
         assert cursor.fetchone() == (entity,)
 
         cursor.execute(
-            "INSERT INTO corpus.legal_proceedings(canonical_title) VALUES ('Proceso con pretensión') RETURNING id"
+            "INSERT INTO corpus.legal_proceedings(canonical_title) "
+            "VALUES ('Proceso con pretensión') RETURNING id"
         )
         proceeding = _one(cursor)
         cursor.execute(
@@ -378,7 +401,10 @@ def test_decision_states_are_durative_and_bitemporal(
             INSERT INTO corpus.decision_legal_states(
                 decision_id, state_concept_id, valid_from,
                 known_from, known_to, verification_status, verification_method
-            ) VALUES (%s,%s,'2025-01-01','2025-01-10Z','2025-03-01Z','verified','official_metadata')
+            ) VALUES (
+                %s,%s,'2025-01-01','2025-01-10Z','2025-03-01Z',
+                'verified','official_metadata'
+            )
             """,
             (decision, state),
         )
@@ -387,7 +413,9 @@ def test_decision_states_are_durative_and_bitemporal(
             INSERT INTO corpus.decision_legal_states(
                 decision_id, state_concept_id, valid_from,
                 known_from, verification_status, verification_method
-            ) VALUES (%s,%s,'2025-01-15','2025-03-01Z','verified','official_correction')
+            ) VALUES (
+                %s,%s,'2025-01-15','2025-03-01Z','verified','official_correction'
+            )
             """,
             (decision, state),
         )
