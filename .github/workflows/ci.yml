@@ -31,7 +31,7 @@ jobs:
           -e JURISNEXO_REPO_ROOT=/repo
           -e GITHUB_BASE_REF
           -e GITHUB_HEAD_REF
-          test pytest -q -x --tb=short
+          test pytest -q
       - name: Show service state on failure
         if: failure()
         run: docker compose ps && docker compose logs --no-color db migrate
