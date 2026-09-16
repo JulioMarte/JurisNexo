@@ -88,7 +88,7 @@ risk = ["provenance", "legal_quality", "architecture"]
 
 [[guarantees]]
 id = "INV-BITEMPORAL-ASSERTIONS-001"
-statement = "Mutable legal conclusions such as norms, structural relation assertions, judicial treatments, precedent authority and decision legal-status assertions carry system-knowledge time in addition to their legal-valid/event time; immutable proposition text is corrected by superseding claims rather than destructive mutation."
+statement = "Mutable legal conclusions such as norms, structural relation assertions, judicial treatments, judicial authority effects and decision legal-status assertions carry system-knowledge time in addition to their legal-valid/event time; immutable proposition text is corrected by superseding claims rather than destructive mutation."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
@@ -168,11 +168,11 @@ risk = ["legal_quality", "architecture"]
 
 [[guarantees]]
 id = "INV-CONTEXTUAL-AUTHORITY-001"
-statement = "Binding or persuasive authority is represented as a contextual, evidenced assertion over jurisdiction, court, subject and time; the corpus never assigns a global authority score or timeless binding label to a decision."
+statement = "Judicial authority effect is represented as a contextual, evidenced and jurisdiction-extensible concept assertion over jurisdiction, court, subject and time; the corpus never assigns a global authority score or timeless binding label, and common-law seed labels are not treated as a universal ontology."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
-risk = ["legal_quality"]
+risk = ["legal_quality", "architecture"]
 
 [[guarantees]]
 id = "INV-CONTEXTUAL-TREATMENT-001"
@@ -349,3 +349,19 @@ severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-SEMANTICS-001"
+statement = "Canonical judicial opinion types and scoped judicial stances use extensible concept identities; compatibility text codes are deterministic mirrors and jurisdiction-specific concepts do not require schema migrations or replacement of source-native wording."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-DISPOSITION-TARGET-CARDINALITY-001"
+statement = "A dispositive clause may target multiple typed legal identities including claims, procedural party roles, proceedings, judicial decisions and propositions; each target is explicit, procedural-context membership is enforced where applicable, and singular legacy target fields cannot create stale canonical double truth."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
