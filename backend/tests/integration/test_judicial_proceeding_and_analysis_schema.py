@@ -43,15 +43,26 @@ def _court(cursor: psycopg.Cursor[Any], suffix: str) -> Any:
     return _one(cursor)
 
 
-def _case(cursor: psycopg.Cursor[Any], court_id: Any, *, scope_id: Any | None = None) -> Any:
+def _decision(
+    cursor: psycopg.Cursor[Any],
+    court_id: Any,
+    *,
+    scope_id: Any | None = None,
+) -> Any:
     if scope_id is None:
         cursor.execute(
-            "INSERT INTO corpus.cases (court_id) VALUES (%s) RETURNING id",
+            """
+            INSERT INTO corpus.judicial_decisions (court_id)
+            VALUES (%s) RETURNING id
+            """,
             (court_id,),
         )
     else:
         cursor.execute(
-            "INSERT INTO corpus.cases (court_id, scope_id) VALUES (%s, %s) RETURNING id",
+            """
+            INSERT INTO corpus.judicial_decisions (court_id, scope_id)
+            VALUES (%s, %s) RETURNING id
+            """,
             (court_id, scope_id),
         )
     return _one(cursor)
@@ -62,9 +73,8 @@ def test_proceeding_can_group_multiple_decisions_and_preserve_raw_party_role(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court_id = _court(cursor, uuid4().hex[:8])
-        first_case = _case(cursor, court_id)
-        second_case = _case(cursor, court_id)
-
+        first_decision = _decision(cursor, court_id)
+        second_decision = _decision(cursor, court_id)
         cursor.execute(
             """
             INSERT INTO corpus.legal_proceedings (
@@ -75,8 +85,10 @@ def test_proceeding_can_group_multiple_decisions_and_preserve_raw_party_role(
             (court_id,),
         )
         proceeding_id = _one(cursor)
-
-        for ordinal, case_id in enumerate((first_case, second_case), start=1):
+        for ordinal, decision_id in enumerate(
+            (first_decision, second_decision),
+            start=1,
+        ):
             cursor.execute(
                 """
                 INSERT INTO corpus.proceeding_decisions (
@@ -86,19 +98,20 @@ def test_proceeding_can_group_multiple_decisions_and_preserve_raw_party_role(
                 """,
                 (
                     proceeding_id,
-                    case_id,
+                    decision_id,
                     "first_instance" if ordinal == 1 else "appeal",
                     ordinal,
                     ordinal == 2,
                 ),
             )
-
         cursor.execute(
             """
             INSERT INTO corpus.participants (
                 participant_kind, display_name, normalized_name
-            ) VALUES ('organization', 'Compañía Ejemplo, S.R.L.', 'compania ejemplo srl')
-            RETURNING id
+            ) VALUES (
+                'organization', 'Compañía Ejemplo, S.R.L.',
+                'compania ejemplo srl'
+            ) RETURNING id
             """
         )
         participant_id = _one(cursor)
@@ -116,9 +129,11 @@ def test_proceeding_can_group_multiple_decisions_and_preserve_raw_party_role(
             """,
             (proceeding_id, participant_id),
         )
-
         cursor.execute(
-            "SELECT count(*) FROM corpus.proceeding_decisions WHERE proceeding_id = %s",
+            """
+            SELECT count(*) FROM corpus.proceeding_decisions
+            WHERE proceeding_id = %s
+            """,
             (proceeding_id,),
         )
         assert cursor.fetchone() == (2,)
@@ -142,18 +157,22 @@ def test_procedural_observation_does_not_become_canonical_relation(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court_id = _court(cursor, uuid4().hex[:8])
-        source_case = _case(cursor, court_id)
-        target_case = _case(cursor, court_id)
-        key = hashlib.sha256(f"{source_case}:{target_case}:reviews".encode()).hexdigest()
-
+        source_decision = _decision(cursor, court_id)
+        target_decision = _decision(cursor, court_id)
+        key = hashlib.sha256(
+            f"{source_decision}:{target_decision}:reviews".encode()
+        ).hexdigest()
         cursor.execute(
             """
             INSERT INTO corpus.procedural_decision_relation_observations (
                 observation_key, source_case_id, relation_type, target_case_id,
                 assertion_method, method_name, confidence
-            ) VALUES (%s, %s, 'reviews', %s, 'llm_extracted', 'agent-v1', 0.81)
+            ) VALUES (
+                %s, %s, 'reviews', %s,
+                'llm_extracted', 'agent-v1', 0.81
+            )
             """,
-            (key, source_case, target_case),
+            (key, source_decision, target_decision),
         )
         cursor.execute(
             """
@@ -161,7 +180,7 @@ def test_procedural_observation_does_not_become_canonical_relation(
             FROM corpus.procedural_decision_relations
             WHERE source_case_id = %s AND target_case_id = %s
             """,
-            (source_case, target_case),
+            (source_decision, target_decision),
         )
         assert cursor.fetchone() == (0,)
 
@@ -171,19 +190,36 @@ def test_disposition_preserves_exact_source_text_and_normalization_is_separate(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court_id = _court(cursor, uuid4().hex[:8])
-        case_id = _case(cursor, court_id)
+        decision_id = _decision(cursor, court_id)
         raw_text = "PRIMERO: CASA PARCIALMENTE la sentencia impugnada."
         cursor.execute(
             """
-            INSERT INTO corpus.case_dispositions (
-                case_id, ordinal, disposition_type, raw_text, normalized_text,
-                extraction_method, verification_status
-            ) VALUES (%s, 1, 'partially_cassated', %s, %s, 'llm_agent', 'candidate')
-            RETURNING raw_text, normalized_text
-            """,
-            (case_id, raw_text, "casa parcialmente la sentencia"),
+            SELECT id FROM corpus.disposition_concepts
+            WHERE code = 'partially_cassated'
+            """
         )
-        assert cursor.fetchone() == (raw_text, "casa parcialmente la sentencia")
+        concept_id = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.judicial_decision_dispositions (
+                case_id, ordinal, disposition_concept_id,
+                raw_text, normalized_text,
+                extraction_method, verification_status
+            ) VALUES (
+                %s, 1, %s, %s, %s, 'llm_agent', 'candidate'
+            ) RETURNING raw_text, normalized_text
+            """,
+            (
+                decision_id,
+                concept_id,
+                raw_text,
+                "casa parcialmente la sentencia",
+            ),
+        )
+        assert cursor.fetchone() == (
+            raw_text,
+            "casa parcialmente la sentencia",
+        )
 
 
 def test_normalized_matter_does_not_overwrite_source_matter(
@@ -202,13 +238,17 @@ def test_normalized_matter_does_not_overwrite_source_matter(
         concept_id = _one(cursor)
         cursor.execute(
             """
-            INSERT INTO corpus.cases (court_id, matter, legal_matter_concept_id)
-            VALUES (%s, 'Materia Laboral / Recurso de Casación', %s)
+            INSERT INTO corpus.judicial_decisions (
+                court_id, matter, legal_matter_concept_id
+            ) VALUES (%s, 'Materia Laboral / Recurso de Casación', %s)
             RETURNING matter, legal_matter_concept_id
             """,
             (court_id, concept_id),
         )
-        assert cursor.fetchone() == ("Materia Laboral / Recurso de Casación", concept_id)
+        assert cursor.fetchone() == (
+            "Materia Laboral / Recurso de Casación",
+            concept_id,
+        )
 
 
 def test_analysis_observation_accepts_unknown_json_without_promoting_it(
@@ -216,15 +256,23 @@ def test_analysis_observation_accepts_unknown_json_without_promoting_it(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court_id = _court(cursor, uuid4().hex[:8])
-        case_id = _case(cursor, court_id)
+        decision_id = _decision(cursor, court_id)
         payload = {
-            "unexpected_pattern": "La sala exige una secuencia probatoria no modelada todavía",
+            "unexpected_pattern": (
+                "La sala exige una secuencia probatoria no modelada todavía"
+            ),
             "candidate_dimension": "burden_shift_sequence",
             "steps": ["alegación", "prueba inicial", "desplazamiento de carga"],
         }
-        evidence = [{"case_page_id": str(uuid4()), "excerpt": "fragmento observado"}]
-        key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-
+        evidence = [
+            {
+                "case_page_id": str(uuid4()),
+                "excerpt": "fragmento observado",
+            }
+        ]
+        key = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()
         cursor.execute(
             """
             INSERT INTO corpus.analysis_observations (
@@ -234,13 +282,15 @@ def test_analysis_observation_accepts_unknown_json_without_promoting_it(
             ) VALUES (
                 %s, 'case', %s, 'unmodeled_legal_pattern',
                 %s, %s, 'llm_agent', 'deep-case-analysis',
-                'test-model', 'run-123', 'candidate:burden_shift_sequence', 0.73
+                'test-model', 'run-123',
+                'candidate:burden_shift_sequence', 0.73
             )
             RETURNING status, payload, promoted_to_schema
             """,
-            (key, case_id, Jsonb(payload), Jsonb(evidence)),
+            (key, decision_id, Jsonb(payload), Jsonb(evidence)),
         )
-        status, stored_payload, promoted_to = cursor.fetchone() or (None, None, None)
+        result = cursor.fetchone() or (None, None, None)
+        status, stored_payload, promoted_to = result
         assert status == "observed"
         assert stored_payload == payload
         assert promoted_to is None
@@ -257,7 +307,9 @@ def test_analysis_observation_rejects_non_object_payload(
                 INSERT INTO corpus.analysis_observations (
                     observation_key, subject_type, observation_type,
                     payload, producer_name
-                ) VALUES (%s, 'corpus', 'bad_payload', %s, 'contract-test')
+                ) VALUES (
+                    %s, 'corpus', 'bad_payload', %s, 'contract-test'
+                )
                 """,
                 (key, Jsonb(["not", "an", "object"])),
             )
@@ -278,22 +330,29 @@ def test_cross_scope_case_to_proceeding_link_is_rejected(
             (organization_id,),
         )
         private_scope = _one(cursor)
-        private_case = _case(cursor, court_id, scope_id=private_scope)
-
+        private_decision = _decision(
+            cursor,
+            court_id,
+            scope_id=private_scope,
+        )
         cursor.execute(
-            "INSERT INTO corpus.legal_proceedings (canonical_title) VALUES ('Público') RETURNING id"
+            """
+            INSERT INTO corpus.legal_proceedings (canonical_title)
+            VALUES ('Público') RETURNING id
+            """
         )
         public_proceeding = _one(cursor)
-
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             cursor.execute(
                 """
                 INSERT INTO corpus.proceeding_decisions (
                     scope_id, proceeding_id, case_id,
                     verification_status, verification_method
-                ) VALUES (%s, %s, %s, 'candidate', 'contract_test')
+                ) VALUES (
+                    %s, %s, %s, 'candidate', 'contract_test'
+                )
                 """,
-                (private_scope, public_proceeding, private_case),
+                (private_scope, public_proceeding, private_decision),
             )
 
 
@@ -302,7 +361,10 @@ def test_proceeding_identifier_is_idempotent_when_source_registry_is_null(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         cursor.execute(
-            "INSERT INTO corpus.legal_proceedings (canonical_title) VALUES ('Expediente') RETURNING id"
+            """
+            INSERT INTO corpus.legal_proceedings (canonical_title)
+            VALUES ('Expediente') RETURNING id
+            """
         )
         proceeding_id = _one(cursor)
         statement = """
