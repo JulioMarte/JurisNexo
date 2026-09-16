@@ -1,0 +1,67 @@
+name: Dev database state audit v2
+
+on:
+  push:
+    branches:
+      - audit/dev-db-state
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST || vars.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || vars.POSTGRES_PORT }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB || vars.POSTGRES_DB }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER || vars.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || vars.POSTGRES_PASSWORD }}
+      POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE || vars.POSTGRES_SSLMODE }}
+
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install 'psycopg[binary]>=3.2,<4'
+      - name: Read-only database inventory
+        run: |
+          python - <<'PY'
+          import json, os, psycopg
+          conninfo = (
+              f"host={os.environ['POSTGRES_HOST']} port={os.environ['POSTGRES_PORT']} "
+              f"dbname={os.environ['POSTGRES_DB']} user={os.environ['POSTGRES_USER']} "
+              f"password={os.environ['POSTGRES_PASSWORD']} sslmode={os.environ['POSTGRES_SSLMODE']} connect_timeout=10"
+          )
+          with psycopg.connect(conninfo, autocommit=True) as conn, conn.cursor() as cur:
+              cur.execute("select current_database(), current_user, current_setting('server_version')")
+              db_name, db_user, pg_version = cur.fetchone()
+              cur.execute("select to_regclass('public.alembic_version')")
+              has_alembic = cur.fetchone()[0] is not None
+              versions=[]
+              if has_alembic:
+                  cur.execute("select version_num from public.alembic_version order by version_num")
+                  versions=[r[0] for r in cur.fetchall()]
+              cur.execute("select exists(select 1 from information_schema.schemata where schema_name='corpus')")
+              has_corpus=cur.fetchone()[0]
+              cur.execute("select table_name from information_schema.tables where table_schema='corpus' order by table_name")
+              tables=[r[0] for r in cur.fetchall()]
+              counts={}
+              for t in ['courts','source_registries','source_collections','source_documents','source_artifacts','cases','legal_proceedings','analysis_observations']:
+                  if t in tables:
+                      cur.execute(f'select count(*) from corpus.{t}')
+                      counts[t]=cur.fetchone()[0]
+                  else:
+                      counts[t]=None
+          print(json.dumps({
+              'database':db_name,
+              'connected_user':db_user,
+              'postgres_version':pg_version,
+              'has_alembic_version_table':has_alembic,
+              'alembic_versions':versions,
+              'has_corpus_schema':has_corpus,
+              'corpus_tables':tables,
+              'row_counts':counts,
+          }, indent=2, ensure_ascii=False))
+          PY
