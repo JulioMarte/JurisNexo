@@ -31,6 +31,22 @@ RelationType = Literal[
     "exempts_from",
 ]
 
+GLOBAL_RELATION_TYPES = frozenset(
+    {
+        "cites",
+        "references",
+        "authorized_by",
+        "implements",
+        "amends",
+        "repeals",
+        "partially_repeals",
+        "supersedes",
+        "requires",
+        "satisfies",
+        "exempts_from",
+    }
+)
+
 AssertionMethod = Literal[
     "explicit_primary_text",
     "official_metadata",
@@ -271,7 +287,12 @@ class PostgresLegalGraphRepository:
             return row[0]
 
     def promote_relation(self, observation_id: UUID, *, verification_method: str) -> UUID:
-        """Promote a resolved observation to a canonical relation and preserve evidence."""
+        """Promote a global structural/citation relation and preserve its evidence.
+
+        Context-dependent judicial treatments may be observed here during extraction,
+        but they cannot become canonical document relations. They require an issue or
+        proposition context and must be promoted through ``legal_treatment_assertions``.
+        """
 
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
@@ -307,6 +328,11 @@ class PostgresLegalGraphRepository:
                 raise ValueError("cannot promote an unresolved target citation")
             if observation_status in {"rejected", "superseded"}:
                 raise ValueError(f"cannot promote observation in state {observation_status}")
+            if relation_type not in GLOBAL_RELATION_TYPES:
+                raise ValueError(
+                    f"relation type {relation_type!r} requires issue/proposition context; "
+                    "promote it through legal_treatment_assertions instead"
+                )
 
             cursor.execute(
                 """
