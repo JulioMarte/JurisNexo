@@ -43,6 +43,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
 # Long SQL literals are more readable and auditable when they preserve their SQL shape.
 "migrations/versions/*.py" = ["E501"]
 "tests/integration/test_initial_schema_contract.py" = ["E501"]
+"tests/integration/test_judicial_proceeding_and_analysis_schema.py" = ["E501", "SIM117"]
 
 [tool.pyright]
 include = ["src", "tests"]
