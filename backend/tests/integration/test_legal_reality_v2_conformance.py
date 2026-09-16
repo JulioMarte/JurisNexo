@@ -12,7 +12,6 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.postgres,
     pytest.mark.invariant,
-    pytest.mark.adversarial,
 ]
 
 
