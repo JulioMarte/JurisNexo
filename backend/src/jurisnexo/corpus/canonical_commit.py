@@ -52,7 +52,10 @@ class CanonicalJudicialDecisionCommitRequest(BaseModel):
         expected_view_pages = [page.view_page for page in self.decision.pages]
         bound_view_pages = [binding.view_page for binding in self.page_bindings]
         if bound_view_pages != expected_view_pages:
-            raise ValueError("page_bindings must cover the source-faithful decision exactly and in order")
+            raise ValueError(
+                "page_bindings must cover the source-faithful decision exactly "
+                "and in order"
+            )
         bound_page_ids = [binding.artifact_page_id for binding in self.page_bindings]
         if len(set(bound_page_ids)) != len(bound_page_ids):
             raise ValueError("page_bindings must not reuse an artifact page")
@@ -73,8 +76,17 @@ class CanonicalJudicialDecisionCommitResult(BaseModel):
     decision_page_ids: tuple[UUID, ...]
     passage_ids: tuple[UUID, ...]
 
+    @property
+    def case_id(self) -> UUID:
+        """Deprecated read alias for callers migrating to judicial_decision_id."""
+        return self.judicial_decision_id
 
-# Compatibility aliases for callers migrating from the old misleading domain name.
+    @property
+    def case_page_ids(self) -> tuple[UUID, ...]:
+        """Deprecated read alias for callers migrating to decision_page_ids."""
+        return self.decision_page_ids
+
+
 CanonicalCaseCommitRequest = CanonicalJudicialDecisionCommitRequest
 CanonicalCaseCommitResult = CanonicalJudicialDecisionCommitResult
 
@@ -87,7 +99,11 @@ def _resolve_scope_id(cursor: psycopg.Cursor[Any], scope: CorpusScope) -> UUID:
         )
     else:
         cursor.execute(
-            "select id from corpus.scopes where visibility = 'private' and organization_id = %s",
+            """
+            select id
+            from corpus.scopes
+            where visibility = 'private' and organization_id = %s
+            """,
             (scope.organization_id,),
         )
     row = cursor.fetchone()
@@ -123,18 +139,31 @@ def _validate_artifact_pages(
     page_numbers: list[int] = []
     for source_page, binding in zip(decision.pages, bindings, strict=True):
         cursor.execute(
-            "select page_number, extracted_text from corpus.artifact_pages where id = %s and artifact_id = %s",
+            """
+            select page_number, extracted_text
+            from corpus.artifact_pages
+            where id = %s and artifact_id = %s
+            """,
             (binding.artifact_page_id, artifact_id),
         )
         row = cursor.fetchone()
         if row is None:
-            raise CanonicalCommitError("approved artifact page does not belong to the source artifact")
+            raise CanonicalCommitError(
+                "approved artifact page does not belong to the source artifact"
+            )
         page_number, extracted_text = row
         if extracted_text != source_page.text:
-            raise CanonicalCommitError("source-faithful decision text does not match durable artifact page text")
+            raise CanonicalCommitError(
+                "source-faithful decision text does not match durable artifact page text"
+            )
         page_numbers.append(page_number)
-    if any(right <= left for left, right in zip(page_numbers, page_numbers[1:], strict=False)):
-        raise CanonicalCommitError("artifact pages must follow strictly increasing physical source order")
+    if any(
+        right <= left
+        for left, right in zip(page_numbers, page_numbers[1:], strict=False)
+    ):
+        raise CanonicalCommitError(
+            "artifact pages must follow strictly increasing physical source order"
+        )
     return page_numbers
 
 
@@ -142,7 +171,11 @@ def _insert_judicial_decision(
     cursor: psycopg.Cursor[Any], *, court_id: UUID, scope_id: UUID
 ) -> UUID:
     cursor.execute(
-        "insert into corpus.judicial_decisions (court_id, scope_id) values (%s, %s) returning id",
+        """
+        insert into corpus.judicial_decisions (court_id, scope_id)
+        values (%s, %s)
+        returning id
+        """,
         (court_id, scope_id),
     )
     row = cursor.fetchone()
@@ -167,7 +200,13 @@ def _insert_occurrence(
         ) values (%s, %s, %s, %s, 'verified', 'audited-canonical-commit', %s)
         returning id
         """,
-        (judicial_decision_id, artifact_id, page_numbers[0], page_numbers[-1], scope_id),
+        (
+            judicial_decision_id,
+            artifact_id,
+            page_numbers[0],
+            page_numbers[-1],
+            scope_id,
+        ),
     )
     row = cursor.fetchone()
     if row is None:
@@ -186,7 +225,8 @@ def _insert_pages_and_passages(
 ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
     decision_page_ids: list[UUID] = []
     passage_ids: list[UUID] = []
-    for ordinal, (page, binding) in enumerate(zip(decision.pages, bindings, strict=True), start=1):
+    page_pairs = zip(decision.pages, bindings, strict=True)
+    for ordinal, (page, binding) in enumerate(page_pairs, start=1):
         printed_page_label = None if page.printed_page is None else str(page.printed_page)
         cursor.execute(
             """
@@ -233,7 +273,8 @@ def commit_canonical_judicial_decision(
     authorize_canonical_commit(principal=principal, request=request.authorization)
     if request.structure_audit_state not in _ALLOW_STRUCTURE_STATES:
         raise CanonicalCommitError(
-            "canonical commit requires APPROVED or APPROVED_WITH_AMENDMENTS structure audit"
+            "canonical commit requires APPROVED or APPROVED_WITH_AMENDMENTS "
+            "structure audit"
         )
     with connection.transaction(), connection.cursor() as cursor:
         scope_id = _resolve_scope_id(cursor, request.authorization.scope)
