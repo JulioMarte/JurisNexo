@@ -55,6 +55,14 @@ required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["provenance", "legal_quality"]
 
 [[guarantees]]
+id = "INV-LEGAL-TEMPORAL-IDENTITY-001"
+statement = "Normative legal instruments, their temporal versions, stable provisions, provision versions, source documents and amending instruments remain distinct identities; historical text changes never overwrite source history or collapse an amending law into the law it changes."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
 id = "INV-INGESTION-GATES-001"
 statement = "Canonical agent-assisted ingestion preserves the mandatory Structure -> Structure Audit -> Extraction -> Extraction Audit -> commit ordering, and dynamic handoffs cannot bypass those business gates."
 severity = "critical"
