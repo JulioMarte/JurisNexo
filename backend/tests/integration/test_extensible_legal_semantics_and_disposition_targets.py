@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg import sql
 
 pytestmark = [
     pytest.mark.integration,
@@ -173,8 +174,11 @@ def test_custom_opinion_and_stance_concepts_are_first_class(
             """,
             (decision, opinion_concept),
         )
-        opinion_code, returned_concept = cursor.fetchone() or (None, None)
+        opinion_row = cursor.fetchone()
+        assert opinion_row is not None
+        opinion_code, returned_concept = opinion_row
         assert returned_concept == opinion_concept
+        assert isinstance(opinion_code, str)
         assert opinion_code.startswith("jurisdictional_opinion_")
 
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
@@ -230,8 +234,11 @@ def test_custom_opinion_and_stance_concepts_are_first_class(
             """,
             (vote, decision, officer, stance_concept),
         )
-        stance_code, returned_stance = cursor.fetchone() or (None, None)
+        stance_row = cursor.fetchone()
+        assert stance_row is not None
+        stance_code, returned_stance = stance_row
         assert returned_stance == stance_concept
+        assert isinstance(stance_code, str)
         assert stance_code.startswith("formula_reservation_")
 
 
@@ -317,13 +324,16 @@ def test_disposition_targets_cover_all_first_class_target_identities(
             ("proposition", "proposition_id", proposition, "adopted_proposition"),
         ]
         for target_type, column, target_id, target_role in rows:
-            cursor.execute(
-                f"""
+            query = sql.SQL(
+                """
                 INSERT INTO corpus.judicial_disposition_targets(
-                    disposition_id, target_type, {column}, target_role,
+                    disposition_id, target_type, {}, target_role,
                     verification_status, verification_method
                 ) VALUES (%s,%s,%s,%s,'verified','human_legal_review')
-                """,
+                """
+            ).format(sql.Identifier(column))
+            cursor.execute(
+                query,
                 (disposition, target_type, target_id, target_role),
             )
 
