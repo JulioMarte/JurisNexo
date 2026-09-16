@@ -6,6 +6,11 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from jurisnexo.bootstrap.settings import (
+    build_postgres_sqlalchemy_url,
+    get_postgres_settings,
+)
+
 config = context.config
 
 if config.config_file_name is not None:
@@ -13,15 +18,22 @@ if config.config_file_name is not None:
 
 
 def get_database_url() -> str:
-    url = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
-    if not url:
-        raise RuntimeError("MIGRATION_DATABASE_URL or DATABASE_URL must be set")
+    """Resolve migration connectivity without requiring DATABASE_URL.
 
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url.removeprefix("postgres://")
-    if url.startswith("postgresql://"):
-        url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
-    return url
+    Explicit migration/application URLs remain supported as compatibility
+    overrides, but normal JurisNexo operation reconstructs the URL from the
+    canonical POSTGRES_* settings used by the API and bootstrap.
+    """
+
+    url = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if url:
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url.removeprefix("postgres://")
+        if url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
+        return url
+
+    return build_postgres_sqlalchemy_url(get_postgres_settings())
 
 
 def run_migrations_offline() -> None:

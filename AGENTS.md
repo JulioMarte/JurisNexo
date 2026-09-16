@@ -63,7 +63,8 @@ Recommended order:
 12. `docs/10-job-state-machines-and-reproducibility.md` when changing long-running jobs or durable execution;
 13. `docs/11-benchmark-annotation-and-evaluation-protocol.md` and `docs/17-agent-methodology-and-benchmark-map.md` when changing benchmarks, retrieval, agent behavior, or research methods;
 14. `docs/05-security-privacy-and-trust.md` and `docs/09-tenancy-authentication-and-access-control.md` for trust/tenant-sensitive changes;
-15. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work.
+15. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work;
+16. `docs/27-database-bootstrap-and-multi-court-registry.md` for database bootstrap, PostgreSQL configuration, and ephemeral-CI database policy.
 
 Do not treat historical benchmark behavior or the current implementation as authoritative when it conflicts with accepted current docs. Conversely, do not assume documented architecture has already been implemented: verify the code.
 
@@ -243,6 +244,39 @@ canonical CI lane
 
 Do not compute the expected result using the same production logic being tested. Do not substitute mocks when the claimed guarantee depends on PostgreSQL constraints, authorization, provider behavior, or real document semantics.
 
+## Database and CI isolation discipline — mandatory
+
+Canonical repository CI uses a **fresh ephemeral PostgreSQL database** created for the workflow run. It must prove clean reproduction through migrations + bootstrap and must destroy the test database/volume afterward.
+
+Normal PR/main CI must not depend on, read from, or mutate the shared cloud development database. Development/staging/production database checks belong in separate explicit deployment, smoke, or read-only audit workflows and are not substitutes for ephemeral CI.
+
+When reporting database checks, distinguish these claims precisely:
+
+```text
+ephemeral CI green
+    = repository migrations/bootstrap/tests reproduce on a clean database
+
+environment smoke/deploy green
+    = that specific external database is reachable/migrated/healthy
+```
+
+Do not infer one from the other.
+
+The canonical PostgreSQL configuration inputs are:
+
+```text
+POSTGRES_HOST
+POSTGRES_PORT
+POSTGRES_DB
+POSTGRES_USER
+POSTGRES_PASSWORD
+POSTGRES_SSLMODE
+```
+
+`DATABASE_URL` is not required. Migration/application URLs may be reconstructed from those component settings. `MIGRATION_DATABASE_URL` or `DATABASE_URL` may be used only as explicit compatibility/operational overrides when appropriate; do not introduce a second mandatory copy of the same credentials.
+
+See `docs/27-database-bootstrap-and-multi-court-registry.md`.
+
 ## File and abstraction discipline
 
 Prefer domain/capability names over generic dumping grounds.
@@ -266,7 +300,7 @@ Current backend quality/database/runtime checks are defined in `.github/workflow
 - Ruff for backend and benchmark runners;
 - blocking `pytest tests/architecture` architecture fitness functions;
 - Pyright strict checking;
-- backend tests against PostgreSQL through Docker Compose;
+- backend tests against an ephemeral PostgreSQL instance through Docker Compose;
 - historical benchmark scorer smoke tests;
 - targeted boundary discrepancy scorer smoke tests;
 - API/Docker runtime health smoke test;
