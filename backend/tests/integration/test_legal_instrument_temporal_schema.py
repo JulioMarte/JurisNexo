@@ -239,18 +239,18 @@ def test_derived_version_must_belong_to_same_instrument(
         instrument_b = _instrument(cursor, "Ley derivada B")
         version_b = _version(cursor, instrument_b, kind="original", valid_from="2020-01-01")
 
-        with pytest.raises(psycopg.errors.ForeignKeyViolation):
-            cursor.execute(
-                """
-                INSERT INTO corpus.legal_instrument_versions (
-                    instrument_id, version_kind, valid_from, version_status,
-                    derivation_method, derived_from_version_id
-                ) VALUES (%s, 'amended', '2024-01-01', 'verified',
-                          'official_primary_text', %s)
-                """,
-                (instrument_a, version_b),
-            )
-        cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        with connection.transaction():
+            with pytest.raises(psycopg.errors.ForeignKeyViolation):
+                cursor.execute(
+                    """
+                    INSERT INTO corpus.legal_instrument_versions (
+                        instrument_id, version_kind, valid_from, version_status,
+                        derivation_method, derived_from_version_id
+                    ) VALUES (%s, 'amended', '2024-01-01', 'verified',
+                              'official_primary_text', %s)
+                    """,
+                    (instrument_a, version_b),
+                )
 
 
 def test_amending_law_remains_distinct_instrument_with_explicit_effect(
@@ -293,19 +293,20 @@ def test_verified_lifecycle_date_cannot_be_invented(
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         instrument_id = _instrument(cursor, "Ley con fecha desconocida")
 
-        with pytest.raises(psycopg.errors.CheckViolation):
-            cursor.execute(
-                """
-                INSERT INTO corpus.legal_instrument_events (
-                    instrument_id, event_type, occurred_on, date_status,
-                    verification_status, verification_method
-                ) VALUES (
-                    %s, 'published', NULL, 'verified_official_metadata',
-                    'verified', 'official_metadata'
+        with connection.transaction():
+            with pytest.raises(psycopg.errors.CheckViolation):
+                cursor.execute(
+                    """
+                    INSERT INTO corpus.legal_instrument_events (
+                        instrument_id, event_type, occurred_on, date_status,
+                        verification_status, verification_method
+                    ) VALUES (
+                        %s, 'published', NULL, 'verified_official_metadata',
+                        'verified', 'official_metadata'
+                    )
+                    """,
+                    (instrument_id,),
                 )
-                """,
-                (instrument_id,),
-            )
 
         cursor.execute(
             """
