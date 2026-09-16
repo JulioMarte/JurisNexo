@@ -1,6 +1,6 @@
 """Harden legal-instrument temporal identity constraints.
 
-Revision ID: 0023_harden_legal_instrument_temporal
+Revision ID: 0023_harden_legal_temporal
 Revises: 0022_legal_instrument_temporal
 Create Date: 2026-09-16
 
@@ -10,7 +10,7 @@ identity boundary, so invalid cross-instrument ancestry must fail immediately.
 
 from alembic import op
 
-revision = "0023_harden_legal_instrument_temporal"
+revision = "0023_harden_legal_temporal"
 down_revision = "0022_legal_instrument_temporal"
 branch_labels = None
 depends_on = None
