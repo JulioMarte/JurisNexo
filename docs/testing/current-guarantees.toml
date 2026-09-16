@@ -16,7 +16,7 @@ risk = ["provenance", "legal_quality"]
 
 [[guarantees]]
 id = "INV-EVIDENCE-TRACE-001"
-statement = "Material extracted or researched legal claims remain traceable to typed evidence that identifies the source artifact and observed page/passage; source-reference evidence and observed-content evidence remain distinguishable."
+statement = "Material extracted or researched legal claims remain traceable to typed evidence that identifies the source artifact and observed page/passage; source-reference evidence and observed-content evidence remain distinguishishable."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "contract", "adversarial"]
@@ -285,3 +285,51 @@ severity = "critical"
 classification = "CONTROLLED"
 required_evidence = ["fitness"]
 risk = ["architecture", "operations"]
+
+[[guarantees]]
+id = "INV-PROPOSITION-SUBJECT-CARDINALITY-001"
+statement = "One legal proposition may bind to multiple legal subjects of the same type; subject cardinality must not collapse multi-provision, multi-decision, multi-document or multi-proceeding legal claims into a false singularity."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-JUDICIAL-PARTIAL-STANCE-001"
+statement = "A judicial officer may hold multiple scoped positions within one decision, including concurrence on one issue and dissent on another; every stance must belong to that same officer and decision and a coarse vote summary is not canonical truth."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-NORM-CLAIM-CONTEXT-001"
+statement = "Legal norm identity is contextual rather than proposition-text-only: jurisdiction, norm kind, legal matter and validity interval may distinguish claims sharing the same proposition, while bitemporal knowledge overlap is rejected per norm claim identity."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-CLAIM-DISPOSITION-MEMBERSHIP-001"
+statement = "A judicial disposition cannot canonically resolve a claim or appeal ground from a proceeding unrelated to that judicial decision; claim-to-disposition effects require explicit proceeding membership."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-COMMON-LEGAL-ENTITY-001"
+statement = "A real person or institution may have multiple legal-role specializations that share one scope-consistent legal entity identity; normalized-name similarity alone never proves entity identity."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-DECISION-STATE-EVENT-001"
+statement = "Point-in-time judicial lifecycle events and durative legal states are distinct persisted facts; durative states retain legal-validity time and non-overlapping system-knowledge history."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance", "architecture"]

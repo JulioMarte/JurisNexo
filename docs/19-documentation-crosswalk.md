@@ -10,7 +10,7 @@ The following existing documents remain authoritative for their domain contracts
 
 - `00-product-vision-and-mvp.md` — product/MVP goals;
 - `01-system-architecture.md` — platform separation, Corpus API/search, PostgreSQL, workers, ingestion vs research;
-- `02-legal-corpus-and-data-model.md` — corpus/data semantics;
+- `02-legal-corpus-and-data-model.md` — corpus/data semantics, refined for pre-ingestion legal identity/cardinality by `28-legal-reality-v2.md`;
 - `03-research-agent-and-report-contract.md` — research lifecycle, specialist roles, auditor, evidence/report requirements;
 - `04-validation-metrics-and-market-test.md` — product/market validation;
 - `05-security-privacy-and-trust.md` — security/privacy/trust;
@@ -32,7 +32,10 @@ The following documents define the current runtime/implementation direction and 
 - `18-migration-plan-custom-harness-to-agents-sdk.md` — migration and retirement criteria;
 - `20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, structured-output, multimodal, handoff, guardrail, tracing, and upgrade constraints;
 - `21-implementation-governance-and-agent-execution.md` — canonical implementation sequencing, workstream separation, parity requirements, and definition-of-done rules for implementation agents;
-- `22-architecture-fitness-functions.md` — executable architecture-governance methodology and rules for creating/evolving structural fitness functions.
+- `22-architecture-fitness-functions.md` — executable architecture-governance methodology and rules for creating/evolving structural fitness functions;
+- `28-legal-reality-v2.md` — canonical pre-ingestion refinement for legal identities and cardinalities, including N:N proposition subjects/classification, contextual norm claims, judicial stances, shared legal entities, procedural claims, and decision state/event separation.
+
+For persisted legal/corpus semantics, `28-legal-reality-v2.md` refines `02-legal-corpus-and-data-model.md` where the older document uses singular convenience fields or earlier abstractions. Provenance, source preservation, and primary-vs-interpretive epistemic boundaries from `02` remain mandatory.
 
 `docs/testing/current-guarantees.toml` is the normative semantic guarantee inventory used by architecture/testing governance. It names durable guarantees and required evidence classes; it intentionally does not freeze exact test filenames.
 
@@ -51,7 +54,9 @@ Prompts are execution aids, not architecture authority. If a prompt conflicts wi
 
 If an older document describes a custom implementation detail for generic agent runtime behavior and that detail conflicts with documents 13–22, the newer runtime/implementation documents take precedence.
 
-This precedence applies only to generic agent-runtime/implementation mechanics. It does **not** relax older requirements concerning:
+For persisted legal-reality identity/cardinality, `28-legal-reality-v2.md` takes precedence over older singular convenience descriptions while preserving the older documents' provenance and trust requirements.
+
+This precedence applies only to the contracts explicitly refined by newer documents. It does **not** relax older requirements concerning:
 
 - provenance;
 - source preservation;
@@ -101,4 +106,5 @@ Research method: iterative root agent + bounded specialists + claim verification
 Evaluation: layered frozen benchmarks + real-user market validation
 Implementation mode: small attributable workstreams with exact-head CI and semantic benchmark evidence
 Architecture governance: normative guarantee inventory + blocking fitness functions + stronger evidence by risk class
+Legal reality: explicit identity/cardinality relations that preserve multi-subject, multi-proceeding, multi-stance and bitemporal contextual truth
 ```
