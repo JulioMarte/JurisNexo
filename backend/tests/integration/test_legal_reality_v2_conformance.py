@@ -66,6 +66,14 @@ def _proceeding(cursor: psycopg.Cursor[Any], title: str) -> Any:
     return _one(cursor)
 
 
+def _controversy(cursor: psycopg.Cursor[Any], title: str) -> Any:
+    cursor.execute(
+        "INSERT INTO corpus.legal_controversies(canonical_title) VALUES (%s) RETURNING id",
+        (title,),
+    )
+    return _one(cursor)
+
+
 def test_legacy_classification_update_replaces_only_legacy_primary_relation(
     connection: psycopg.Connection[Any],
 ) -> None:
@@ -145,6 +153,48 @@ def test_legacy_classification_update_replaces_only_legacy_primary_relation(
             (decision,),
         )
         assert cursor.fetchall() == [(procedure_ids[1],)]
+
+
+def test_legacy_controversy_update_replaces_only_compatibility_relation(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        old = _controversy(cursor, "Controversia legacy A")
+        new = _controversy(cursor, "Controversia legacy B")
+        cursor.execute(
+            """
+            INSERT INTO corpus.legal_proceedings(canonical_title, controversy_id)
+            VALUES ('Procedimiento con vínculo legacy', %s) RETURNING id
+            """,
+            (old,),
+        )
+        proceeding = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.controversy_proceedings(
+                controversy_id, proceeding_id, relation_type,
+                verification_status, verification_method
+            ) VALUES (%s,%s,'originating','verified','human_review')
+            """,
+            (old, proceeding),
+        )
+        cursor.execute(
+            "UPDATE corpus.legal_proceedings SET controversy_id=%s WHERE id=%s",
+            (new, proceeding),
+        )
+        cursor.execute(
+            """
+            SELECT controversy_id, relation_type, verification_method
+            FROM corpus.controversy_proceedings
+            WHERE proceeding_id=%s
+            ORDER BY relation_type, verification_method
+            """,
+            (proceeding,),
+        )
+        rows = cursor.fetchall()
+        assert (old, "originating", "human_review") in rows
+        assert not any(row[0] == old and row[1] == "related" for row in rows)
+        assert any(row[0] == new and row[1] == "related" for row in rows)
 
 
 def test_proposition_scoped_stance_must_target_same_decision(
