@@ -1,6 +1,6 @@
 """Generalize judicial semantics and disposition targets.
 
-Revision ID: 0035_extensible_judicial_semantics
+Revision ID: 0035_extensible_judicial
 Revises: 0034_legal_reality_conformance
 Create Date: 2026-09-16
 
@@ -12,7 +12,7 @@ claims, procedural parties, proceedings, decisions or propositions.
 
 from alembic import op
 
-revision = "0035_extensible_judicial_semantics"
+revision = "0035_extensible_judicial"
 down_revision = "0034_legal_reality_conformance"
 branch_labels = None
 depends_on = None
