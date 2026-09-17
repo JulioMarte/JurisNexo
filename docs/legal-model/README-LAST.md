@@ -1,1 +1,0 @@
-This directory is navigation and rollout guidance; canonical semantics remain in the numbered docs and executable tests.
