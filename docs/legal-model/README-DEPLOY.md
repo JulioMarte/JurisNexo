@@ -1,0 +1,1 @@
+Private deployment requirements are normative in `docs/36-postgresql-vps-operating-contract.md`; no Supabase dependency is assumed.
