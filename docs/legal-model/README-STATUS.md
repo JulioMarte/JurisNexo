@@ -1,0 +1,1 @@
+Implementation status is tracked by Git history and pull-request CI. Documentation must not claim a green state before the exact-head aggregate is green.
