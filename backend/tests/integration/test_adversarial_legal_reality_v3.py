@@ -40,6 +40,21 @@ def _court(cursor: psycopg.Cursor[Any]) -> Any:
     return _one(cursor)
 
 
+def _decision(cursor: psycopg.Cursor[Any], court: Any) -> Any:
+    cursor.execute(
+        "SELECT id FROM corpus.adjudicative_act_type_concepts WHERE code='decision'"
+    )
+    act_type = _one(cursor)
+    cursor.execute(
+        """
+        INSERT INTO corpus.judicial_decisions(court_id,act_type_concept_id)
+        VALUES (%s,%s) RETURNING id
+        """,
+        (court, act_type),
+    )
+    return _one(cursor)
+
+
 def _claim(cursor: psycopg.Cursor[Any], proceeding: Any, text: str) -> Any:
     cursor.execute("SELECT id FROM corpus.legal_claim_concepts WHERE code='appeal_ground'")
     concept = _one(cursor)
@@ -62,9 +77,13 @@ def test_proceeding_history_is_an_explicit_directed_graph(
         first_instance = _proceeding(cursor, "Primera instancia V3")
         appeal = _proceeding(cursor, "Apelacion V3")
         cassation = _proceeding(cursor, "Casacion V3")
-        cursor.execute("SELECT id FROM corpus.proceeding_relation_concepts WHERE code='appeal_of'")
+        cursor.execute(
+            "SELECT id FROM corpus.proceeding_relation_concepts WHERE code='appeal_of'"
+        )
         appeal_of = _one(cursor)
-        cursor.execute("SELECT id FROM corpus.proceeding_relation_concepts WHERE code='cassation_of'")
+        cursor.execute(
+            "SELECT id FROM corpus.proceeding_relation_concepts WHERE code='cassation_of'"
+        )
         cassation_of = _one(cursor)
 
         cursor.execute(
@@ -116,7 +135,9 @@ def test_claim_lineage_can_cross_proceedings(
         appeal = _proceeding(cursor, "Claim apelacion V3")
         original = _claim(cursor, first_instance, "Pretension original")
         appellate = _claim(cursor, appeal, "Medio que impugna la pretension")
-        cursor.execute("SELECT id FROM corpus.claim_relation_concepts WHERE code='challenges'")
+        cursor.execute(
+            "SELECT id FROM corpus.claim_relation_concepts WHERE code='challenges'"
+        )
         relation = _one(cursor)
         cursor.execute(
             """
@@ -130,45 +151,45 @@ def test_claim_lineage_can_cross_proceedings(
         assert _one(cursor) is not None
 
 
-def test_adjudicative_act_type_has_compatible_default_but_is_extensible(
+def test_adjudicative_act_type_is_required_and_extensible(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
-        cursor.execute(
-            "INSERT INTO corpus.judicial_decisions(court_id) VALUES (%s) RETURNING act_type_concept_id",
-            (court,),
-        )
-        default_concept = _one(cursor)
-        cursor.execute(
-            "SELECT code FROM corpus.adjudicative_act_type_concepts WHERE id=%s",
-            (default_concept,),
-        )
-        assert _one(cursor) == "decision"
+
+        with pytest.raises(psycopg.errors.NotNullViolation), connection.transaction():
+            cursor.execute(
+                "INSERT INTO corpus.judicial_decisions(court_id) VALUES (%s)",
+                (court,),
+            )
 
         custom_code = f"do_act_{uuid4().hex[:8]}"
         cursor.execute(
-            "INSERT INTO corpus.adjudicative_act_type_concepts(code,name) VALUES (%s,'Acto local') RETURNING id",
+            "INSERT INTO corpus.adjudicative_act_type_concepts(code,name) "
+            "VALUES (%s,'Acto local') RETURNING id",
             (custom_code,),
         )
         custom = _one(cursor)
         cursor.execute(
-            "INSERT INTO corpus.judicial_decisions(court_id,act_type_concept_id) VALUES (%s,%s) RETURNING act_type_concept_id",
+            """
+            INSERT INTO corpus.judicial_decisions(court_id,act_type_concept_id)
+            VALUES (%s,%s) RETURNING act_type_concept_id
+            """,
             (court, custom),
         )
         assert _one(cursor) == custom
 
 
-def test_judicial_events_use_extensible_concepts_and_keep_compatibility_mirror(
+def test_judicial_events_use_only_extensible_concept_identity(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
-        cursor.execute("INSERT INTO corpus.judicial_decisions(court_id) VALUES (%s) RETURNING id", (court,))
-        decision = _one(cursor)
+        decision = _decision(cursor, court)
         custom_code = f"do_event_{uuid4().hex[:8]}"
         cursor.execute(
-            "INSERT INTO corpus.judicial_event_type_concepts(code,name) VALUES (%s,'Evento local') RETURNING id",
+            "INSERT INTO corpus.judicial_event_type_concepts(code,name) "
+            "VALUES (%s,'Evento local') RETURNING id",
             (custom_code,),
         )
         concept = _one(cursor)
@@ -177,25 +198,49 @@ def test_judicial_events_use_extensible_concepts_and_keep_compatibility_mirror(
             INSERT INTO corpus.decision_legal_status_events(
                 case_id,event_type_concept_id,verification_status,verification_method
             ) VALUES (%s,%s,'verified','primary_text')
-            RETURNING status_type,event_type_concept_id
+            RETURNING event_type_concept_id
             """,
             (decision, concept),
         )
-        assert cursor.fetchone() == (custom_code, concept)
+        assert _one(cursor) == concept
 
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
-            cursor.execute(
-                """
-                INSERT INTO corpus.decision_legal_status_events(
-                    case_id,status_type,event_type_concept_id,
-                    verification_status,verification_method
-                ) VALUES (%s,'issued',%s,'verified','primary_text')
-                """,
-                (decision, concept),
-            )
+        cursor.execute(
+            """
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='corpus'
+              AND table_name='decision_legal_status_events'
+              AND column_name='status_type'
+            """
+        )
+        assert _one(cursor) == 0
 
 
-def test_disposition_clause_action_target_layers_are_distinct(
+def test_controversy_membership_role_is_an_open_legal_vocabulary(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        custom_code = f"do_family_role_{uuid4().hex[:8]}"
+        cursor.execute(
+            """
+            INSERT INTO corpus.controversy_membership_role_concepts(code,name)
+            VALUES (%s,'Rol procesal local') RETURNING id
+            """,
+            (custom_code,),
+        )
+        assert _one(cursor) is not None
+
+        cursor.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='corpus' AND table_name='controversy_proceedings'
+              AND column_name IN ('relation_type','relation_concept_id')
+            ORDER BY column_name
+            """
+        )
+        assert [row[0] for row in cursor.fetchall()] == ["relation_concept_id"]
+
+
+def test_disposition_clause_action_target_layers_are_canonical_only(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
@@ -207,8 +252,48 @@ def test_disposition_clause_action_target_layers_are_distinct(
             ORDER BY column_name
             """
         )
-        assert [row[0] for row in cursor.fetchall()] == ["action_id", "effect_concept_id"]
+        assert [row[0] for row in cursor.fetchall()] == ["action_id"]
         cursor.execute(
             "SELECT to_regclass('corpus.judicial_disposition_actions') IS NOT NULL"
         )
         assert _one(cursor) is True
+
+
+def test_legacy_legal_mirrors_and_aliases_are_absent(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        legacy_columns = {
+            ("judicial_opinions", "opinion_type"),
+            ("judicial_vote_stances", "stance_type"),
+            ("judicial_authority_assertions", "authority_type"),
+            ("decision_legal_status_events", "status_type"),
+            ("disposition_targets", "effect_concept_id"),
+            ("controversy_proceedings", "relation_type"),
+        }
+        cursor.execute(
+            """
+            SELECT table_name,column_name
+            FROM information_schema.columns
+            WHERE table_schema='corpus'
+            """
+        )
+        existing = {(row[0], row[1]) for row in cursor.fetchall()}
+        assert legacy_columns.isdisjoint(existing)
+
+        cursor.execute(
+            "SELECT to_regclass('corpus.precedential_authority_assertions')"
+        )
+        assert _one(cursor) is None
+
+        cursor.execute(
+            """
+            SELECT count(*)
+            FROM pg_description d
+            JOIN pg_class c ON c.oid=d.objoid
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='corpus'
+              AND lower(coalesce(d.description,'')) LIKE '%deprecated compatibility%'
+            """
+        )
+        assert _one(cursor) == 0
