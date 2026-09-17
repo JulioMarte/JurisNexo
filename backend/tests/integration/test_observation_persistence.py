@@ -91,7 +91,7 @@ def _create_context(
     court_id = _uuid(cursor)
 
     cursor.execute(
-        "INSERT INTO corpus.cases (court_id) VALUES (%s) RETURNING id",
+        "INSERT INTO corpus.judicial_decisions (court_id) VALUES (%s) RETURNING id",
         (court_id,),
     )
     case_id = _uuid(cursor)

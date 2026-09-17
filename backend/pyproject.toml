@@ -44,6 +44,7 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
 "migrations/versions/*.py" = ["E501"]
 "tests/integration/test_initial_schema_contract.py" = ["E501"]
 "tests/integration/test_judicial_proceeding_and_analysis_schema.py" = ["E501", "SIM117"]
+"tests/integration/test_adversarial_legal_reality_v3.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]

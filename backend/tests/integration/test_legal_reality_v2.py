@@ -176,12 +176,17 @@ def test_opinions_have_multiple_authors_and_one_judge_has_multiple_stances(
             )
 
         cursor.execute(
+            "SELECT id FROM corpus.judicial_opinion_type_concepts WHERE code='separate'"
+        )
+        opinion_type = _one(cursor)
+        cursor.execute(
             """
             INSERT INTO corpus.judicial_opinions(
-                case_id, opinion_type, verification_status, verification_method
-            ) VALUES (%s,'separate','verified','primary_text') RETURNING id
+                case_id, opinion_type_concept_id,
+                verification_status, verification_method
+            ) VALUES (%s,%s,'verified','primary_text') RETURNING id
             """,
-            (decision,),
+            (decision, opinion_type),
         )
         opinion = _one(cursor)
         for ordinal, officer in enumerate(officers, start=1):
@@ -210,23 +215,34 @@ def test_opinions_have_multiple_authors_and_one_judge_has_multiple_stances(
         vote = _one(cursor)
         proposition = _proposition(cursor, "Disiente solo respecto de esta cuestión")
         cursor.execute(
+            "SELECT code,id FROM corpus.judicial_stance_concepts "
+            "WHERE code IN ('joins','dissents_in_part')"
+        )
+        stances = {code: concept_id for code, concept_id in cursor.fetchall()}
+        cursor.execute(
             """
             INSERT INTO corpus.judicial_vote_stances(
-                vote_id, case_id, officer_id, stance_type, scope_type,
+                vote_id, case_id, officer_id, stance_concept_id, scope_type,
                 opinion_id, verification_status, verification_method
-            ) VALUES (%s,%s,%s,'joins','opinion',%s,'verified','primary_text')
+            ) VALUES (%s,%s,%s,%s,'opinion',%s,'verified','primary_text')
             """,
-            (vote, decision, officers[0], opinion),
+            (vote, decision, officers[0], stances["joins"], opinion),
         )
         cursor.execute(
             """
             INSERT INTO corpus.judicial_vote_stances(
-                vote_id, case_id, officer_id, stance_type, scope_type,
+                vote_id, case_id, officer_id, stance_concept_id, scope_type,
                 proposition_id, verification_status, verification_method
-            ) VALUES (%s,%s,%s,'dissents_in_part','proposition',%s,
+            ) VALUES (%s,%s,%s,%s,'proposition',%s,
                       'verified','primary_text')
             """,
-            (vote, decision, officers[0], proposition),
+            (
+                vote,
+                decision,
+                officers[0],
+                stances["dissents_in_part"],
+                proposition,
+            ),
         )
         cursor.execute(
             "SELECT count(*) FROM corpus.judicial_vote_stances WHERE vote_id=%s",
@@ -374,17 +390,28 @@ def test_common_entity_identity_and_claim_to_disposition_effect(
         )
         disposition = _one(cursor)
         cursor.execute(
-            "SELECT id FROM corpus.claim_effect_concepts WHERE code='denied'"
+            "SELECT id FROM corpus.disposition_effect_concepts "
+            "WHERE target_type='claim' AND code='denied'"
         )
         effect = _one(cursor)
         cursor.execute(
             """
-            INSERT INTO corpus.disposition_claim_effects(
-                disposition_id, claim_id, effect_concept_id,
-                verification_status, verification_method
-            ) VALUES (%s,%s,%s,'verified','human_review')
+            INSERT INTO corpus.judicial_disposition_actions(
+                disposition_id,effect_concept_id,ordinal,
+                verification_status,verification_method
+            ) VALUES (%s,%s,1,'verified','human_review') RETURNING id
             """,
-            (disposition, claim, effect),
+            (disposition, effect),
+        )
+        action = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.disposition_targets(
+                disposition_id,action_id,target_type,target_claim_id,
+                verification_status,verification_method
+            ) VALUES (%s,%s,'claim',%s,'verified','human_review')
+            """,
+            (disposition, action, claim),
         )
 
 

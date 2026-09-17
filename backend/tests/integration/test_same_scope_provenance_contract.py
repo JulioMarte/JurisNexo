@@ -82,7 +82,7 @@ def _insert_artifact(
 def _insert_case(cursor: psycopg.Cursor[Any], *, scope_id: UUID, court_id: UUID) -> UUID:
     cursor.execute(
         """
-        insert into corpus.cases (court_id, scope_id)
+        insert into corpus.judicial_decisions (court_id, scope_id)
         values (%s, %s)
         returning id
         """,

@@ -222,7 +222,7 @@ def test_disposition_preserves_exact_source_text_and_normalization_is_separate(
         )
 
 
-def test_normalized_matter_does_not_overwrite_source_matter(
+def test_normalized_matter_relation_does_not_overwrite_source_matter(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
@@ -238,17 +238,30 @@ def test_normalized_matter_does_not_overwrite_source_matter(
         concept_id = _one(cursor)
         cursor.execute(
             """
-            INSERT INTO corpus.judicial_decisions (
-                court_id, matter, legal_matter_concept_id
-            ) VALUES (%s, 'Materia Laboral / Recurso de Casación', %s)
-            RETURNING matter, legal_matter_concept_id
+            INSERT INTO corpus.judicial_decisions (court_id, matter)
+            VALUES (%s, 'Materia Laboral / Recurso de Casación')
+            RETURNING id, matter
             """,
-            (court_id, concept_id),
+            (court_id,),
         )
-        assert cursor.fetchone() == (
-            "Materia Laboral / Recurso de Casación",
-            concept_id,
+        decision_id, raw_matter = cursor.fetchone() or (None, None)
+        assert raw_matter == "Materia Laboral / Recurso de Casación"
+        cursor.execute(
+            """
+            INSERT INTO corpus.decision_legal_matters(
+                decision_id,legal_matter_concept_id,relation_type,
+                verification_status,verification_method
+            ) VALUES (%s,%s,'addresses','verified','human_review')
+            RETURNING legal_matter_concept_id
+            """,
+            (decision_id, concept_id),
         )
+        assert cursor.fetchone() == (concept_id,)
+        cursor.execute(
+            "SELECT matter FROM corpus.judicial_decisions WHERE id=%s",
+            (decision_id,),
+        )
+        assert cursor.fetchone() == ("Materia Laboral / Recurso de Casación",)
 
 
 def test_analysis_observation_accepts_unknown_json_without_promoting_it(

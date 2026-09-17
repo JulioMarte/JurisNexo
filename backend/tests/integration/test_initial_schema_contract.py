@@ -43,7 +43,7 @@ def test_expected_corpus_tables_exist(connection: psycopg.Connection[Any]) -> No
     assert expected <= actual
 
 
-def test_cases_name_is_only_compatibility_view(
+def test_cases_compatibility_view_is_removed(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.cursor() as cursor:
@@ -55,7 +55,7 @@ def test_cases_name_is_only_compatibility_view(
             where n.nspname = 'corpus' and c.relname = 'cases'
             """
         )
-        assert cursor.fetchone() == ("v",)
+        assert cursor.fetchone() is None
 
 
 def test_decision_date_is_a_real_date_with_provenance_status(

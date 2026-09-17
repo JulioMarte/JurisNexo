@@ -294,17 +294,30 @@ def test_panel_vote_and_separate_opinion_are_not_conflated(
             (decision, officer),
         )
         cursor.execute(
+            "SELECT id FROM corpus.judicial_opinion_type_concepts "
+            "WHERE code = 'dissenting'"
+        )
+        opinion_type = _one(cursor)
+        cursor.execute(
             """
             INSERT INTO corpus.judicial_opinions (
-                case_id, opinion_type, author_officer_id,
+                case_id, opinion_type_concept_id,
                 verification_status, verification_method
             ) VALUES (
-                %s, 'dissenting', %s, 'verified', 'primary_text'
+                %s, %s, 'verified', 'primary_text'
             ) RETURNING id
             """,
-            (decision, officer),
+            (decision, opinion_type),
         )
         opinion = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.judicial_opinion_authors (
+                opinion_id, case_id, officer_id, authorship_role, ordinal
+            ) VALUES (%s, %s, %s, 'author', 1)
+            """,
+            (opinion, decision, officer),
+        )
         cursor.execute(
             """
             INSERT INTO corpus.decision_votes (
@@ -324,7 +337,7 @@ def test_panel_vote_and_separate_opinion_are_not_conflated(
             (decision, officer),
         )
         assert cursor.fetchone() == ("member",)
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.decision_panel_members (
@@ -415,21 +428,38 @@ def test_precedential_authority_varies_by_context(
         decision = _decision(cursor, source_court)
         cursor.execute(
             """
-            INSERT INTO corpus.precedential_authority_assertions (
-                decision_id, authority_type, court_id, basis,
+            SELECT code, id FROM corpus.judicial_authority_effect_concepts
+            WHERE code IN ('binding', 'persuasive')
+            """
+        )
+        effects = {code: concept_id for code, concept_id in cursor.fetchall()}
+        cursor.execute(
+            """
+            INSERT INTO corpus.judicial_authority_assertions (
+                decision_id, authority_effect_concept_id, court_id, basis,
                 verification_status, verification_method
             ) VALUES
-                (%s, 'binding', %s, 'Jerarquía aplicable aquí',
+                (%s, %s, %s, 'Jerarquía aplicable aquí',
                  'verified', 'human_legal_review'),
-                (%s, 'persuasive', %s, 'Fuera del ámbito sólo es persuasiva',
+                (%s, %s, %s, 'Fuera del ámbito sólo es persuasiva',
                  'verified', 'human_legal_review')
             """,
-            (decision, source_court, decision, other_court),
+            (
+                decision,
+                effects["binding"],
+                source_court,
+                decision,
+                effects["persuasive"],
+                other_court,
+            ),
         )
         cursor.execute(
             """
-            SELECT authority_type FROM corpus.precedential_authority_assertions
-            WHERE decision_id = %s
+            SELECT c.code
+            FROM corpus.judicial_authority_assertions a
+            JOIN corpus.judicial_authority_effect_concepts c
+              ON c.id = a.authority_effect_concept_id
+            WHERE a.decision_id = %s
             """,
             (decision,),
         )
@@ -484,7 +514,7 @@ def test_substantive_treatment_requires_issue_context_and_evidence(
                 (title,),
             )
             documents.append(_one(cursor))
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.legal_relation_identities (
