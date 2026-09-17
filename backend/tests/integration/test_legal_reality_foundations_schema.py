@@ -41,15 +41,18 @@ def _court(cursor: psycopg.Cursor[Any]) -> Any:
     return _one(cursor)
 
 
-def _case(cursor: psycopg.Cursor[Any], court_id: Any, *, scope_id: Any | None = None) -> Any:
+def _decision(
+    cursor: psycopg.Cursor[Any], court_id: Any, *, scope_id: Any | None = None
+) -> Any:
     if scope_id is None:
         cursor.execute(
-            "INSERT INTO corpus.cases (court_id) VALUES (%s) RETURNING id",
+            "INSERT INTO corpus.judicial_decisions (court_id) VALUES (%s) RETURNING id",
             (court_id,),
         )
     else:
         cursor.execute(
-            "INSERT INTO corpus.cases (court_id, scope_id) VALUES (%s, %s) RETURNING id",
+            "INSERT INTO corpus.judicial_decisions (court_id, scope_id) "
+            "VALUES (%s, %s) RETURNING id",
             (court_id, scope_id),
         )
     return _one(cursor)
@@ -118,20 +121,35 @@ def test_one_controversy_can_span_multiple_court_proceedings(
             """
         )
         controversy_id = _one(cursor)
+        cursor.execute(
+            "SELECT code,id FROM corpus.controversy_membership_role_concepts "
+            "WHERE code IN ('originating','review')"
+        )
+        roles = {code: concept_id for code, concept_id in cursor.fetchall()}
 
-        for title in ("Primer grado", "Apelación"):
+        for title, role_code in (("Primer grado", "originating"), ("Apelación", "review")):
             cursor.execute(
                 """
                 INSERT INTO corpus.legal_proceedings (
-                    controversy_id, originating_court_id, canonical_title,
-                    identity_status
-                ) VALUES (%s, %s, %s, 'canonical')
+                    originating_court_id, canonical_title, identity_status
+                ) VALUES (%s, %s, 'canonical') RETURNING id
                 """,
-                (controversy_id, court_id, title),
+                (court_id, title),
+            )
+            proceeding = _one(cursor)
+            cursor.execute(
+                """
+                INSERT INTO corpus.controversy_proceedings(
+                    controversy_id,proceeding_id,relation_concept_id,
+                    verification_status,verification_method
+                ) VALUES (%s,%s,%s,'verified','official_metadata')
+                """,
+                (controversy_id, proceeding, roles[role_code]),
             )
 
         cursor.execute(
-            "SELECT count(*) FROM corpus.legal_proceedings WHERE controversy_id = %s",
+            "SELECT count(*) FROM corpus.controversy_proceedings "
+            "WHERE controversy_id = %s",
             (controversy_id,),
         )
         assert cursor.fetchone() == (2,)
@@ -161,15 +179,28 @@ def test_cross_scope_controversy_link_is_rejected(
             (private_scope,),
         )
         private_controversy = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.legal_proceedings(canonical_title,identity_status)
+            VALUES ('Procedimiento público imposible','canonical') RETURNING id
+            """
+        )
+        public_proceeding = _one(cursor)
+        cursor.execute(
+            "SELECT id FROM corpus.controversy_membership_role_concepts "
+            "WHERE code='originating'"
+        )
+        role = _one(cursor)
 
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             cursor.execute(
                 """
-                INSERT INTO corpus.legal_proceedings (
-                    controversy_id, canonical_title, identity_status
-                ) VALUES (%s, 'Procedimiento público imposible', 'canonical')
+                INSERT INTO corpus.controversy_proceedings(
+                    scope_id,controversy_id,proceeding_id,relation_concept_id,
+                    verification_status,verification_method
+                ) VALUES (%s,%s,%s,%s,'verified','contract_test')
                 """,
-                (private_controversy,),
+                (private_scope, private_controversy, public_proceeding, role),
             )
 
 
@@ -226,7 +257,7 @@ def test_decision_panel_keeps_officer_identity_separate_from_role(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court_id = _court(cursor)
-        case_id = _case(cursor, court_id)
+        case_id = _decision(cursor, court_id)
         cursor.execute(
             """
             INSERT INTO corpus.judicial_officers (
@@ -257,7 +288,7 @@ def test_legal_proposition_keeps_interpretation_distinct_from_source_evidence(
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court_id = _court(cursor)
-        case_id = _case(cursor, court_id)
+        case_id = _decision(cursor, court_id)
 
         cursor.execute(
             """
