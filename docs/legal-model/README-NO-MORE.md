@@ -1,1 +1,0 @@
-Do not add further one-line navigation files; update canonical numbered documents instead.
