@@ -41,13 +41,16 @@ def _decision(cursor: psycopg.Cursor[Any], court_id: Any) -> Any:
 
 
 def _disposition(cursor: psycopg.Cursor[Any], decision_id: Any) -> Any:
+    cursor.execute("SELECT id FROM corpus.disposition_concepts WHERE code='other'")
+    disposition_concept_id = _one(cursor)
     cursor.execute(
         """
         INSERT INTO corpus.judicial_decision_dispositions(
-            case_id,ordinal,raw_text,extraction_method,verification_status
-        ) VALUES (%s,1,'FALLA','primary_text','verified') RETURNING id
+            case_id,ordinal,disposition_concept_id,raw_text,
+            extraction_method,verification_status
+        ) VALUES (%s,1,%s,'FALLA','primary_text','verified') RETURNING id
         """,
-        (decision_id,),
+        (decision_id, disposition_concept_id),
     )
     return _one(cursor)
 
