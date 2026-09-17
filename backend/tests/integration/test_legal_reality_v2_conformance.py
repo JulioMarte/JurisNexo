@@ -74,7 +74,7 @@ def _controversy(cursor: psycopg.Cursor[Any], title: str) -> Any:
     return _one(cursor)
 
 
-def test_legacy_classification_update_replaces_only_legacy_primary_relation(
+def test_decision_classification_uses_only_canonical_relation_tables(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
@@ -98,103 +98,87 @@ def test_legacy_classification_update_replaces_only_legacy_primary_relation(
                 target.append(_one(cursor))
 
         court = _court(cursor)
-        cursor.execute(
-            """
-            INSERT INTO corpus.judicial_decisions(
-                court_id, legal_matter_concept_id, procedure_concept_id
-            ) VALUES (%s,%s,%s) RETURNING id
-            """,
-            (court, matter_ids[0], procedure_ids[0]),
-        )
-        decision = _one(cursor)
+        decision = _decision(cursor, court)
+        for ordinal, matter in enumerate(matter_ids, start=1):
+            cursor.execute(
+                """
+                INSERT INTO corpus.decision_legal_matters(
+                    decision_id, legal_matter_concept_id, relation_type, ordinal,
+                    verification_status, verification_method
+                ) VALUES (%s,%s,'addresses',%s,'verified','human_review')
+                """,
+                (decision, matter, ordinal),
+            )
+        for ordinal, procedure in enumerate(procedure_ids, start=1):
+            cursor.execute(
+                """
+                INSERT INTO corpus.decision_procedures(
+                    decision_id, procedure_concept_id, relation_type, ordinal,
+                    verification_status, verification_method
+                ) VALUES (%s,%s,'applies',%s,'verified','human_review')
+                """,
+                (decision, procedure, ordinal),
+            )
 
         cursor.execute(
             """
-            INSERT INTO corpus.decision_legal_matters(
-                decision_id, legal_matter_concept_id, relation_type,
-                verification_status, verification_method
-            ) VALUES (%s,%s,'addresses','verified','human_review')
-            """,
-            (decision, matter_ids[0]),
-        )
-        cursor.execute(
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='corpus' AND table_name='judicial_decisions'
+              AND column_name IN ('legal_matter_concept_id','procedure_concept_id')
             """
-            UPDATE corpus.judicial_decisions
-            SET legal_matter_concept_id=%s, procedure_concept_id=%s
-            WHERE id=%s
-            """,
-            (matter_ids[1], procedure_ids[1], decision),
         )
-
+        assert cursor.fetchall() == []
         cursor.execute(
-            """
-            SELECT legal_matter_concept_id, relation_type, verification_method
-            FROM corpus.decision_legal_matters
-            WHERE decision_id=%s
-            ORDER BY relation_type, verification_method
-            """,
+            "SELECT count(*) FROM corpus.decision_legal_matters WHERE decision_id=%s",
             (decision,),
         )
-        matter_rows = cursor.fetchall()
-        assert (matter_ids[0], "addresses", "human_review") in matter_rows
-        assert not any(
-            row[0] == matter_ids[0] and row[1] == "primary" for row in matter_rows
-        )
-        assert any(
-            row[0] == matter_ids[1] and row[1] == "primary" for row in matter_rows
-        )
-
+        assert cursor.fetchone() == (2,)
         cursor.execute(
-            """
-            SELECT procedure_concept_id
-            FROM corpus.decision_procedures
-            WHERE decision_id=%s AND relation_type='primary'
-            """,
+            "SELECT count(*) FROM corpus.decision_procedures WHERE decision_id=%s",
             (decision,),
         )
-        assert cursor.fetchall() == [(procedure_ids[1],)]
+        assert cursor.fetchone() == (2,)
 
 
-def test_legacy_controversy_update_replaces_only_compatibility_relation(
+def test_controversy_membership_uses_open_role_concept_without_scalar_alias(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        old = _controversy(cursor, "Controversia legacy A")
-        new = _controversy(cursor, "Controversia legacy B")
+        controversy = _controversy(cursor, "Controversia canónica")
+        proceeding = _proceeding(cursor, "Procedimiento canónico")
         cursor.execute(
-            """
-            INSERT INTO corpus.legal_proceedings(canonical_title, controversy_id)
-            VALUES ('Procedimiento con vínculo legacy', %s) RETURNING id
-            """,
-            (old,),
+            "SELECT id FROM corpus.controversy_membership_role_concepts "
+            "WHERE code='originating'"
         )
-        proceeding = _one(cursor)
+        role = _one(cursor)
         cursor.execute(
             """
             INSERT INTO corpus.controversy_proceedings(
-                controversy_id, proceeding_id, relation_type,
+                controversy_id, proceeding_id, relation_concept_id,
                 verification_status, verification_method
-            ) VALUES (%s,%s,'originating','verified','human_review')
+            ) VALUES (%s,%s,%s,'verified','human_review')
             """,
-            (old, proceeding),
-        )
-        cursor.execute(
-            "UPDATE corpus.legal_proceedings SET controversy_id=%s WHERE id=%s",
-            (new, proceeding),
+            (controversy, proceeding, role),
         )
         cursor.execute(
             """
-            SELECT controversy_id, relation_type, verification_method
-            FROM corpus.controversy_proceedings
-            WHERE proceeding_id=%s
-            ORDER BY relation_type, verification_method
+            SELECT c.code
+            FROM corpus.controversy_proceedings cp
+            JOIN corpus.controversy_membership_role_concepts c
+              ON c.id=cp.relation_concept_id
+            WHERE cp.proceeding_id=%s
             """,
             (proceeding,),
         )
-        rows = cursor.fetchall()
-        assert (old, "originating", "human_review") in rows
-        assert not any(row[0] == old and row[1] == "related" for row in rows)
-        assert any(row[0] == new and row[1] == "related" for row in rows)
+        assert cursor.fetchone() == ("originating",)
+        cursor.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='corpus' AND table_name='legal_proceedings'
+              AND column_name='controversy_id'
+            """
+        )
+        assert cursor.fetchone() is None
 
 
 def test_proposition_scoped_stance_must_target_same_decision(
@@ -237,17 +221,22 @@ def test_proposition_scoped_stance_must_target_same_decision(
             """,
             (proposition, other_decision),
         )
+        cursor.execute(
+            "SELECT id FROM corpus.judicial_stance_concepts "
+            "WHERE code='dissents_in_part'"
+        )
+        stance = _one(cursor)
 
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.judicial_vote_stances(
-                    vote_id, case_id, officer_id, stance_type, scope_type,
+                    vote_id, case_id, officer_id, stance_concept_id, scope_type,
                     proposition_id, verification_status, verification_method
-                ) VALUES (%s,%s,%s,'dissents_in_part','proposition',%s,
+                ) VALUES (%s,%s,%s,%s,'proposition',%s,
                           'verified','primary_text')
                 """,
-                (vote, decision, officer, proposition),
+                (vote, decision, officer, stance, proposition),
             )
 
         cursor.execute(
@@ -261,12 +250,12 @@ def test_proposition_scoped_stance_must_target_same_decision(
         cursor.execute(
             """
             INSERT INTO corpus.judicial_vote_stances(
-                vote_id, case_id, officer_id, stance_type, scope_type,
+                vote_id, case_id, officer_id, stance_concept_id, scope_type,
                 proposition_id, verification_status, verification_method
-            ) VALUES (%s,%s,%s,'dissents_in_part','proposition',%s,
+            ) VALUES (%s,%s,%s,%s,'proposition',%s,
                       'verified','primary_text')
             """,
-            (vote, decision, officer, proposition),
+            (vote, decision, officer, stance, proposition),
         )
 
 
@@ -345,16 +334,10 @@ def test_decision_events_and_durative_states_are_not_interchangeable(
         court = _court(cursor)
         decision = _decision(cursor, court)
 
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
-            cursor.execute(
-                """
-                INSERT INTO corpus.decision_legal_status_events(
-                    case_id, status_type, verification_status, verification_method
-                ) VALUES (%s,'final','verified','official_metadata')
-                """,
-                (decision,),
-            )
-
+        cursor.execute(
+            "SELECT count(*) FROM corpus.judicial_event_type_concepts WHERE code='final'"
+        )
+        assert cursor.fetchone() == (0,)
         cursor.execute(
             "SELECT id FROM corpus.decision_state_concepts WHERE code='final'"
         )
@@ -375,10 +358,15 @@ def test_decision_events_and_durative_states_are_not_interchangeable(
         )
         assert cursor.fetchone() == (0,)
         cursor.execute(
+            "SELECT id FROM corpus.judicial_event_type_concepts WHERE code='reversed'"
+        )
+        reversed_event = _one(cursor)
+        cursor.execute(
             """
             INSERT INTO corpus.decision_legal_status_events(
-                case_id, status_type, verification_status, verification_method
-            ) VALUES (%s,'reversed','verified','official_metadata')
+                case_id, event_type_concept_id,
+                verification_status, verification_method
+            ) VALUES (%s,%s,'verified','official_metadata')
             """,
-            (decision,),
+            (decision, reversed_event),
         )
