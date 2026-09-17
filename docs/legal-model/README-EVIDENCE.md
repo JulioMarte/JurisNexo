@@ -1,1 +1,0 @@
-Executable V4 evidence lives under `backend/tests/legal_model/` and the existing PostgreSQL integration/adversarial suites; documentation alone is not proof.
