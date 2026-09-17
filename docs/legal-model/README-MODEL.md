@@ -1,1 +1,0 @@
-The current legal model refinement is `docs/35-legal-reality-v4.md`.
