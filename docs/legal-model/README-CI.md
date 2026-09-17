@@ -1,0 +1,1 @@
+CI status belongs to the pull request and workflow run, not this file. This note intentionally contains no claimed pass/fail result.
