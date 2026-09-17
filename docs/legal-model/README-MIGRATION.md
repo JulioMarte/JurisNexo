@@ -1,0 +1,1 @@
+V4 migration rollout gates are in `docs/37-legal-model-v4-implementation-checklist.md`.
