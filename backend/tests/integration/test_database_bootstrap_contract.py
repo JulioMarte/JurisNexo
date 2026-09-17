@@ -174,7 +174,7 @@ def test_lower_and_specialized_courts_fit_without_schema_changes(
         )
         cursor.execute(
             """
-            INSERT INTO corpus.cases (
+            INSERT INTO corpus.judicial_decisions (
                 court_id, decision_number, decision_date, decision_date_status, title
             ) VALUES (
                 %s,
