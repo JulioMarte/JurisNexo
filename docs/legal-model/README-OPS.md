@@ -1,1 +1,0 @@
-Database operations for the private VPS deployment are defined in `docs/36-postgresql-vps-operating-contract.md`.
