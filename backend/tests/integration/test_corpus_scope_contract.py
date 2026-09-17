@@ -117,7 +117,7 @@ def test_existing_root_records_default_to_public_scope(
         assert court is not None
 
         cursor.execute(
-            "insert into corpus.cases (court_id) values (%s) returning scope_id",
+            "insert into corpus.judicial_decisions (court_id) values (%s) returning scope_id",
             (court[0],),
         )
         assert cursor.fetchone() == (PUBLIC_SCOPE_ID,)
@@ -162,7 +162,7 @@ def test_private_scope_can_be_assigned_explicitly_to_roots(
 
         cursor.execute(
             """
-            insert into corpus.cases (court_id, scope_id)
+            insert into corpus.judicial_decisions (court_id, scope_id)
             values (%s, %s)
             returning scope_id
             """,
