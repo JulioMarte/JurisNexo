@@ -1,0 +1,1 @@
+Do not add compatibility surfaces solely to preserve old tests; update tests to the canonical semantic invariant.
