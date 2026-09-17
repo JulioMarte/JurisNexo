@@ -153,6 +153,21 @@ def _effect(cursor: psycopg.Cursor[Any], target_type: str, code: str) -> Any:
     return _one(cursor)
 
 
+def _action(
+    cursor: psycopg.Cursor[Any], disposition: Any, effect: Any, ordinal: int
+) -> Any:
+    cursor.execute(
+        """
+        INSERT INTO corpus.judicial_disposition_actions(
+            disposition_id,effect_concept_id,ordinal,
+            verification_status,verification_method
+        ) VALUES (%s,%s,%s,'verified','primary_text') RETURNING id
+        """,
+        (disposition, effect, ordinal),
+    )
+    return _one(cursor)
+
+
 def test_opinion_types_are_extensible_concepts(
     connection: psycopg.Connection[Any],
 ) -> None:
@@ -175,22 +190,11 @@ def test_opinion_types_are_extensible_concepts(
                 case_id,opinion_type_concept_id,
                 verification_status,verification_method
             ) VALUES (%s,%s,'verified','primary_text')
-            RETURNING opinion_type,opinion_type_concept_id
+            RETURNING opinion_type_concept_id
             """,
             (decision, concept),
         )
-        assert cursor.fetchone() == (code, concept)
-
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
-            cursor.execute(
-                """
-                INSERT INTO corpus.judicial_opinions(
-                    case_id,opinion_type,opinion_type_concept_id,
-                    verification_status,verification_method
-                ) VALUES (%s,'majority',%s,'verified','primary_text')
-                """,
-                (decision, concept),
-            )
+        assert _one(cursor) == concept
 
 
 def test_judicial_stances_are_extensible_concepts(
@@ -236,14 +240,14 @@ def test_judicial_stances_are_extensible_concepts(
                 vote_id,case_id,officer_id,stance_concept_id,scope_type,
                 verification_status,verification_method
             ) VALUES (%s,%s,%s,%s,'whole_decision','verified','primary_text')
-            RETURNING stance_type,stance_concept_id
+            RETURNING stance_concept_id
             """,
             (vote, decision, officer, concept),
         )
-        assert cursor.fetchone() == (code, concept)
+        assert _one(cursor) == concept
 
 
-def test_judicial_authority_effects_are_extensible_and_compat_view_survives(
+def test_judicial_authority_effects_are_extensible_without_compat_alias(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
@@ -265,20 +269,13 @@ def test_judicial_authority_effects_are_extensible_and_compat_view_survives(
                 decision_id,authority_effect_concept_id,court_id,basis,
                 verification_status,verification_method
             ) VALUES (%s,%s,%s,'Contexto de prueba','verified','human_legal_review')
-            RETURNING id,authority_type
+            RETURNING authority_effect_concept_id
             """,
             (decision, concept, court),
         )
-        row = cursor.fetchone()
-        assert row is not None
-        assertion, mirrored_code = row
-        assert mirrored_code == code
-        cursor.execute(
-            "SELECT authority_effect_concept_id "
-            "FROM corpus.precedential_authority_assertions WHERE id=%s",
-            (assertion,),
-        )
-        assert cursor.fetchone() == (concept,)
+        assert _one(cursor) == concept
+        cursor.execute("SELECT to_regclass('corpus.precedential_authority_assertions')")
+        assert _one(cursor) is None
 
 
 def test_disposition_targets_cover_claim_party_proceeding_decision_and_proposition(
@@ -303,17 +300,20 @@ def test_disposition_targets_cover_claim_party_proceeding_decision_and_propositi
             ("decision", "target_decision_id", reviewed, "reverses"),
             ("proposition", "target_proposition_id", proposition, "adopts"),
         )
-        for target_type, column, target_id, effect_code in targets:
+        for ordinal, (target_type, column, target_id, effect_code) in enumerate(
+            targets, start=1
+        ):
             effect = _effect(cursor, target_type, effect_code)
+            action = _action(cursor, disposition, effect, ordinal)
             query = sql.SQL(
                 """
                 INSERT INTO corpus.disposition_targets(
-                    disposition_id,target_type,{},effect_concept_id,
+                    disposition_id,action_id,target_type,{},
                     verification_status,verification_method
                 ) VALUES (%s,%s,%s,%s,'verified','primary_text')
                 """
             ).format(sql.Identifier(column))
-            cursor.execute(query, (disposition, target_type, target_id, effect))
+            cursor.execute(query, (disposition, action, target_type, target_id))
 
         cursor.execute(
             "SELECT target_type FROM corpus.disposition_targets "
@@ -327,18 +327,6 @@ def test_disposition_targets_cover_claim_party_proceeding_decision_and_propositi
             "proceeding",
             "proposition",
         ]
-
-        claim_effect = _effect(cursor, "claim", "denied")
-        with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
-            cursor.execute(
-                """
-                INSERT INTO corpus.disposition_targets(
-                    disposition_id,target_type,target_decision_id,effect_concept_id,
-                    verification_status,verification_method
-                ) VALUES (%s,'decision',%s,%s,'verified','primary_text')
-                """,
-                (disposition, reviewed, claim_effect),
-            )
 
 
 def test_disposition_party_and_proposition_targets_reject_unrelated_context(
@@ -358,57 +346,62 @@ def test_disposition_party_and_proposition_targets_reject_unrelated_context(
         disposition = _disposition(cursor, source)
 
         party_effect = _effect(cursor, "party", "orders")
+        party_action = _action(cursor, disposition, party_effect, 1)
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.disposition_targets(
-                    disposition_id,target_type,target_party_role_id,effect_concept_id,
+                    disposition_id,action_id,target_type,target_party_role_id,
                     verification_status,verification_method
-                ) VALUES (%s,'party',%s,%s,'verified','primary_text')
+                ) VALUES (%s,%s,'party',%s,'verified','primary_text')
                 """,
-                (disposition, unrelated_role, party_effect),
+                (disposition, party_action, unrelated_role),
             )
 
         proposition_effect = _effect(cursor, "proposition", "rejects")
+        proposition_action = _action(cursor, disposition, proposition_effect, 2)
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.disposition_targets(
-                    disposition_id,target_type,target_proposition_id,effect_concept_id,
+                    disposition_id,action_id,target_type,target_proposition_id,
                     verification_status,verification_method
-                ) VALUES (%s,'proposition',%s,%s,'verified','primary_text')
+                ) VALUES (%s,%s,'proposition',%s,'verified','primary_text')
                 """,
-                (disposition, unrelated_prop, proposition_effect),
+                (disposition, proposition_action, unrelated_prop),
             )
 
 
-def test_claim_compatibility_views_do_not_create_second_truth(
+def test_claim_disposition_effect_uses_canonical_action_target_only(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
         decision = _decision(cursor, court)
-        proceeding = _proceeding(cursor, "Proceso compatibilidad")
+        proceeding = _proceeding(cursor, "Proceso canónico")
         _link_proceeding_decision(cursor, proceeding, decision)
         claim = _claim(cursor, proceeding)
         disposition = _disposition(cursor, decision)
-        cursor.execute("SELECT id FROM corpus.claim_effect_concepts WHERE code='granted'")
-        effect = _one(cursor)
+        effect = _effect(cursor, "claim", "granted")
+        action = _action(cursor, disposition, effect, 1)
         cursor.execute(
             """
-            INSERT INTO corpus.disposition_claim_effects(
-                disposition_id,claim_id,effect_concept_id,
+            INSERT INTO corpus.disposition_targets(
+                disposition_id,action_id,target_type,target_claim_id,
                 verification_status,verification_method
-            ) VALUES (%s,%s,%s,'verified','primary_text')
+            ) VALUES (%s,%s,'claim',%s,'verified','primary_text')
             """,
-            (disposition, claim, effect),
+            (disposition, action, claim),
         )
         cursor.execute(
             """
-            SELECT target_type,target_claim_id
-            FROM corpus.disposition_targets
-            WHERE disposition_id=%s AND target_claim_id=%s
+            SELECT a.effect_concept_id,t.target_claim_id
+            FROM corpus.disposition_targets t
+            JOIN corpus.judicial_disposition_actions a ON a.id=t.action_id
+            WHERE t.disposition_id=%s AND t.target_claim_id=%s
             """,
             (disposition, claim),
         )
-        assert cursor.fetchone() == ("claim", claim)
+        assert cursor.fetchone() == (effect, claim)
+        cursor.execute("SELECT to_regclass('corpus.disposition_claim_effects')")
+        assert _one(cursor) is None
