@@ -4,9 +4,9 @@
 
 Normative pre-ingestion refinement of `28-legal-reality-v2.md`, `31-comprehensive-legal-semantics.md`, and `33-extensible-judicial-semantics-and-disposition-targets.md`.
 
-Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, and `0038_cleanup_v3_backfill`.
+Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, `0038_cleanup_v3_backfill`, and `0039_remove_v3_legacy`.
 
-This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction.
+This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction. Revision `0039` closes the pre-ingestion normalization boundary by removing compatibility mirrors instead of carrying duplicate legal truth into the long-lived schema.
 
 ## 1. A litigation family is not procedural ancestry
 
@@ -14,7 +14,7 @@ This revision implements the adversarial review of the database against difficul
 
 It does not answer: **which proceeding appealed, reviewed, cassated, reopened, enforced, consolidated with, or was remanded from which other proceeding?**
 
-Canonical procedural ancestry is now:
+Canonical procedural ancestry is:
 
 ```text
 legal_proceeding
@@ -38,7 +38,7 @@ P5 appeal_of P3
 
 ## 2. Claims have lineage across instances
 
-`legal_claims.parent_claim_id` remains an intra-proceeding hierarchy. That is correct for a principal claim and subsidiary requests within one proceeding, but it must not be abused to connect first-instance claims with appeal or cassation grounds.
+`legal_claims.parent_claim_id` remains an intra-proceeding hierarchy. It must not be abused to connect first-instance claims with appeal or cassation grounds.
 
 Canonical cross-instance lineage is:
 
@@ -48,25 +48,32 @@ legal_claim
         -> legal_claim
 ```
 
-Examples include `challenges`, `reviews`, `derives_from`, `renews`, `narrows`, `expands`, and `abandons`.
-
 The database deliberately permits the two claims to belong to different proceedings while requiring the same corpus scope.
 
 ## 3. Judicial decision is an identity; juridical act form is a concept
 
 A court may issue a judgment, interlocutory judgment, order, resolution, decree, advisory opinion, or a jurisdiction-specific form that JurisNexo has not yet observed.
 
-Canonical type identity is therefore `judicial_decisions.act_type_concept_id -> adjudicative_act_type_concepts`.
+Canonical type identity is therefore:
 
-The compatibility default is `decision`, meaning only that the precise juridical form has not yet been classified. Extraction should replace that default when primary evidence supports a more specific type.
+```text
+judicial_decisions.act_type_concept_id
+    -> adjudicative_act_type_concepts
+```
+
+There is no compatibility text column and no default that silently means “decision”. Ingestion must provide the observed juridical act concept explicitly. If classification is genuinely unknown, the caller must deliberately choose an appropriate concept supported by the ingestion contract rather than receive one implicitly from the database.
 
 Adding a newly observed act form is data, not a schema migration.
 
 ## 4. Judicial events are extensible; states remain separate
 
-`decision_legal_status_events` remains a point-event ledger. The old `status_type` string is now a compatibility mirror of `event_type_concept_id -> judicial_event_type_concepts`.
+`decision_legal_status_events` remains a point-event ledger whose canonical type is only:
 
-The registry can grow with observed events such as clarification, correction, supplementation, reconsideration, remittance, or jurisdiction-specific acts without changing database CHECK lists.
+```text
+event_type_concept_id -> judicial_event_type_concepts
+```
+
+The former `status_type` mirror and its synchronization trigger are removed.
 
 Durative states such as finality, res judicata, stay, suspension, and enforceability remain in `decision_legal_states`. V3 does not collapse events and states back together.
 
@@ -81,27 +88,46 @@ remands the damages issue,
 and awards costs.
 ```
 
-Therefore the canonical structure is now:
+The canonical structure is:
 
 ```text
-judicial_decision_disposition     # textual clause
-    -> judicial_disposition_actions   # normalized legal actions
-        -> disposition_targets        # one or more typed targets
+judicial_decision_disposition          # textual clause
+    -> judicial_disposition_actions    # normalized legal actions/effects
+        -> disposition_targets         # one or more typed targets
 ```
 
-`disposition_targets.effect_concept_id` remains temporarily as a compatibility mirror, but the canonical action semantic is `judicial_disposition_actions.effect_concept_id` through `action_id`.
+The legal effect lives only on `judicial_disposition_actions.effect_concept_id`. `disposition_targets` no longer duplicates that effect. The pre-V3 model did not have action identity; `0038` removes redundant textless inferred actions created during migration, and `0039` removes the compatibility mirror and trigger once canonical action identity exists.
 
-This permits one clause to contain several actions and one action to operate on multiple targets without duplicating the clause text.
+## 6. Controversy membership is intentionally narrower and extensible
 
-The pre-V3 model did not have action identity. During migration, targets with the same clause/effect can therefore only be grouped by a conservative compatibility inference. Revision `0038_cleanup_v3_backfill` removes redundant textless action rows left by that inference rather than allowing them to masquerade as independent legal facts.
+A broad role inside a litigation family is not procedural ancestry, but it is still a legal classification. It therefore must not be frozen in a jurisdiction-sensitive `CHECK` list.
 
-## 6. Controversy membership is intentionally narrower
+Canonical family-role identity is:
 
-`controversy_proceedings.relation_type` no longer pretends that values such as `appeal`, `cassation`, `consolidated`, or `severed` identify ancestry. Existing pre-ingestion values are normalized to broad family roles (`review` or `related`).
+```text
+controversy_proceedings.relation_concept_id
+    -> controversy_membership_role_concepts
+```
 
-The exact relationship belongs in `proceeding_relations`.
+The former `relation_type` text column and closed `CHECK` are removed. New observed family roles can be added as data. Exact proceeding-to-proceeding ancestry remains exclusively in `proceeding_relations`.
 
-## 7. What V3 deliberately keeps
+## 7. Canonical-only legal category policy
+
+For legal categories generalized by Legal Reality V3, the concept FK is the only writable truth. The following compatibility surfaces are intentionally removed before mass ingestion:
+
+- `judicial_opinions.opinion_type`;
+- `judicial_vote_stances.stance_type`;
+- `judicial_authority_assertions.authority_type`;
+- `decision_legal_status_events.status_type`;
+- `disposition_targets.effect_concept_id`;
+- `controversy_proceedings.relation_type`;
+- compatibility view `precedential_authority_assertions`;
+- synchronization triggers/functions whose only purpose was to keep those mirrors aligned;
+- the compatibility default for `judicial_decisions.act_type_concept_id`.
+
+Rule: if a category exists because a legal system can classify an act, role, relation, event, stance, authority effect, or disposition differently, represent it through an extensible concept identity. `CHECK` constraints remain appropriate for JurisNexo-controlled workflow states and structural invariants such as positive ordinals, coherent intervals, exactly-one-target rules, code syntax, and same-scope integrity.
+
+## 8. What V3 deliberately keeps
 
 The adversarial review did **not** discard the strongest parts of the existing model:
 
@@ -113,17 +139,18 @@ The adversarial review did **not** discard the strongest parts of the existing m
 - legal norms remain contextual and bitemporal;
 - judicial authority remains contextual rather than a global precedent score.
 
-The correct response to the review was therefore normalization, not a ground-up replacement.
+The correct response to the review was normalization, not a ground-up replacement.
 
-## 8. Pre-ingestion baseline policy
+## 9. Pre-ingestion baseline policy
 
-The migration history records how JurisNexo discovered the domain and is intentionally preserved during verification. Before the first irreversible mass-ingestion release, the project should produce a clean installation baseline representing the verified post-V3 schema and archive the exploratory chain in Git history/tagging.
+The exploratory migration history is preserved while this model is being verified. Before the first irreversible mass-ingestion release, JurisNexo should create a clean installation baseline representing the verified canonical schema and archive the exploratory chain in Git history/tagging.
 
 That baseline operation must happen only after:
 
 1. the full PostgreSQL integration suite passes from an empty database;
 2. schema invariants are inspected against the migration head;
 3. no production corpus depends on the exploratory revision chain;
-4. application callers no longer treat compatibility mirrors as canonical truth.
+4. no deprecated compatibility mirrors or aliases remain in the canonical schema;
+5. legal-domain open vocabularies are represented as concept identities rather than jurisdiction-sensitive `CHECK` lists.
 
 Squashing earlier would make adversarial comparison and regression diagnosis harder; squashing after mass ingestion would be unnecessarily dangerous.
