@@ -29,7 +29,7 @@ def upgrade() -> None:
     _remove_judicial_stance_mirror()
     _remove_judicial_authority_mirror_and_alias()
     _remove_judicial_event_mirror()
-    _remove_disposition_effect_mirror()
+    _remove_disposition_compatibility_surfaces()
     _remove_adjudicative_act_compatibility_default()
 
 
@@ -145,7 +145,12 @@ def _remove_judicial_event_mirror() -> None:
     )
 
 
-def _remove_disposition_effect_mirror() -> None:
+def _remove_disposition_compatibility_surfaces() -> None:
+    # Both views were introduced only to preserve the pre-0035 claim-only API.
+    # Drop them explicitly instead of using CASCADE so any unexpected dependent
+    # object still blocks the migration and forces an intentional review.
+    op.execute("DROP VIEW IF EXISTS corpus.disposition_claim_effects")
+    op.execute("DROP VIEW IF EXISTS corpus.claim_effect_concepts")
     op.execute(
         "DROP TRIGGER IF EXISTS disposition_targets_prepare_action "
         "ON corpus.disposition_targets"
