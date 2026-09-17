@@ -1,0 +1,1 @@
+Repository tools and CI validate implementation; documentation is not a substitute for execution.
