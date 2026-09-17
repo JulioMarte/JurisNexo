@@ -206,8 +206,10 @@ def test_open_law_owned_columns_are_not_reclosed_under_new_constraint_names(
             # PostgreSQL renders `col IN (...)` as `col = ANY (ARRAY[...])`.
             # Only reject a CHECK whose predicate is itself the closed vocabulary;
             # compound semantic/context checks referring to registered codes remain valid.
+            column_pattern = re.escape(column.lower())
             enum_pattern = re.compile(
-                rf"^check \(\(?\(?{re.escape(column.lower())}\)?(?:)::[a-z ]+)?\s*=\s*any\s*\(array\["
+                rf"^check \(\(?\(?{column_pattern}\)?(?:)::[a-z ]+)?"
+                r"\s*=\s*any\s*\(array\["
             )
             if enum_pattern.search(normalized):
                 closed_enums.append((table_name, constraint_name, definition))
