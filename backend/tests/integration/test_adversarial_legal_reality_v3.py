@@ -151,17 +151,19 @@ def test_claim_lineage_can_cross_proceedings(
         assert _one(cursor) is not None
 
 
-def test_adjudicative_act_type_is_required_and_extensible(
+def test_adjudicative_act_type_unknown_is_null_and_known_values_are_extensible(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         court = _court(cursor)
-
-        with pytest.raises(psycopg.errors.NotNullViolation), connection.transaction():
-            cursor.execute(
-                "INSERT INTO corpus.judicial_decisions(court_id) VALUES (%s)",
-                (court,),
-            )
+        cursor.execute(
+            """
+            INSERT INTO corpus.judicial_decisions(court_id)
+            VALUES (%s) RETURNING act_type_concept_id
+            """,
+            (court,),
+        )
+        assert _one(cursor) is None
 
         custom_code = f"do_act_{uuid4().hex[:8]}"
         cursor.execute(
@@ -281,10 +283,13 @@ def test_legacy_legal_mirrors_and_aliases_are_absent(
         existing = {(row[0], row[1]) for row in cursor.fetchall()}
         assert legacy_columns.isdisjoint(existing)
 
-        cursor.execute(
-            "SELECT to_regclass('corpus.precedential_authority_assertions')"
-        )
-        assert _one(cursor) is None
+        for legacy_view in (
+            "precedential_authority_assertions",
+            "claim_effect_concepts",
+            "disposition_claim_effects",
+        ):
+            cursor.execute("SELECT to_regclass(%s)", (f"corpus.{legacy_view}",))
+            assert _one(cursor) is None
 
         cursor.execute(
             """
