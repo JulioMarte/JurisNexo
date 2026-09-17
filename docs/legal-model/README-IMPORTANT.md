@@ -1,1 +1,0 @@
-Canonical V4 semantics: docs/35-legal-reality-v4.md.
