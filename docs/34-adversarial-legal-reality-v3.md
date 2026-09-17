@@ -61,7 +61,7 @@ judicial_decisions.act_type_concept_id
     -> adjudicative_act_type_concepts
 ```
 
-There is no compatibility text column and no default that silently means “decision”. Ingestion must provide the observed juridical act concept explicitly. If classification is genuinely unknown, the caller must deliberately choose an appropriate concept supported by the ingestion contract rather than receive one implicitly from the database.
+There is no compatibility text column and no default that silently means `decision`. When the juridical act form is known, ingestion stores its concept identity explicitly. When the evidence is not yet sufficient to classify the act, `act_type_concept_id` is `NULL`; JurisNexo must preserve that epistemic uncertainty rather than manufacture a generic classification through a database default.
 
 Adding a newly observed act form is data, not a schema migration.
 
@@ -98,6 +98,8 @@ judicial_decision_disposition          # textual clause
 
 The legal effect lives only on `judicial_disposition_actions.effect_concept_id`. `disposition_targets` no longer duplicates that effect. The pre-V3 model did not have action identity; `0038` removes redundant textless inferred actions created during migration, and `0039` removes the compatibility mirror and trigger once canonical action identity exists.
 
+The claim-only compatibility views `claim_effect_concepts` and `disposition_claim_effects` are also removed. Their names encode the superseded assumption that a disposition can only affect a claim; retaining them would keep that obsolete model discoverable as if it were still supported.
+
 ## 6. Controversy membership is intentionally narrower and extensible
 
 A broad role inside a litigation family is not procedural ancestry, but it is still a legal classification. It therefore must not be frozen in a jurisdiction-sensitive `CHECK` list.
@@ -121,9 +123,11 @@ For legal categories generalized by Legal Reality V3, the concept FK is the only
 - `decision_legal_status_events.status_type`;
 - `disposition_targets.effect_concept_id`;
 - `controversy_proceedings.relation_type`;
-- compatibility view `precedential_authority_assertions`;
+- compatibility views `precedential_authority_assertions`, `claim_effect_concepts`, and `disposition_claim_effects`;
 - synchronization triggers/functions whose only purpose was to keep those mirrors aligned;
 - the compatibility default for `judicial_decisions.act_type_concept_id`.
+
+Removing the act-type default does **not** mean inventing a type is mandatory. Unknown classification is represented by `NULL`; a known classification is represented only by `act_type_concept_id`.
 
 Rule: if a category exists because a legal system can classify an act, role, relation, event, stance, authority effect, or disposition differently, represent it through an extensible concept identity. `CHECK` constraints remain appropriate for JurisNexo-controlled workflow states and structural invariants such as positive ordinals, coherent intervals, exactly-one-target rules, code syntax, and same-scope integrity.
 
