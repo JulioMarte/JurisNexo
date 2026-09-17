@@ -1,1 +1,0 @@
-The machine-readable semantic guarantee inventory remains `docs/testing/current-guarantees.toml`.
