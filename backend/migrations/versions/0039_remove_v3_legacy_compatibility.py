@@ -10,9 +10,9 @@ still before mass ingestion, so carrying those duplicate write surfaces into
 the long-lived schema would make the physical model less truthful than the
 conceptual model.
 
-This migration makes concept FKs the only writable truth for the affected
-legal categories and replaces the remaining closed controversy-membership
-vocabulary with an extensible concept table.
+This migration makes concept FKs and explicit relation tables the only writable
+truth for the affected legal categories and removes V2 scalar compatibility
+fields after their canonical relations have already been backfilled.
 """
 
 from alembic import op
@@ -25,6 +25,7 @@ depends_on = None
 
 def upgrade() -> None:
     _open_controversy_membership_vocabulary()
+    _remove_v2_scalar_compatibility()
     _remove_opinion_type_mirror()
     _remove_judicial_stance_mirror()
     _remove_judicial_authority_mirror_and_alias()
@@ -94,6 +95,43 @@ def _open_controversy_membership_vocabulary() -> None:
     """)
 
 
+def _remove_v2_scalar_compatibility() -> None:
+    # 0033 already backfilled these scalar conveniences into their canonical
+    # N:N relation tables. Keeping both sides writable would preserve duplicate
+    # legal truth indefinitely.
+    op.execute(
+        "DROP TRIGGER IF EXISTS judicial_decisions_sync_legacy_classification "
+        "ON corpus.judicial_decisions"
+    )
+    op.execute("DROP FUNCTION IF EXISTS corpus.sync_legacy_decision_classification()")
+    op.execute(
+        "ALTER TABLE corpus.judicial_decisions "
+        "DROP COLUMN IF EXISTS legal_matter_concept_id"
+    )
+    op.execute(
+        "ALTER TABLE corpus.judicial_decisions "
+        "DROP COLUMN IF EXISTS procedure_concept_id"
+    )
+
+    op.execute(
+        "DROP TRIGGER IF EXISTS legal_proceedings_sync_legacy_controversy "
+        "ON corpus.legal_proceedings"
+    )
+    op.execute("DROP FUNCTION IF EXISTS corpus.sync_legacy_proceeding_controversy()")
+    op.execute(
+        "ALTER TABLE corpus.legal_proceedings DROP COLUMN IF EXISTS controversy_id"
+    )
+
+    op.execute(
+        "DROP TRIGGER IF EXISTS judicial_opinions_sync_legacy_author "
+        "ON corpus.judicial_opinions"
+    )
+    op.execute("DROP FUNCTION IF EXISTS corpus.sync_legacy_opinion_author()")
+    op.execute(
+        "ALTER TABLE corpus.judicial_opinions DROP COLUMN IF EXISTS author_officer_id"
+    )
+
+
 def _remove_opinion_type_mirror() -> None:
     op.execute(
         "DROP TRIGGER IF EXISTS judicial_opinions_sync_type_concept "
@@ -139,6 +177,31 @@ def _remove_judicial_event_mirror() -> None:
         "ON corpus.decision_legal_status_events"
     )
     op.execute("DROP FUNCTION IF EXISTS corpus.sync_judicial_event_type_concept()")
+    # This overlap guard predates concept identity and therefore must be
+    # rewritten before status_type disappears.
+    op.execute("""
+        CREATE OR REPLACE FUNCTION corpus.reject_decision_status_knowledge_overlap()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtextextended(
+                concat_ws(':', NEW.case_id, NEW.event_type_concept_id, NEW.occurred_on),
+                2805
+            ));
+            IF EXISTS (
+                SELECT 1 FROM corpus.decision_legal_status_events k
+                WHERE k.id <> NEW.id
+                  AND k.case_id = NEW.case_id
+                  AND k.event_type_concept_id = NEW.event_type_concept_id
+                  AND k.occurred_on IS NOT DISTINCT FROM NEW.occurred_on
+                  AND tstzrange(k.known_from, k.known_to, '[)')
+                      && tstzrange(NEW.known_from, NEW.known_to, '[)')
+            ) THEN
+                RAISE EXCEPTION 'overlapping decision-event knowledge interval'
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END $$
+    """)
     op.execute(
         "ALTER TABLE corpus.decision_legal_status_events "
         "DROP COLUMN IF EXISTS status_type"
@@ -151,6 +214,9 @@ def _remove_disposition_compatibility_surfaces() -> None:
     # object still blocks the migration and forces an intentional review.
     op.execute("DROP VIEW IF EXISTS corpus.disposition_claim_effects")
     op.execute("DROP VIEW IF EXISTS corpus.claim_effect_concepts")
+    op.execute(
+        "DROP FUNCTION IF EXISTS corpus.validate_disposition_claim_membership()"
+    )
     op.execute(
         "DROP TRIGGER IF EXISTS disposition_targets_prepare_action "
         "ON corpus.disposition_targets"
