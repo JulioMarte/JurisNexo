@@ -337,7 +337,7 @@ def test_panel_vote_and_separate_opinion_are_not_conflated(
             (decision, officer),
         )
         assert cursor.fetchone() == ("member",)
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.decision_panel_members (
@@ -514,7 +514,7 @@ def test_substantive_treatment_requires_issue_context_and_evidence(
                 (title,),
             )
             documents.append(_one(cursor))
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.legal_relation_identities (
