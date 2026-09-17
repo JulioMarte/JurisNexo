@@ -89,7 +89,7 @@ def test_canonical_v3_relation_and_concept_columns_exist(
         ("judicial_decisions", "act_type_concept_id"),
         ("judicial_opinions", "opinion_type_concept_id"),
         ("judicial_vote_stances", "stance_concept_id"),
-        ("judicial_authority_assertions", "effect_concept_id"),
+        ("judicial_authority_assertions", "authority_effect_concept_id"),
         ("decision_legal_status_events", "event_type_concept_id"),
         ("judicial_disposition_actions", "effect_concept_id"),
         ("disposition_targets", "action_id"),
