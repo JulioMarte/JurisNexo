@@ -190,11 +190,11 @@ def test_lower_and_specialized_courts_fit_without_schema_changes(
         assert cursor.fetchone() == (lower_court_id,)
 
 
-def test_invalid_court_taxonomy_is_rejected(connection: psycopg.Connection[Any]) -> None:
+def test_unregistered_court_taxonomy_is_rejected(connection: psycopg.Connection[Any]) -> None:
     with (
         connection.transaction(force_rollback=True),
         connection.cursor() as cursor,
-        pytest.raises(psycopg.errors.CheckViolation),
+        pytest.raises(psycopg.errors.ForeignKeyViolation),
     ):
         cursor.execute(
             """
