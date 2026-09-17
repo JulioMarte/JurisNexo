@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
@@ -202,16 +201,18 @@ def test_open_law_owned_columns_are_not_reclosed_under_new_constraint_names(
     for table_name, constraint_name, definition in checks:
         columns = {column for table, column in LAW_OWNED_COLUMNS if table == table_name}
         normalized = " ".join(definition.lower().split())
+        body = normalized.removeprefix("check (").lstrip("(")
         for column in columns:
-            # PostgreSQL renders `col IN (...)` as `col = ANY (ARRAY[...])`.
-            # Only reject a CHECK whose predicate is itself the closed vocabulary;
-            # compound semantic/context checks referring to registered codes remain valid.
-            column_pattern = re.escape(column.lower())
-            enum_pattern = re.compile(
-                rf"^check \(\(?\(?{column_pattern}\)?(?:)::[a-z ]+)?"
-                r"\s*=\s*any\s*\(array\["
+            # PostgreSQL renders a simple `col IN (...)` vocabulary as
+            # `col = ANY (ARRAY[...])`. Reject only that simple enum predicate;
+            # compound context/evidence checks remain legitimate invariants.
+            is_simple_enum = (
+                body.startswith(column.lower())
+                and " = any (array[" in body
+                and " and " not in body
+                and " or " not in body
             )
-            if enum_pattern.search(normalized):
+            if is_simple_enum:
                 closed_enums.append((table_name, constraint_name, definition))
 
     assert closed_enums == [], (
