@@ -115,7 +115,7 @@ def test_decision_classification_uses_only_canonical_relation_tables(
                 INSERT INTO corpus.decision_procedures(
                     decision_id, procedure_concept_id, relation_type, ordinal,
                     verification_status, verification_method
-                ) VALUES (%s,%s,'applies',%s,'verified','human_review')
+                ) VALUES (%s,%s,'uses',%s,'verified','human_review')
                 """,
                 (decision, procedure, ordinal),
             )
