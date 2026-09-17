@@ -4,9 +4,9 @@
 
 Normative pre-ingestion refinement of `28-legal-reality-v2.md`, `31-comprehensive-legal-semantics.md`, and `33-extensible-judicial-semantics-and-disposition-targets.md`.
 
-Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, `0038_cleanup_v3_backfill`, and `0039_remove_v3_legacy`.
+Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, `0038_cleanup_v3_backfill`, `0039_remove_v3_legacy`, and `0040_open_legal_vocabularies`.
 
-This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction. Revision `0039` closes the pre-ingestion normalization boundary by removing compatibility mirrors instead of carrying duplicate legal truth into the long-lived schema.
+This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction. Revision `0039` closes the pre-ingestion compatibility boundary by removing duplicate mirrors. Revision `0040` then closes the remaining vocabulary boundary by replacing law-owned `CHECK ... IN (...)` enums with extensible concept registries referenced by foreign key.
 
 ## 1. A litigation family is not procedural ancestry
 
@@ -129,7 +129,37 @@ For legal categories generalized by Legal Reality V3, the concept FK is the only
 
 Removing the act-type default does **not** mean inventing a type is mandatory. Unknown classification is represented by `NULL`; a known classification is represented only by `act_type_concept_id`.
 
-Rule: if a category exists because a legal system can classify an act, role, relation, event, stance, authority effect, or disposition differently, represent it through an extensible concept identity. `CHECK` constraints remain appropriate for JurisNexo-controlled workflow states and structural invariants such as positive ordinals, coherent intervals, exactly-one-target rules, code syntax, and same-scope integrity.
+Rule: if a category exists because a legal system can classify an act, role, relation, event, stance, authority effect, disposition, court, procedural event, legal instrument, amendment operation, treatment, party side, or identifier differently, it must be extensible without changing DDL.
+
+### 7.1 Two canonical storage shapes are allowed
+
+JurisNexo uses two equivalent canonical shapes depending on the maturity of the model. Neither permits duplicate writable truth.
+
+**Identity FK shape** — when the relation already needs concept identity and richer semantics:
+
+```text
+row.some_concept_id -> some_concepts.id
+```
+
+Examples include adjudicative act type, judicial event type, authority effect, stance, disposition effect, and controversy membership role.
+
+**Code FK shape** — when an existing stable code column is already the canonical persisted value:
+
+```text
+row.some_legal_code -> some_legal_concepts.code
+```
+
+Revision `0040` uses this second shape for remaining law-owned vocabularies. It keeps callers and historical data simple while moving extensibility out of DDL. Adding a court type, procedural event type, treatment relation, instrument type, party side, provision type, or other registered legal category is an `INSERT` into the corresponding concept table followed by normal domain writes. No migration and no mirror column are required.
+
+A code FK is not a disguised enum: the referenced concept registry is mutable data, may carry jurisdiction metadata, and can grow independently of the schema.
+
+### 7.2 What may remain a closed CHECK
+
+Closed `CHECK` vocabularies are reserved for JurisNexo-owned mechanics and structural discriminators, for example ingestion/workflow states, verification states, source acquisition states, scope visibility, exactly-one-variant discriminators, and similar implementation contracts.
+
+A `CHECK` may also enforce a semantic invariant that refers to specific registered values without becoming the vocabulary authority itself. For example, a rule that verified substantive treatment requires issue context/evidence can remain a `CHECK`; the set of legal treatment types is still governed by its concept registry.
+
+The invariant test `test_closed_legal_vocabulary_inventory.py` maintains the explicit boundary: historically closed law-owned constraint names may not reappear, and a representative legal vocabulary must be extendable by data alone.
 
 ## 8. What V3 deliberately keeps
 
@@ -155,6 +185,6 @@ That baseline operation must happen only after:
 2. schema invariants are inspected against the migration head;
 3. no production corpus depends on the exploratory revision chain;
 4. no deprecated compatibility mirrors or aliases remain in the canonical schema;
-5. legal-domain open vocabularies are represented as concept identities rather than jurisdiction-sensitive `CHECK` lists.
+5. legal-domain open vocabularies are represented through extensible concept registries rather than jurisdiction-sensitive `CHECK` lists.
 
 Squashing earlier would make adversarial comparison and regression diagnosis harder; squashing after mass ingestion would be unnecessarily dangerous.
