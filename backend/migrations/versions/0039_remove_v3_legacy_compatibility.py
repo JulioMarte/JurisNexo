@@ -25,6 +25,7 @@ depends_on = None
 
 def upgrade() -> None:
     _open_controversy_membership_vocabulary()
+    _remove_renamed_object_compatibility_views()
     _remove_v2_scalar_compatibility()
     _remove_opinion_type_mirror()
     _remove_judicial_stance_mirror()
@@ -93,6 +94,14 @@ def _open_controversy_membership_vocabulary() -> None:
         COMMENT ON TABLE corpus.controversy_membership_role_concepts IS
         'Open legal vocabulary for a proceeding role inside a litigation family. Procedural ancestry belongs exclusively in proceeding_relations.'
     """)
+
+
+def _remove_renamed_object_compatibility_views() -> None:
+    # 0026 kept old relation names as views after canonical table renames.
+    # Do not rebuild them over V3: that would continue exposing obsolete names
+    # to humans, agents and application callers.
+    op.execute("DROP VIEW IF EXISTS corpus.cases")
+    op.execute("DROP VIEW IF EXISTS corpus.case_dispositions")
 
 
 def _remove_v2_scalar_compatibility() -> None:
