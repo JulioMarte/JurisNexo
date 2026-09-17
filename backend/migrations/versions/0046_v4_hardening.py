@@ -74,10 +74,16 @@ def _harden_verified_evidence() -> None:
             IF NEW.verification_status='verified'
                AND NOT EXISTS (
                    SELECT 1 FROM corpus.legal_issue_evidence e
-                   WHERE e.issue_id=NEW.id AND e.scope_id=NEW.scope_id
+                   WHERE e.issue_id=NEW.id
+                     AND e.scope_id=NEW.scope_id
+                     AND (
+                         e.case_page_id IS NOT NULL
+                         OR e.artifact_page_id IS NOT NULL
+                         OR btrim(coalesce(e.exact_excerpt,'')) <> ''
+                     )
                ) THEN
                 RAISE EXCEPTION
-                    'verified legal issue requires persisted source evidence'
+                    'verified legal issue requires page/passage or exact-excerpt evidence'
                     USING ERRCODE='23514';
             END IF;
             RETURN NEW;
@@ -92,10 +98,16 @@ def _harden_verified_evidence() -> None:
             IF NEW.verification_status='verified'
                AND NOT EXISTS (
                    SELECT 1 FROM corpus.factual_proposition_evidence e
-                   WHERE e.factual_proposition_id=NEW.id AND e.scope_id=NEW.scope_id
+                   WHERE e.factual_proposition_id=NEW.id
+                     AND e.scope_id=NEW.scope_id
+                     AND (
+                         e.case_page_id IS NOT NULL
+                         OR e.artifact_page_id IS NOT NULL
+                         OR btrim(coalesce(e.exact_excerpt,'')) <> ''
+                     )
                ) THEN
                 RAISE EXCEPTION
-                    'verified factual proposition requires persisted source evidence'
+                    'verified factual proposition requires page/passage or exact-excerpt evidence'
                     USING ERRCODE='23514';
             END IF;
             RETURN NEW;
@@ -230,13 +242,24 @@ def _harden_concept_hierarchy() -> None:
         """
         CREATE FUNCTION corpus.reject_legal_concept_hierarchy_cycle()
         RETURNS trigger LANGUAGE plpgsql AS $$
+        DECLARE normalized_source uuid;
+        DECLARE normalized_target uuid;
         BEGIN
             IF NEW.relation_type NOT IN ('broader','narrower') THEN
                 RETURN NEW;
             END IF;
+
+            IF NEW.relation_type='broader' THEN
+                normalized_source := NEW.source_concept_id;
+                normalized_target := NEW.target_concept_id;
+            ELSE
+                normalized_source := NEW.target_concept_id;
+                normalized_target := NEW.source_concept_id;
+            END IF;
+
             IF EXISTS (
                 WITH RECURSIVE walk(id) AS (
-                    SELECT NEW.target_concept_id
+                    SELECT normalized_target
                     UNION
                     SELECT CASE
                         WHEN e.relation_type='broader' THEN e.target_concept_id
@@ -249,7 +272,7 @@ def _harden_concept_hierarchy() -> None:
                     )
                     WHERE e.id<>NEW.id
                 )
-                SELECT 1 FROM walk WHERE id=NEW.source_concept_id
+                SELECT 1 FROM walk WHERE id=normalized_source
             ) THEN
                 RAISE EXCEPTION 'legal concept hierarchy cycle detected'
                     USING ERRCODE='23514';
