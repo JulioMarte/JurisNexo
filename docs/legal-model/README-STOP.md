@@ -1,1 +1,0 @@
-No further navigation notes should be added for V4; use the numbered canonical documents.
