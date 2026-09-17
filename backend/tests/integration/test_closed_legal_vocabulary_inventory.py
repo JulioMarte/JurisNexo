@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
@@ -17,9 +18,64 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
         yield conn
 
 
-# These constraints encoded law-owned categories directly in DDL. System-owned
-# workflow states, provenance statuses, and structural union discriminators are
-# intentionally not listed here and may remain CHECK-backed.
+# These are law-owned categorical columns opened by revision 0040. The durable
+# contract is their physical shape (extensible FK-backed code), not a particular
+# historical CHECK-constraint name.
+LAW_OWNED_COLUMNS = {
+    ("case_identifiers", "identifier_type"),
+    ("court_aliases", "alias_kind"),
+    ("court_functional_competences", "function_type"),
+    ("court_functional_competences", "instance_level"),
+    ("court_organ_aliases", "alias_kind"),
+    ("court_relations", "relation_type"),
+    ("courts", "judicial_system"),
+    ("courts", "court_type"),
+    ("decision_legal_matters", "relation_type"),
+    ("decision_panel_members", "panel_role"),
+    ("decision_procedures", "relation_type"),
+    ("decision_votes", "vote_type"),
+    ("judicial_officer_positions", "position_type"),
+    ("judicial_opinion_authors", "authorship_role"),
+    ("judicial_opinion_joiners", "join_type"),
+    ("legal_amendment_effects", "effect_type"),
+    ("legal_amendment_operations", "operation_type"),
+    ("legal_authorities", "authority_type"),
+    ("legal_controversies", "status"),
+    ("legal_document_provisions", "provision_type"),
+    ("legal_provision_versions", "provision_type"),
+    ("legal_documents", "document_type"),
+    ("legal_instrument_authority_roles", "authority_role"),
+    ("legal_instrument_events", "event_type"),
+    ("legal_instrument_version_documents", "document_role"),
+    ("legal_instrument_versions", "version_kind"),
+    ("legal_instruments", "instrument_type"),
+    ("legal_matter_concept_edges", "relation_type"),
+    ("legal_norm_sources", "source_role"),
+    ("legal_proceedings", "status"),
+    ("legal_proposition_evidence", "evidence_role"),
+    ("legal_proposition_relations", "relation_type"),
+    ("legal_provision_lineage", "lineage_type"),
+    ("legal_provision_version_sources", "source_role"),
+    ("legal_relation_identities", "relation_type"),
+    ("legal_relation_observations", "relation_type"),
+    ("legal_tags", "tag_type"),
+    ("legal_treatment_assertions", "treatment_type"),
+    ("party_representations", "representation_type"),
+    ("procedural_decision_relation_observations", "relation_type"),
+    ("procedural_decision_relations", "relation_type"),
+    ("procedural_events", "event_type"),
+    ("procedural_role_concepts", "default_party_side"),
+    ("procedure_concept_edges", "relation_type"),
+    ("proceeding_decisions", "relation_type"),
+    ("proceeding_identifiers", "identifier_type"),
+    ("proceeding_participants", "party_side"),
+    ("proceeding_party_roles", "party_side"),
+    ("territorial_units", "unit_type"),
+}
+
+
+# Retain the historical-name check as a readable diagnostic, but it is no
+# longer the only protection: the tests below inspect column/FK/check shape.
 FORBIDDEN_LEGAL_VOCABULARY_CHECKS = {
     "case_identifiers_type_check",
     "court_aliases_kind_check",
@@ -73,7 +129,7 @@ FORBIDDEN_LEGAL_VOCABULARY_CHECKS = {
 }
 
 
-def test_law_owned_vocabularies_are_not_closed_by_check_constraints(
+def test_historical_law_owned_enum_constraints_are_absent(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.cursor() as cursor:
@@ -93,8 +149,72 @@ def test_law_owned_vocabularies_are_not_closed_by_check_constraints(
         remaining = {row[0] for row in cursor.fetchall()}
 
     assert remaining == set(), (
-        "Law-owned legal vocabularies must be extensible concept rows referenced by FK, "
-        f"not CHECK enums. Remaining closed vocabularies: {sorted(remaining)}"
+        "Historical law-owned CHECK enums must not return: "
+        f"{sorted(remaining)}"
+    )
+
+
+def test_every_open_law_owned_code_is_fk_backed(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select src.relname, a.attname
+            from pg_constraint con
+            join pg_class src on src.oid = con.conrelid
+            join pg_namespace ns on ns.oid = src.relnamespace
+            cross join lateral unnest(con.conkey) as key(attnum)
+            join pg_attribute a on a.attrelid = src.oid and a.attnum = key.attnum
+            join pg_class dst on dst.oid = con.confrelid
+            join pg_namespace dns on dns.oid = dst.relnamespace
+            where ns.nspname = 'corpus'
+              and dns.nspname = 'corpus'
+              and con.contype = 'f'
+            """
+        )
+        fk_backed = {(table_name, column_name) for table_name, column_name in cursor.fetchall()}
+
+    missing = LAW_OWNED_COLUMNS - fk_backed
+    assert missing == set(), (
+        "Every law-owned canonical code must be referentially backed by an extensible "
+        f"registry; missing FK columns: {sorted(missing)}"
+    )
+
+
+def test_open_law_owned_columns_are_not_reclosed_under_new_constraint_names(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select c.relname, con.conname, pg_get_constraintdef(con.oid)
+            from pg_constraint con
+            join pg_class c on c.oid = con.conrelid
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'corpus' and con.contype = 'c'
+            order by c.relname, con.conname
+            """
+        )
+        checks = cursor.fetchall()
+
+    closed_enums: list[tuple[str, str, str]] = []
+    for table_name, constraint_name, definition in checks:
+        columns = {column for table, column in LAW_OWNED_COLUMNS if table == table_name}
+        normalized = " ".join(definition.lower().split())
+        for column in columns:
+            # PostgreSQL renders `col IN (...)` as `col = ANY (ARRAY[...])`.
+            # Only reject a CHECK whose predicate is itself the closed vocabulary;
+            # compound semantic/context checks referring to registered codes remain valid.
+            enum_pattern = re.compile(
+                rf"^check \(\(?\(?{re.escape(column.lower())}\)?(?:)::[a-z ]+)?\s*=\s*any\s*\(array\["
+            )
+            if enum_pattern.search(normalized):
+                closed_enums.append((table_name, constraint_name, definition))
+
+    assert closed_enums == [], (
+        "Law-owned vocabularies cannot be reclosed by renaming the CHECK constraint. "
+        f"Closed enum predicates found: {closed_enums}"
     )
 
 
