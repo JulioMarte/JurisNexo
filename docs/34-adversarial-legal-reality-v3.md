@@ -4,9 +4,9 @@
 
 Normative pre-ingestion refinement of `28-legal-reality-v2.md`, `31-comprehensive-legal-semantics.md`, and `33-extensible-judicial-semantics-and-disposition-targets.md`.
 
-Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, `0038_cleanup_v3_backfill`, `0039_remove_v3_legacy`, and `0040_open_legal_vocabularies`.
+Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, `0038_cleanup_v3_backfill`, `0039_remove_v3_legacy`, `0040_open_legal_vocabularies`, and `0041_harden_disposition_targets`.
 
-This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction. Revision `0039` closes the pre-ingestion compatibility boundary by removing duplicate mirrors. Revision `0040` then closes the remaining vocabulary boundary by replacing law-owned `CHECK ... IN (...)` enums with extensible concept registries referenced by foreign key.
+This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction. Revision `0039` closes the pre-ingestion compatibility boundary by removing duplicate mirrors. Revision `0040` closes the remaining vocabulary boundary by replacing law-owned `CHECK ... IN (...)` enums with extensible concept registries referenced by foreign key. Revision `0041` restores the target/effect semantic invariant at the canonical action layer after the target-level effect mirror is removed, without recreating duplicate truth.
 
 ## 1. A litigation family is not procedural ancestry
 
@@ -98,6 +98,10 @@ judicial_decision_disposition          # textual clause
 
 The legal effect lives only on `judicial_disposition_actions.effect_concept_id`. `disposition_targets` no longer duplicates that effect. The pre-V3 model did not have action identity; `0038` removes redundant textless inferred actions created during migration, and `0039` removes the compatibility mirror and trigger once canonical action identity exists.
 
+Removing the target-level effect mirror does **not** relax semantic typing. Each `disposition_effect_concepts` row declares the target type to which that effect applies. Revision `0041` enforces that every `disposition_target.target_type` matches the target type of its action's effect concept. The check runs when a target is inserted or retargeted and also when an existing action changes effect, so an update cannot leave already-linked targets semantically incompatible.
+
+A canonical action may have several different targets, but the same action cannot contain the same concrete target twice. Uniqueness is therefore keyed by `action_id` plus the typed target identity, rather than by a duplicated target-level effect column.
+
 The claim-only compatibility views `claim_effect_concepts` and `disposition_claim_effects` are also removed. Their names encode the superseded assumption that a disposition can only affect a claim; retaining them would keep that obsolete model discoverable as if it were still supported.
 
 ## 6. Controversy membership is intentionally narrower and extensible
@@ -159,7 +163,7 @@ Closed `CHECK` vocabularies are reserved for JurisNexo-owned mechanics and struc
 
 A `CHECK` may also enforce a semantic invariant that refers to specific registered values without becoming the vocabulary authority itself. For example, a rule that verified substantive treatment requires issue context/evidence can remain a `CHECK`; the set of legal treatment types is still governed by its concept registry.
 
-The invariant test `test_closed_legal_vocabulary_inventory.py` maintains the explicit boundary: historically closed law-owned constraint names may not reappear, and a representative legal vocabulary must be extendable by data alone.
+The invariant test `test_closed_legal_vocabulary_inventory.py` maintains this boundary in two ways: it rejects the historical law-owned enum constraints and independently verifies the final physical shape of every opened law-owned column. Those columns must remain FK-backed and cannot be reclosed under a newly renamed simple enum `CHECK`. A representative vocabulary is also extended by inserting concept data without DDL.
 
 ## 8. What V3 deliberately keeps
 
