@@ -242,23 +242,29 @@ def test_controversy_membership_role_is_an_open_legal_vocabulary(
         assert [row[0] for row in cursor.fetchall()] == ["relation_concept_id"]
 
 
-def test_disposition_clause_action_target_layers_are_canonical_only(
+def test_disposition_clause_action_argument_layers_are_canonical_only(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_schema='corpus' AND table_name='disposition_targets'
-              AND column_name IN ('action_id','effect_concept_id')
-            ORDER BY column_name
-            """
-        )
-        assert [row[0] for row in cursor.fetchall()] == ["action_id"]
+        cursor.execute("SELECT to_regclass('corpus.disposition_targets')")
+        assert _one(cursor) is None
         cursor.execute(
             "SELECT to_regclass('corpus.judicial_disposition_actions') IS NOT NULL"
         )
         assert _one(cursor) is True
+        cursor.execute(
+            "SELECT to_regclass('corpus.judicial_disposition_action_arguments') IS NOT NULL"
+        )
+        assert _one(cursor) is True
+        cursor.execute(
+            """
+            SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='corpus'
+              AND table_name='disposition_effect_concepts'
+              AND column_name='target_type'
+            """
+        )
+        assert _one(cursor) == 0
 
 
 def test_legacy_legal_mirrors_and_aliases_are_absent(
@@ -270,8 +276,8 @@ def test_legacy_legal_mirrors_and_aliases_are_absent(
             ("judicial_vote_stances", "stance_type"),
             ("judicial_authority_assertions", "authority_type"),
             ("decision_legal_status_events", "status_type"),
-            ("disposition_targets", "effect_concept_id"),
             ("controversy_proceedings", "relation_type"),
+            ("disposition_effect_concepts", "target_type"),
         }
         cursor.execute(
             """
@@ -287,6 +293,7 @@ def test_legacy_legal_mirrors_and_aliases_are_absent(
             "precedential_authority_assertions",
             "claim_effect_concepts",
             "disposition_claim_effects",
+            "disposition_targets",
         ):
             cursor.execute("SELECT to_regclass(%s)", (f"corpus.{legacy_view}",))
             assert _one(cursor) is None
