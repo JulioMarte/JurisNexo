@@ -51,15 +51,28 @@ def test_controversy_scope_boundary_is_immediate(
             (private_scope,),
         )
         private_controversy = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.legal_proceedings(canonical_title,identity_status)
+            VALUES ('Procedimiento público imposible','canonical') RETURNING id
+            """
+        )
+        public_proceeding = _one(cursor)
+        cursor.execute(
+            "SELECT id FROM corpus.controversy_membership_role_concepts "
+            "WHERE code='originating'"
+        )
+        role = _one(cursor)
 
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
             cursor.execute(
                 """
-                INSERT INTO corpus.legal_proceedings (
-                    controversy_id, canonical_title, identity_status
-                ) VALUES (%s, 'Procedimiento público imposible', 'canonical')
+                INSERT INTO corpus.controversy_proceedings(
+                    scope_id,controversy_id,proceeding_id,relation_concept_id,
+                    verification_status,verification_method
+                ) VALUES (%s,%s,%s,%s,'verified','contract_test')
                 """,
-                (private_controversy,),
+                (private_scope, private_controversy, public_proceeding, role),
             )
 
 
