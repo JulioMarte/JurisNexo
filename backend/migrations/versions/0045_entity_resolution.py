@@ -171,10 +171,10 @@ def upgrade() -> None:
               AND a.verification_status='verified';
 
             IF assertion_relation IS NULL OR assertion_relation NOT IN (
-                'same_as','probable_same_as','merged_into'
+                'same_as','merged_into'
             ) THEN
                 RAISE EXCEPTION
-                    'entity identity resolution requires a matching verified positive identity assertion'
+                    'entity identity resolution requires a matching verified conclusive identity assertion'
                     USING ERRCODE='23514';
             END IF;
             RETURN NEW;
@@ -226,7 +226,7 @@ def upgrade() -> None:
     op.execute(
         """
         COMMENT ON TABLE corpus.entity_identity_resolutions IS
-        'Bitemporal resolution from an observed legal entity to the currently accepted canonical identity. The observed entity remains addressable and is never deleted merely because a resolution exists.'
+        'Bitemporal resolution from an observed legal entity to the currently accepted canonical identity. A resolution requires a conclusive verified same_as/merged_into assertion; probable_same_as may remain evidence/candidate knowledge but cannot canonicalize identity. The observed entity remains addressable.'
         """
     )
     op.execute(
