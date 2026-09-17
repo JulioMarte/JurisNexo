@@ -44,8 +44,8 @@ def _disposition(cursor: psycopg.Cursor[Any], decision_id: Any) -> Any:
     cursor.execute(
         """
         INSERT INTO corpus.judicial_decision_dispositions(
-            case_id,ordinal,raw_text,verification_status,verification_method
-        ) VALUES (%s,1,'FALLA','verified','primary_text') RETURNING id
+            case_id,ordinal,raw_text,verification_status
+        ) VALUES (%s,1,'FALLA','verified') RETURNING id
         """,
         (decision_id,),
     )
