@@ -10,7 +10,7 @@ still before mass ingestion, so carrying those duplicate write surfaces into
 the long-lived schema would make the physical model less truthful than the
 conceptual model.
 
-This migration makes the concept FK the only writable truth for the affected
+This migration makes concept FKs the only writable truth for the affected
 legal categories and replaces the remaining closed controversy-membership
 vocabulary with an extensible concept table.
 """
@@ -171,10 +171,14 @@ def _remove_adjudicative_act_compatibility_default() -> None:
         "ALTER TABLE corpus.judicial_decisions "
         "ALTER COLUMN act_type_concept_id DROP DEFAULT"
     )
+    op.execute(
+        "ALTER TABLE corpus.judicial_decisions "
+        "ALTER COLUMN act_type_concept_id DROP NOT NULL"
+    )
     op.execute("DROP FUNCTION IF EXISTS corpus.default_adjudicative_act_type()")
     op.execute("""
         COMMENT ON COLUMN corpus.judicial_decisions.act_type_concept_id IS
-        'Required canonical juridical act form. Ingestion must classify explicitly; no compatibility default is supplied.'
+        'Canonical juridical act form when known. NULL means not yet classified; no compatibility default fabricates a legal classification.'
     """)
 
 
