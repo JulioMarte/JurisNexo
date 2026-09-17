@@ -1,1 +1,0 @@
-Exact-head CI is mandatory before merge.
