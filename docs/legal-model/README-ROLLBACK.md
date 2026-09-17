@@ -1,0 +1,1 @@
+V4 migrations intentionally do not offer semantic downgrades. Recovery for a failed production migration is based on a verified pre-migration backup/restore path, not reconstruction of superseded legal meaning.
