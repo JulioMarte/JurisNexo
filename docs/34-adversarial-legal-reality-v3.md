@@ -4,7 +4,7 @@
 
 Normative pre-ingestion refinement of `28-legal-reality-v2.md`, `31-comprehensive-legal-semantics.md`, and `33-extensible-judicial-semantics-and-disposition-targets.md`.
 
-Alembic revisions: `0036_legal_reality_v3` and `0037_harden_legal_reality_v3`.
+Alembic revisions: `0036_legal_reality_v3`, `0037_harden_legal_reality_v3`, and `0038_cleanup_v3_backfill`.
 
 This revision implements the adversarial review of the database against difficult real litigation rather than against a one-row-per-case abstraction.
 
@@ -92,6 +92,8 @@ judicial_decision_disposition     # textual clause
 `disposition_targets.effect_concept_id` remains temporarily as a compatibility mirror, but the canonical action semantic is `judicial_disposition_actions.effect_concept_id` through `action_id`.
 
 This permits one clause to contain several actions and one action to operate on multiple targets without duplicating the clause text.
+
+The pre-V3 model did not have action identity. During migration, targets with the same clause/effect can therefore only be grouped by a conservative compatibility inference. Revision `0038_cleanup_v3_backfill` removes redundant textless action rows left by that inference rather than allowing them to masquerade as independent legal facts.
 
 ## 6. Controversy membership is intentionally narrower
 
