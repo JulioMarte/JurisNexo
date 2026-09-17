@@ -98,7 +98,7 @@ def _evidence(
     return _one(cursor)
 
 
-def test_judicial_decision_is_physical_identity_and_cases_is_only_compat_view(
+def test_judicial_decision_is_the_only_physical_case_identity(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.cursor() as cursor:
@@ -111,10 +111,7 @@ def test_judicial_decision_is_physical_identity_and_cases_is_only_compat_view(
             ORDER BY relname
             """
         )
-        assert cursor.fetchall() == [
-            ("cases", "v"),
-            ("judicial_decisions", "r"),
-        ]
+        assert cursor.fetchall() == [("judicial_decisions", "r")]
 
 
 def test_dispositions_and_party_roles_use_extensible_concepts(
@@ -287,17 +284,29 @@ def test_opinion_joiner_must_be_panel_member(
             (decision, author),
         )
         cursor.execute(
+            "SELECT id FROM corpus.judicial_opinion_type_concepts WHERE code='majority'"
+        )
+        opinion_type = _one(cursor)
+        cursor.execute(
             """
             INSERT INTO corpus.judicial_opinions (
-                case_id, opinion_type, author_officer_id,
+                case_id, opinion_type_concept_id,
                 verification_status, verification_method
             ) VALUES (
-                %s,'majority',%s,'verified','primary_text'
+                %s,%s,'verified','primary_text'
             ) RETURNING id
             """,
-            (decision, author),
+            (decision, opinion_type),
         )
         opinion = _one(cursor)
+        cursor.execute(
+            """
+            INSERT INTO corpus.judicial_opinion_authors(
+                opinion_id,case_id,officer_id,authorship_role,ordinal
+            ) VALUES (%s,%s,%s,'author',1)
+            """,
+            (opinion, decision, author),
+        )
         with pytest.raises(
             psycopg.errors.ForeignKeyViolation
         ), connection.transaction():
