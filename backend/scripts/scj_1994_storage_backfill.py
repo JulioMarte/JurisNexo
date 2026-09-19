@@ -24,6 +24,7 @@ from jurisnexo.acquisition.recovery import (
     AcquisitionRecoveryJournal,
     GlobalAcquisitionInterruption,
     RecoveryCheckpointRecord,
+    S3RecoveryCheckpointMirror,
     classify_infrastructure_error,
     utc_now_z,
 )
@@ -320,7 +321,7 @@ def _persist_partial_evidence(
     _write_json(output_dir / "completed.json", completed)
 
 
-def main() -> None:
+def main() -> int:
     _install_signal_handlers()
     _require_environment()
     if MAX_ATTEMPTS < 1 or MAX_ATTEMPTS > 5:
@@ -342,6 +343,36 @@ def main() -> None:
     )
 
     object_store = build_s3_object_store()
+    recovery_mirror = S3RecoveryCheckpointMirror(
+        object_store=object_store,
+        object_key=(
+            "_checkpoints/scj/sentencias-1994-actualidad/"
+            f"shard-{shard_index:03d}.jsonl"
+        ),
+    )
+    if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
+        try:
+            recovery_mirror.load_if_present(recovery_journal)
+        except Exception as exc:
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is not None:
+                summary = _interruption_from_failure(
+                    failure=infrastructure_failure,
+                    candidate=None,
+                    processed_count=0,
+                    total_count=len(candidates),
+                    phase="checkpoint_restore",
+                )
+                _persist_partial_evidence(
+                    output_dir=output_dir,
+                    summary=summary,
+                    completed=[],
+                    unavailable=[],
+                    failures=[],
+                )
+                _event("scj.1994_backfill.interrupted", **summary)
+                return 75
+            raise
     fetcher = BoundedHttpFetcher(
         allowed_hosts=SCJ_DECISION_DOCUMENT_HOSTS,
         max_attempts=4,
@@ -358,6 +389,9 @@ def main() -> None:
         batch_id=batch_id,
         partition_index=shard_index,
         partition_count=shard_count,
+        certified_inventory_sha256=(
+            os.environ.get("SCJ_CERTIFIED_INVENTORY_SHA256", "").strip() or None
+        ),
     )
 
     _event(
@@ -505,6 +539,28 @@ def main() -> None:
                     file_extension=artifact.file_extension,
                 )
             )
+            try:
+                recovery_mirror.persist(recovery_journal)
+            except Exception as exc:
+                infrastructure_failure = classify_infrastructure_error(exc)
+                if infrastructure_failure is None:
+                    raise
+                interruption = _interruption_from_failure(
+                    failure=infrastructure_failure,
+                    candidate=candidate,
+                    processed_count=len(completed) + len(unavailable) + len(failures),
+                    total_count=len(candidates),
+                    phase="checkpoint_persist",
+                )
+                _persist_partial_evidence(
+                    output_dir=output_dir,
+                    summary=interruption,
+                    completed=completed,
+                    unavailable=unavailable,
+                    failures=failures,
+                )
+                _event("scj.1994_backfill.interrupted", **interruption)
+                break
             _event(
                 "scj.1994_backfill.item_completed",
                 ordinal=ordinal,
@@ -537,6 +593,28 @@ def main() -> None:
                     reason=exc.reason,
                 )
             )
+            try:
+                recovery_mirror.persist(recovery_journal)
+            except Exception as mirror_exc:
+                infrastructure_failure = classify_infrastructure_error(mirror_exc)
+                if infrastructure_failure is None:
+                    raise
+                interruption = _interruption_from_failure(
+                    failure=infrastructure_failure,
+                    candidate=candidate,
+                    processed_count=len(completed) + len(unavailable) + len(failures),
+                    total_count=len(candidates),
+                    phase="checkpoint_persist",
+                )
+                _persist_partial_evidence(
+                    output_dir=output_dir,
+                    summary=interruption,
+                    completed=completed,
+                    unavailable=unavailable,
+                    failures=failures,
+                )
+                _event("scj.1994_backfill.interrupted", **interruption)
+                break
             _event(
                 "scj.1994_backfill.item_unavailable",
                 ordinal=ordinal,
@@ -589,6 +667,28 @@ def main() -> None:
                     reason=str(exc)[:2000],
                 )
             )
+            try:
+                recovery_mirror.persist(recovery_journal)
+            except Exception as mirror_exc:
+                infrastructure_failure = classify_infrastructure_error(mirror_exc)
+                if infrastructure_failure is None:
+                    raise
+                interruption = _interruption_from_failure(
+                    failure=infrastructure_failure,
+                    candidate=candidate,
+                    processed_count=len(completed) + len(unavailable) + len(failures),
+                    total_count=len(candidates),
+                    phase="checkpoint_persist",
+                )
+                _persist_partial_evidence(
+                    output_dir=output_dir,
+                    summary=interruption,
+                    completed=completed,
+                    unavailable=unavailable,
+                    failures=failures,
+                )
+                _event("scj.1994_backfill.interrupted", **interruption)
+                break
             _event(
                 "scj.1994_backfill.item_failed",
                 ordinal=ordinal,
@@ -617,9 +717,7 @@ def main() -> None:
             unavailable=unavailable,
             failures=failures,
         )
-        raise RuntimeError(
-            f"SCJ 1994+ shard {shard_index} interrupted: {interruption['cause']}"
-        )
+        return 75
 
     try:
         stored_manifest = manifest.commit(object_store=object_store)
@@ -654,10 +752,7 @@ def main() -> None:
             failures=failures,
         )
         _event("scj.1994_backfill.interrupted", **summary)
-        raise RuntimeError(
-            f"SCJ 1994+ shard {shard_index} manifest commit interrupted: "
-            f"{infrastructure_failure.kind}"
-        ) from exc
+        return 75
     (output_dir / "run-manifest.json").write_bytes(
         stored_manifest.manifest.canonical_bytes()
     )
@@ -685,10 +780,9 @@ def main() -> None:
     _event("scj.1994_backfill.completed", **summary)
 
     if failures:
-        raise RuntimeError(
-            f"SCJ 1994+ shard {shard_index} completed with {len(failures)} failures"
-        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

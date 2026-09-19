@@ -275,6 +275,16 @@ jobs:
         env:
           SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
         run: python backend/scripts/validate_scj_1994_certified_artifact.py
+      - name: Export certified inventory identity
+        env:
+          CERTIFIED: ${{ runner.temp }}/scj-certified
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json, os
+          from pathlib import Path
+          summary=json.loads((Path(os.environ["CERTIFIED"])/"summary.json").read_text())
+          print(f"SCJ_CERTIFIED_INVENTORY_SHA256={summary['acquisition_inventory_sha256']}")
+          PY
       - name: Restore prior shard recovery checkpoint
         if: env.SCJ_BACKFILL_RESUME_RUN_ID != ''
         env:
@@ -387,6 +397,7 @@ jobs:
       - name: Reconcile inventory, manifests and live S3 listing
         env:
           SCJ_1994_INVENTORY_FILE: ${{ runner.temp }}/scj-certified/scj-1994-acquisition.inventory.jsonl
+          SCJ_CERTIFIED_SUMMARY_FILE: ${{ runner.temp }}/scj-certified/summary.json
           SCJ_VERIFY_OUTPUT: ${{ runner.temp }}/scj-verify
         run: |
           set -o pipefail

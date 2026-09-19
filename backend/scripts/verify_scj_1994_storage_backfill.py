@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, build_s3_object_store
 
 MANIFEST_PREFIX = "_manifests/scj/sentencias-1994-actualidad/"
+ALL_SCJ_MANIFEST_PREFIX = "_manifests/scj/"
+INVENTORY_PREFIX = "_inventories/scj/sentencias-1994-actualidad/"
 OBJECT_PREFIX = "jurisdictions/do/scj/decisions/"
 
 
@@ -45,10 +47,14 @@ def _list_keys(store: S3ObjectStore, prefix: str) -> list[str]:
             raise RuntimeError("S3 listing truncated without continuation token")
 
 
-def _read_json(store: S3ObjectStore, key: str) -> dict[str, Any]:
+def _read_bytes(store: S3ObjectStore, key: str) -> bytes:
     client = cast(Any, store.client)
     response = client.get_object(Bucket=store.config.bucket, Key=key)
-    payload = json.loads(response["Body"].read())
+    return cast(bytes, response["Body"].read())
+
+
+def _read_json(store: S3ObjectStore, key: str) -> dict[str, Any]:
+    payload = json.loads(_read_bytes(store, key))
     if not isinstance(payload, dict):
         raise TypeError(f"manifest {key} is not a JSON object")
     return cast(dict[str, Any], payload)
@@ -77,6 +83,7 @@ def _inventory_ids(path: Path) -> set[str]:
 def main() -> None:
     batch_id = os.environ["ACQUISITION_BATCH_ID"].strip()
     inventory_path = Path(os.environ["SCJ_1994_INVENTORY_FILE"])
+    certified_summary_path = Path(os.environ["SCJ_CERTIFIED_SUMMARY_FILE"])
     output_dir = Path(os.environ["SCJ_VERIFY_OUTPUT"])
     expected_bucket_sha256 = os.environ.get("EXPECTED_BUCKET_SHA256", "").strip()
     if not batch_id:
@@ -88,6 +95,30 @@ def main() -> None:
     if expected_bucket_sha256 and bucket_sha256 != expected_bucket_sha256:
         raise RuntimeError(
             f"storage bucket fingerprint mismatch: actual={bucket_sha256}"
+        )
+
+    certified_summary = json.loads(certified_summary_path.read_text(encoding="utf-8"))
+    certified_inventory_sha256 = str(
+        certified_summary.get("acquisition_inventory_sha256") or ""
+    )
+    if len(certified_inventory_sha256) != 64:
+        raise RuntimeError("certified summary lacks acquisition_inventory_sha256")
+    local_inventory_sha256 = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+    if local_inventory_sha256 != certified_inventory_sha256:
+        raise RuntimeError(
+            "local certified acquisition inventory digest mismatch: "
+            f"expected={certified_inventory_sha256} actual={local_inventory_sha256}"
+        )
+    snapshot_key = (
+        f"{INVENTORY_PREFIX}{certified_inventory_sha256}/"
+        "scj-1994-acquisition.inventory.jsonl"
+    )
+    durable_inventory = _read_bytes(store, snapshot_key)
+    durable_inventory_sha256 = hashlib.sha256(durable_inventory).hexdigest()
+    if durable_inventory_sha256 != certified_inventory_sha256:
+        raise RuntimeError(
+            "durable certified inventory digest mismatch: "
+            f"expected={certified_inventory_sha256} actual={durable_inventory_sha256}"
         )
 
     inventory_ids = _inventory_ids(inventory_path)
@@ -128,6 +159,12 @@ def main() -> None:
     for key, payload in sorted(batch_manifests):
         status = str(payload.get("status") or "")
         manifest_statuses[key] = status
+        manifest_inventory_sha = str(payload.get("certified_inventory_sha256") or "")
+        if manifest_inventory_sha != certified_inventory_sha256:
+            raise RuntimeError(
+                f"manifest {key} is not bound to certified inventory "
+                f"{certified_inventory_sha256}"
+            )
         if status != "succeeded":
             raise RuntimeError(f"non-success manifest in batch: {key} status={status}")
         failed_count += int(payload.get("failed_count") or 0)
@@ -198,9 +235,33 @@ def main() -> None:
             f"{missing_objects[:20]}"
         )
 
+    all_manifest_object_keys: set[str] = set()
+    for key in _list_keys(store, ALL_SCJ_MANIFEST_PREFIX):
+        if not key.endswith(".json"):
+            continue
+        payload = _read_json(store, key)
+        items = payload.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            object_key = str(item.get("object_key") or "")
+            if object_key.startswith(OBJECT_PREFIX):
+                all_manifest_object_keys.add(object_key)
+    orphan_objects = sorted(stored_keys - all_manifest_object_keys)
+    if orphan_objects:
+        raise RuntimeError(
+            f"storage contains {len(orphan_objects)} unreferenced SCJ decision objects: "
+            f"{orphan_objects[:20]}"
+        )
+
     summary = {
         "status": "COMPLETE_WITH_UNAVAILABLE" if unavailable_count else "COMPLETE",
         "batch_id": batch_id,
+        "certified_inventory_sha256": certified_inventory_sha256,
+        "durable_inventory_snapshot_key": snapshot_key,
+        "durable_inventory_sha256": durable_inventory_sha256,
         "storage_identity": {
             "bucket_sha256": bucket_sha256,
             "endpoint_host": endpoint_host,
@@ -219,6 +280,7 @@ def main() -> None:
         "unique_sha256_count": len(sha256s),
         "objects_visible_under_decisions_prefix": len(stored_keys),
         "missing_object_count": len(missing_objects),
+        "orphan_object_count": len(orphan_objects),
         "manifest_statuses": manifest_statuses,
     }
     _write_json(output_dir / "summary.json", summary)
