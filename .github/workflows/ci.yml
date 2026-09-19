@@ -180,7 +180,9 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install pinned acquisition runtime
-        run: python -m pip install -e ./backend 'boto3==1.43.93'
+        run: python -m pip install -e ./backend 'boto3==1.43.93' 'playwright==1.62.0'
+      - name: Install Chromium for verified official-source transport
+        run: python -m playwright install --with-deps chromium
       - name: Acquire, verify and manifest one live Principales PDF
         shell: bash
         env:
