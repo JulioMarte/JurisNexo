@@ -3,8 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+from jurisnexo.acquisition.http_fetcher import SCJ_DECISION_DOCUMENT_HOSTS
 
 REQUIRED_FILES = (
     "scj-1994-acquisition.inventory.jsonl",
@@ -88,10 +92,26 @@ def main() -> None:
 
     expected_count = int(summary.get("unique_document_url_count") or 0)
     line_count = 0
+    host_counts: Counter[str] = Counter()
+    unexpected_hosts: Counter[str] = Counter()
     with acquisition_path.open(encoding="utf-8") as source:
         for line in source:
-            if line.strip():
-                line_count += 1
+            if not line.strip():
+                continue
+            line_count += 1
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise TypeError("acquisition inventory contains non-object record")
+            document_url = str(record.get("document_url") or "").strip()
+            host = (urlparse(document_url).hostname or "").casefold()
+            host_counts[host] += 1
+            if host not in SCJ_DECISION_DOCUMENT_HOSTS:
+                unexpected_hosts[host] += 1
+    if unexpected_hosts:
+        raise RuntimeError(
+            "certified inventory contains non-allowlisted SCJ document hosts: "
+            f"{dict(sorted(unexpected_hosts.items()))}"
+        )
     if line_count != expected_count:
         raise RuntimeError(
             "acquisition inventory line count mismatch: "
@@ -111,6 +131,8 @@ def main() -> None:
             "byte_count": source_size,
             "sha256": source_sha256,
         },
+        "document_hosts": dict(sorted(host_counts.items())),
+        "allowed_document_hosts": sorted(SCJ_DECISION_DOCUMENT_HOSTS),
     }
     print(json.dumps(result, indent=2, sort_keys=True))
 
