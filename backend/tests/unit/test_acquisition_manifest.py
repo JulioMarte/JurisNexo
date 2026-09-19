@@ -209,7 +209,11 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
     builder = AcquisitionRunManifestBuilder(
         source="scj",
         scope="principales-sentencias",
+        storage_bucket="official-corpus",
         ingestion_id="run-001",
+        batch_id="batch-001",
+        partition_index=2,
+        partition_count=4,
         started_at=started,
     )
     uploaded_candidate = OfficialDocumentCandidate(
@@ -279,6 +283,15 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
     payload = json.loads(store.objects[stored.object_key])
     assert payload["schema_version"] == 1
     assert payload["ingestion_id"] == "run-001"
+    assert payload["batch_id"] == "batch-001"
+    assert payload["partition_index"] == 2
+    assert payload["partition_count"] == 4
+    assert payload["storage_bucket"] == "official-corpus"
+    stored_item = next(item for item in payload["items"] if item["status"] == "uploaded")
+    assert (
+        f"s3://{payload['storage_bucket']}/{stored_item['object_key']}"
+        == f"s3://official-corpus/{stored_item['object_key']}"
+    )
     assert [item["status"] for item in payload["items"]] == [
         "already_present",
         "uploaded",
@@ -290,6 +303,7 @@ def test_run_manifest_refuses_overwrite_and_mutation_after_commit() -> None:
     builder = AcquisitionRunManifestBuilder(
         source="tc",
         scope="decisions",
+        storage_bucket="official-corpus",
         ingestion_id="same-id",
         started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
     )
@@ -320,6 +334,7 @@ def test_run_manifest_refuses_overwrite_and_mutation_after_commit() -> None:
     collision = AcquisitionRunManifestBuilder(
         source="tc",
         scope="decisions",
+        storage_bucket="official-corpus",
         ingestion_id="same-id",
         started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
     )
@@ -344,12 +359,14 @@ def test_run_manifest_digests_are_order_independent() -> None:
     first = AcquisitionRunManifestBuilder(
         source="scj",
         scope="decisions",
+        storage_bucket="official-corpus",
         ingestion_id="first",
         started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
     )
     second = AcquisitionRunManifestBuilder(
         source="scj",
         scope="decisions",
+        storage_bucket="official-corpus",
         ingestion_id="second",
         started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
     )
@@ -386,6 +403,7 @@ def test_unavailable_source_item_does_not_make_successful_run_partial() -> None:
     builder = AcquisitionRunManifestBuilder(
         source="scj",
         scope="bulletins",
+        storage_bucket="official-corpus",
         ingestion_id="run-unavailable",
         started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
     )
@@ -401,3 +419,15 @@ def test_unavailable_source_item_does_not_make_successful_run_partial() -> None:
     assert manifest.status == "succeeded"
     assert manifest.unavailable_count == 1
     assert manifest.failed_count == 0
+
+
+def test_run_manifest_rejects_invalid_partition_coordinates() -> None:
+    with pytest.raises(ValueError, match="partition_index"):
+        AcquisitionRunManifestBuilder(
+            source="scj",
+            scope="decisions",
+            storage_bucket="official-corpus",
+            ingestion_id="bad-partition",
+            partition_index=4,
+            partition_count=4,
+        )
