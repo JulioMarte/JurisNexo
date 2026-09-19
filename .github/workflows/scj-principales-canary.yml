@@ -2,16 +2,6 @@ name: SCJ Principales storage canary
 
 on:
   workflow_dispatch:
-    inputs:
-      limit:
-        description: Number of live Principales PDFs to acquire
-        required: true
-        default: '1'
-        type: choice
-        options:
-          - '1'
-          - '2'
-          - '3'
   push:
     branches:
       - feature/acquisition-run-manifests
@@ -30,6 +20,7 @@ concurrency:
 
 env:
   PYTHONUNBUFFERED: '1'
+  SCJ_PRINCIPALES_CANARY_LIMIT: '1'
 
 jobs:
   canary:
@@ -43,7 +34,6 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
-      SCJ_PRINCIPALES_CANARY_LIMIT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.limit || '1' }}
       SCJ_PRINCIPALES_CANARY_OUTPUT: ${{ runner.temp }}/scj-principales-canary
     steps:
       - uses: actions/checkout@v6
@@ -54,15 +44,13 @@ jobs:
           set -euo pipefail
           missing=()
           for name in JURISNEXO_S3_BUCKET JURISNEXO_S3_ENDPOINT_URL JURISNEXO_S3_REGION JURISNEXO_S3_ACCESS_KEY_ID JURISNEXO_S3_SECRET_ACCESS_KEY; do
-            if [[ -z "${!name:-}" ]]; then
-              missing+=("$name")
-            fi
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
           if (( ${#missing[@]} > 0 )); then
             printf 'Missing required S3 secrets: %s\n' "${missing[*]}" >&2
             exit 2
           fi
-          printf 'S3 configuration present. bucket=%s region=%s\n' "$JURISNEXO_S3_BUCKET" "$JURISNEXO_S3_REGION"
+          echo 'S3 configuration is present.'
 
       - uses: actions/setup-python@v6
         with:
@@ -71,33 +59,11 @@ jobs:
       - name: Install pinned acquisition runtime
         run: python -m pip install -e ./backend 'boto3==1.43.93'
 
-      - name: Acquire, verify and manifest live Principales sample
+      - name: Acquire, verify and manifest one live Principales PDF
         shell: bash
         run: |
           set -o pipefail
           python backend/scripts/scj_principales_canary.py 2>&1 | tee scj-principales-canary.log
-
-      - name: Publish diagnostic summary
-        if: always()
-        shell: bash
-        run: |
-          echo '## SCJ Principales storage canary' >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          if [[ -f "$SCJ_PRINCIPALES_CANARY_OUTPUT/summary.json" ]]; then
-            echo 'Result: PASS. See the uploaded artifact for summary, manifest, inventory, observed HTML and raw log.' >> "$GITHUB_STEP_SUMMARY"
-            echo '### Summary' >> "$GITHUB_STEP_SUMMARY"
-            echo '\`\`\`json' >> "$GITHUB_STEP_SUMMARY"
-            cat "$SCJ_PRINCIPALES_CANARY_OUTPUT/summary.json" >> "$GITHUB_STEP_SUMMARY"
-            echo '\`\`\`' >> "$GITHUB_STEP_SUMMARY"
-          elif [[ -f "$SCJ_PRINCIPALES_CANARY_OUTPUT/failure.json" ]]; then
-            echo 'Result: FAIL. Full traceback and observed source HTML are in the uploaded artifact.' >> "$GITHUB_STEP_SUMMARY"
-            echo '### Failure' >> "$GITHUB_STEP_SUMMARY"
-            echo '\`\`\`json' >> "$GITHUB_STEP_SUMMARY"
-            cat "$SCJ_PRINCIPALES_CANARY_OUTPUT/failure.json" >> "$GITHUB_STEP_SUMMARY"
-            echo '\`\`\`' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'No structured result was produced; inspect the raw log artifact.' >> "$GITHUB_STEP_SUMMARY"
-          fi
 
       - name: Preserve source observation, manifest and logs
         if: always()
