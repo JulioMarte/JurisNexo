@@ -257,7 +257,7 @@ def main() -> None:
                 discovery_url=candidate.discovery_url,
                 document_url=candidate.document_url,
                 error_type=type(exc).__name__,
-                reason=str(exc),
+                reason=exc.reason,
             )
             unavailable_record = {
                 "source_identifier": candidate.source_identifier,
