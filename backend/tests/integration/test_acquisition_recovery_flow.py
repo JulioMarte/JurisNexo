@@ -87,6 +87,7 @@ class RecoverableMemoryStore:
     metadata: dict[str, dict[str, str]] = field(default_factory=dict)
     content_types: dict[str, str] = field(default_factory=dict)
     config: FakeConfig = field(default_factory=FakeConfig)
+    client: FakeS3Client = field(init=False)
 
     def __post_init__(self) -> None:
         self.client = FakeS3Client(self)
