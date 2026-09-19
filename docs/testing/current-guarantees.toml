@@ -430,3 +430,12 @@ severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "fitness", "contract"]
 risk = ["provenance", "operations", "architecture"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-SOURCE-BYTES-001"
+statement = "Canonical official-source acquisition preserves the exact source bytes and their detected source format (PDF, DOC, DOCX or RTF) under a content-addressed key; format conversion or normalization happens only as a derived artifact with provenance back to the immutable source, while HTML/error/unknown responses are accounted for as unavailable rather than stored as legal documents."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "contract", "integration", "fitness"]
+risk = ["provenance", "legal_quality", "architecture", "operations"]
