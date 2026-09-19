@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Mapping, cast
+from typing import Literal, cast
 
 CheckpointStatus = Literal["stored", "unavailable", "failed"]
 InfrastructureFailureKind = Literal[
@@ -173,7 +174,10 @@ def classify_infrastructure_error(exc: Exception) -> InfrastructureFailure | Non
             detail=message[:1000],
         )
 
-    if code in {"SlowDown", "TooManyRequests", "Throttling", "ThrottlingException"} or status == 429:
+    if (
+        code in {"SlowDown", "TooManyRequests", "Throttling", "ThrottlingException"}
+        or status == 429
+    ):
         return InfrastructureFailure(
             kind="rate_limited",
             retryable=True,
