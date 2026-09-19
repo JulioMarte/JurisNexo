@@ -177,7 +177,8 @@ def test_remote_checkpoint_mirror_survives_loss_of_runner_disk(tmp_path: Path) -
     store = FakeCheckpointStore()
     first_path = tmp_path / "runner-a.jsonl"
     first = AcquisitionRecoveryJournal(first_path)
-    first.append(_stored())
+    record = _stored()
+    first.append(record)
     mirror = S3RecoveryCheckpointMirror(
         object_store=store,
         object_key="_checkpoints/scj/decisions/shard-000.jsonl",
@@ -190,7 +191,7 @@ def test_remote_checkpoint_mirror_survives_loss_of_runner_disk(tmp_path: Path) -
     assert restored.get(
         source_identifier="decision-1",
         document_url="https://official.example/1.pdf",
-    ) == _stored()
+    ) == record
 
 
 def test_remote_checkpoint_missing_is_not_an_error(tmp_path: Path) -> None:
