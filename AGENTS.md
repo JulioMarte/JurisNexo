@@ -27,6 +27,8 @@ The current custom harness is a temporary benchmark baseline and a source of reu
 
 `development` is the canonical integration branch. `main` is release-only. JurisNexo uses one serialized ordinary development integration lane.
 
+**All work happens on `development`. Never work on, push to, or merge directly into `main`.**
+
 For normal feature, fix, refactor, benchmark, documentation, migration, test, or agent work:
 
 1. resolve the current `origin/development` head;
@@ -40,7 +42,12 @@ For normal feature, fix, refactor, benchmark, documentation, migration, test, or
 9. merge into `development` and delete the work branch;
 10. start the next ordinary work branch from the new integrated `development` head.
 
-The only normal pull request targeting `main` is `development -> main` for validated release promotion.
+### `main` is release-only — no direct work or merges — mandatory
+
+- Never commit, push, or merge directly to `main`. Direct pushes are rejected by the `JurisNexo - Main Release` repository ruleset.
+- Never open an ordinary feature, fix, refactor, benchmark, documentation, migration, test, or agent pull request against `main`.
+- The only normal pull request targeting `main` is `development -> main` for a validated release promotion, and only after `development` has exact-head `CI aggregate` and a deliberate release decision.
+- All ordinary work starts from the current `origin/development` head and merges back into `development`; `main` is updated exclusively through the release promotion path.
 
 Do not claim a stale CI run proves the current head. Do not weaken the branch-workflow fitness test to bypass stale/parallel topology.
 
