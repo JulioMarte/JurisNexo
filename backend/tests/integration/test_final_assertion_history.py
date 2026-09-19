@@ -191,11 +191,12 @@ def test_treatment_knowledge_intervals_cannot_overlap(
         source, target = [row[0] for row in cursor.fetchall()]
         cursor.execute(
             """
-            INSERT INTO corpus.legal_propositions (
-                proposition_type, canonical_text,
-                assertion_kind, verification_status
+            INSERT INTO corpus.legal_issues(
+                canonical_question, assertion_kind,
+                verification_status, verification_method
             ) VALUES (
-                'issue', 'Cuestión temporal', 'human_authored', 'verified'
+                'Cuestión temporal', 'human_authored',
+                'candidate', 'test'
             ) RETURNING id
             """
         )
@@ -204,7 +205,7 @@ def test_treatment_knowledge_intervals_cannot_overlap(
             """
             INSERT INTO corpus.legal_treatment_assertions (
                 source_case_id, target_case_id, treatment_type,
-                issue_proposition_id, known_from, known_to,
+                legal_issue_id, known_from, known_to,
                 verification_status, verification_method
             ) VALUES (
                 %s, %s, 'distinguishes', %s,
@@ -218,7 +219,7 @@ def test_treatment_knowledge_intervals_cannot_overlap(
                 """
                 INSERT INTO corpus.legal_treatment_assertions (
                     source_case_id, target_case_id, treatment_type,
-                    issue_proposition_id, known_from, known_to,
+                    legal_issue_id, known_from, known_to,
                     verification_status, verification_method
                 ) VALUES (
                     %s, %s, 'distinguishes', %s,
