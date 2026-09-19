@@ -47,7 +47,7 @@ class FakeFetcher:
 
 @dataclass(slots=True)
 class FakeS3Client:
-    owner: "RecoverableMemoryStore"
+    owner: RecoverableMemoryStore
 
     def put_object(
         self,
