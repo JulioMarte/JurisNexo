@@ -447,4 +447,4 @@ statement = "Large official-corpus acquisition shards persist incremental recove
 severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "contract", "integration"]
-risk = ["provenance", "operations", "data_loss"]
+risk = ["provenance", "operations"]
