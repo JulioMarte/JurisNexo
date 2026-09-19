@@ -108,19 +108,6 @@ def _provision_version(
     return provision_id, _one(cursor)
 
 
-def _proposition(cursor: psycopg.Cursor[Any], kind: str, text: str) -> Any:
-    cursor.execute(
-        """
-        INSERT INTO corpus.legal_propositions (
-            proposition_type, canonical_text,
-            assertion_kind, verification_status
-        ) VALUES (%s, %s, 'human_authored', 'verified') RETURNING id
-        """,
-        (kind, text),
-    )
-    return _one(cursor)
-
-
 def test_bitemporal_knowledge_preserves_old_system_view(
     connection: psycopg.Connection[Any],
 ) -> None:
