@@ -23,6 +23,18 @@ from jurisnexo.acquisition.recovery import (
 pytestmark = [pytest.mark.integration, pytest.mark.provenance]
 
 
+def _bytes_dict() -> dict[str, bytes]:
+    return {}
+
+
+def _metadata_dict() -> dict[str, dict[str, str]]:
+    return {}
+
+
+def _content_types_dict() -> dict[str, str]:
+    return {}
+
+
 class FakeS3Error(RuntimeError):
     def __init__(self, code: str, status: int, message: str) -> None:
         super().__init__(message)
@@ -83,9 +95,9 @@ class FakeS3Client:
 @dataclass(slots=True)
 class RecoverableMemoryStore:
     fail_after_legal_objects: int | None = None
-    objects: dict[str, bytes] = field(default_factory=dict)
-    metadata: dict[str, dict[str, str]] = field(default_factory=dict)
-    content_types: dict[str, str] = field(default_factory=dict)
+    objects: dict[str, bytes] = field(default_factory=_bytes_dict)
+    metadata: dict[str, dict[str, str]] = field(default_factory=_metadata_dict)
+    content_types: dict[str, str] = field(default_factory=_content_types_dict)
     config: FakeConfig = field(default_factory=FakeConfig)
     client: FakeS3Client = field(init=False)
 
@@ -210,7 +222,9 @@ def test_capacity_interruption_resume_manifest_and_reconciliation(tmp_path: Path
                 Bucket=store.config.bucket,
                 Key=recovered.object_key,
             )
-            assert int(head["ContentLength"]) == recovered.byte_count
+            content_length = head["ContentLength"]
+            assert isinstance(content_length, int)
+            assert content_length == recovered.byte_count
             builder.record_existing(
                 candidate=candidate,
                 sha256=recovered.sha256 or "",
