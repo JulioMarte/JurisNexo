@@ -62,7 +62,12 @@ class MemoryObjectStore:
         metadata: dict[str, str],
     ) -> None:
         payload = content if isinstance(content, bytes) else content.read()
-        if content_type == "application/pdf":
+        if content_type in {
+            "application/pdf",
+            "application/msword",
+            "application/rtf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }:
             assert metadata["sha256"] == sha256_hex(payload)
         elif content_type == "application/json":
             assert metadata["payload_sha256"] == hashlib.sha256(payload).hexdigest()
@@ -157,7 +162,7 @@ def test_checkpoint_is_written_after_each_success(tmp_path: Path) -> None:
     )
     manifest_path = tmp_path / "manifest.jsonl"
 
-    with pytest.raises(ValueError, match="not a PDF"):
+    with pytest.raises(ValueError, match="unsupported official document response"):
         acquire_candidates_resumable(
             candidates=(first, second),
             fetcher=fetcher,
@@ -283,7 +288,7 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
     assert hashlib.sha256(store.objects[stored.object_key]).hexdigest() == stored.payload_sha256
 
     payload = json.loads(store.objects[stored.object_key])
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["ingestion_id"] == "run-001"
     assert payload["batch_id"] == "batch-001"
     assert payload["partition_index"] == 2
@@ -294,7 +299,11 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
         item for item in payload["items"] if item["status"] == "already_present"
     )
     assert stored_item["verification_method"] == "downloaded_and_hashed"
+    assert stored_item["content_type"] == "application/pdf"
+    assert stored_item["file_extension"] == "pdf"
     assert existing_item["verification_method"] == "prior_manifest_and_head"
+    assert existing_item["content_type"] == "application/pdf"
+    assert existing_item["file_extension"] == "pdf"
     assert (
         f"s3://{payload['storage_bucket']}/{stored_item['object_key']}"
         == f"s3://official-corpus/{stored_item['object_key']}"
@@ -418,6 +427,8 @@ def test_unavailable_source_item_does_not_make_successful_run_partial() -> None:
         collection="bulletins",
         source_identifier="bulletin:2020:01",
         discovery_url="https://official.example/bulletins",
+        error_type="UnsupportedOfficialDocumentResponse",
+        reason="html_or_xml_response",
     )
 
     manifest = builder.build(
@@ -426,6 +437,8 @@ def test_unavailable_source_item_does_not_make_successful_run_partial() -> None:
     assert manifest.status == "succeeded"
     assert manifest.unavailable_count == 1
     assert manifest.failed_count == 0
+    assert manifest.items[0].error_type == "UnsupportedOfficialDocumentResponse"
+    assert manifest.items[0].error == "html_or_xml_response"
 
 
 def test_run_manifest_rejects_invalid_partition_coordinates() -> None:
@@ -452,4 +465,6 @@ def test_stored_run_items_require_verification_method() -> None:
             status="already_present",
             sha256="a" * 64,
             object_key="jurisdictions/do/scj/decisions/aa/" + ("a" * 64) + ".pdf",
+            content_type="application/pdf",
+            file_extension="pdf",
         )
