@@ -154,13 +154,16 @@ jobs:
         if: always()
         run: docker compose down -v --remove-orphans
 
-  principales-manifest-audit:
-    name: SCJ Principales manifest audit
+  principales-full-backfill:
+    name: SCJ Principales full storage backfill
+    needs: backend-quality
     if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/acquisition-run-manifests' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 90
     env:
       PYTHONUNBUFFERED: '1'
+      SCJ_PRINCIPALES_EXPECTED_COUNT: '36'
+      SCJ_PRINCIPALES_ITEM_ATTEMPTS: '3'
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
       JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
       JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
@@ -172,24 +175,34 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Install pinned storage runtime
-        run: python -m pip install -e ./backend 'boto3==1.43.93'
-      - name: Audit Principales manifests without mutation
+      - name: Install pinned acquisition runtime
+        run: python -m pip install -e ./backend 'boto3==1.43.93' 'playwright==1.62.0'
+      - name: Install Chromium for verified official-source transport
+        run: python -m playwright install --with-deps chromium
+      - name: Re-audit and remove only canary manifests
         env:
           SCJ_PRINCIPALES_ADMIN_OUTPUT: ${{ runner.temp }}/scj-principales-admin
         run: |
           set -o pipefail
-          python backend/scripts/scj_principales_storage_admin.py --audit-only 2>&1 | tee scj-principales-manifest-audit.log
-      - name: Preserve manifest audit
+          python backend/scripts/scj_principales_storage_admin.py --cleanup-canaries 2>&1 | tee scj-principales-cleanup.log
+      - name: Backfill all live Principales publications
+        env:
+          SCJ_PRINCIPALES_BACKFILL_OUTPUT: ${{ runner.temp }}/scj-principales-backfill
+        run: |
+          set -o pipefail
+          python backend/scripts/scj_principales_backfill.py 2>&1 | tee scj-principales-backfill.log
+      - name: Preserve cleanup and backfill evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-principales-manifest-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          name: scj-principales-full-backfill-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
           retention-days: 30
           path: |
             ${{ runner.temp }}/scj-principales-admin/**
-            scj-principales-manifest-audit.log
+            ${{ runner.temp }}/scj-principales-backfill/**
+            scj-principales-cleanup.log
+            scj-principales-backfill.log
 
   aggregate:
     name: CI aggregate
