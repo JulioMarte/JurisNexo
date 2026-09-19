@@ -7,10 +7,11 @@ Official legal-document acquisition is deterministic by default. The normal path
 1. fetch an allowlisted official URL;
 2. validate the expected source-surface contract;
 3. discover document links deterministically;
-4. download and validate PDF bytes;
-5. hash with SHA-256;
-6. store under a content-addressed object key;
-7. checkpoint the successful acquisition.
+4. download the source bytes and classify the document format by content signature;
+5. accept supported source documents (PDF, legacy Word DOC, DOCX, or RTF) and reject HTML/error payloads;
+6. hash the exact source bytes with SHA-256;
+7. store the source artifact under a content-addressed object key without conversion;
+8. checkpoint the acquisition observation.
 
 ## Source drift
 
@@ -125,6 +126,9 @@ Object identity is provider-neutral and content-addressed. Current official-corp
 
 ```text
 jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.pdf
+jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.doc
+jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.docx
+jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.rtf
 jurisdictions/do/scj/bulletins/{sha256[0:2]}/{sha256}.pdf
 jurisdictions/do/tc/decisions/{sha256[0:2]}/{sha256}.pdf
 ```
@@ -160,8 +164,10 @@ mean every document succeeded. The manifest carries an explicit run status plus 
 therefore still observable without pretending that coverage is complete.
 
 Each item preserves the source collection, source identifier, discovery URL, document URL when
-known, object key and SHA-256 when stored, byte count when known, and bounded failure information
-when acquisition failed. The manifest also records the storage bucket explicitly. Therefore a
+known, object key and SHA-256 when stored, byte count when known, detected source content type and
+file extension for stored artifacts, and bounded failure/unavailability information when acquisition
+could not produce a supported source document. Run-manifest schema version 2 adds the stored source
+format fields. The manifest also records the storage bucket explicitly. Therefore a
 consumer has a complete provider-neutral object locator as `s3://<storage_bucket>/<object_key>`
 without relying on deployment-local knowledge of which bucket produced the manifest.
 
@@ -204,8 +210,9 @@ storage. The canonical path is:
 ```text
 official source
   -> staged file
-  -> validate PDF signature
-  -> SHA-256 over the staged bytes
+  -> classify source bytes by signature (PDF / DOC / DOCX / RTF)
+  -> reject HTML/error/unknown responses as unavailable
+  -> SHA-256 over the staged source bytes
   -> derive content-addressed object key
   -> HEAD object storage
   -> PUT the same staged bytes only when missing
@@ -228,6 +235,15 @@ Stored manifest items carry a `verification_method`:
 These methods are intentionally distinct. `already_present` describes storage state; it does not
 by itself prove that the source bytes were freshly revalidated.
 
+### Preserve source bytes; normalize later
+
+Acquisition stores the exact official source artifact. It does **not** convert Word/RTF documents to PDF before hashing or storage. A conversion performed during acquisition would make the stored bytes different from the bytes published by the court and would weaken provenance.
+
+When an official SCJ record resolves to a valid Word or RTF document, JurisNexo stores that original artifact content-addressed with the detected extension and records its detected content type in the run manifest. A later normalization/ingestion stage may derive PDF, text, page images, OCR, or other representations, but those are derivatives and must retain a provenance edge back to the immutable source artifact.
+
+When an official locator returns HTML, XML/error markup, JSON/text error payloads, an empty body, an unrecognized binary format, or a ZIP that is not a Word document, the bytes are not stored beneath the legal-document namespace. The manifest records the source observation as `unavailable` with a normalized reason. `unavailable` means the source record was accounted for but the official locator did not yield a supported legal-document artifact at acquisition time; it is not silently discarded and it does not pretend coverage is complete.
+
+For batch reconciliation, every certified source identifier must be represented exactly once as `uploaded`, `already_present`, or `unavailable`. Any `failed` item or missing source identifier makes the batch incomplete. A fully accounted batch with one or more unavailable source records is reported as `COMPLETE_WITH_UNAVAILABLE`, not `COMPLETE`.
 ## Production connectivity smoke
 
 The full official-corpus workflow validates the configured object store before database validation, inventory work or mass acquisition. The smoke probe exercises only the S3 operations required by the current corpus storage path:
