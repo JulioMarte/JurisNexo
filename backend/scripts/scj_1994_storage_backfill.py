@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from jurisnexo.acquisition.http_fetcher import BoundedHttpFetcher, OFFICIAL_SOURCE_HOSTS
+from jurisnexo.acquisition.http_fetcher import (
+    BoundedHttpFetcher,
+    SCJ_DECISION_DOCUMENT_HOSTS,
+)
 from jurisnexo.acquisition.manifest import AcquisitionRunManifestBuilder
 from jurisnexo.acquisition.official_corpus import OfficialDocumentCandidate, acquire_candidates
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
@@ -142,6 +145,7 @@ def _acquire_one(
             return artifact
         except Exception as exc:
             last_error = exc
+            retryable = not isinstance(exc, (ValueError, TypeError, FileNotFoundError))
             _event(
                 "scj.1994_backfill.item_attempt_failed",
                 ordinal=ordinal,
@@ -150,7 +154,10 @@ def _acquire_one(
                 source_identifier=candidate.source_identifier,
                 error_type=type(exc).__name__,
                 error=str(exc),
+                retryable=retryable,
             )
+            if not retryable:
+                break
             if attempt < MAX_ATTEMPTS:
                 time.sleep(min(8.0, float(2 ** (attempt - 1))))
     assert last_error is not None
@@ -178,7 +185,7 @@ def main() -> None:
 
     object_store = build_s3_object_store()
     fetcher = BoundedHttpFetcher(
-        allowed_hosts=OFFICIAL_SOURCE_HOSTS,
+        allowed_hosts=SCJ_DECISION_DOCUMENT_HOSTS,
         max_attempts=4,
         timeout_seconds=120.0,
         max_bytes=512 * 1024 * 1024,
