@@ -120,7 +120,7 @@ risk = ["legal_quality", "architecture"]
 
 [[guarantees]]
 id = "INV-EXTENSIBLE-ROLE-DISPOSITION-001"
-statement = "Canonical procedural roles and judicial disposition meanings use extensible concept identities rather than closed persisted text enums; a disposition clause contains canonical actions, each action owns one effect concept, typed targets reference that action, and exact source wording remains separate provenance."
+statement = "Canonical procedural roles and judicial disposition meanings use extensible concept identities rather than closed persisted text enums; a disposition clause contains canonical actions, each action owns one effect concept, typed semantic arguments reference that action, and exact source wording remains separate provenance."
 severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "integration"]
@@ -312,7 +312,7 @@ risk = ["legal_quality", "architecture", "provenance"]
 
 [[guarantees]]
 id = "INV-CLAIM-DISPOSITION-MEMBERSHIP-001"
-statement = "A judicial disposition cannot canonically resolve a claim or appeal ground from a proceeding unrelated to that judicial decision; claim-target actions require explicit proceeding membership."
+statement = "A judicial dispositive action cannot canonically resolve a claim or use a procedural party role from a proceeding unrelated to that judicial decision; claim/party action arguments require explicit proceeding membership."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
@@ -375,9 +375,49 @@ required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["legal_quality", "architecture", "provenance"]
 
 [[guarantees]]
-id = "INV-DISPOSITION-TARGET-001"
-statement = "A judicial dispositive clause may contain multiple canonical actions; each action owns one extensible effect concept and may target claims, procedural party roles, proceedings, judicial decisions or propositions. Every target references its action, exactly one concrete target is present, the action effect target type matches every target, duplicate action-target pairs are rejected, and claim/party/proposition targets cannot borrow unrelated procedural or decision context."
+id = "INV-LEGAL-ISSUE-IDENTITY-001"
+statement = "A legal question/issue is a first-class evidenced identity distinct from a procedural claim, topic tag or legal proposition; decisions, claims and propositions relate to the issue through explicit typed relations rather than text coincidence."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-FACTUAL-EPISTEMICS-001"
+statement = "A party allegation, denial, admission, stipulation or judicial factual finding is persisted as a factual proposition with explicit kind, subject and evidence; identical wording never collapses an allegation into a judicial finding or into a legal proposition."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-DISPOSITION-ACTION-ARGUMENT-001"
+statement = "A judicial dispositive clause may contain multiple canonical actions; each action owns one extensible effect concept and may have multiple typed semantic arguments such as object, obligor, beneficiary, destination, claim, legal provision, amount, scope or condition. Arguments preserve same-proceeding/same-decision context and typed literal values without restoring the V3 disposition_targets or effect target_type surfaces."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-ENTITY-RESOLUTION-HISTORY-001"
+statement = "Entity identity resolution preserves both observed and canonical legal-entity identities, requires evidence for verified identity assertions, records a bitemporal resolution history, and never treats normalized-name similarity as proof or performs an untraceable destructive merge."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance", "architecture"]
+
+[[guarantees]]
+id = "INV-SHARED-CONCEPT-JURISDICTION-001"
+statement = "New cross-domain legal vocabularies may share the concept_schemes/legal_concepts substrate, but concept identity remains scheme- and jurisdiction-aware; similar labels across jurisdictions do not imply identity and hierarchical concept relations remain acyclic."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-CONFIDENCE-SEPARATION-001"
+statement = "Where confidence is persisted for interpretive extraction, extraction confidence and semantic/legal classification confidence are distinct dimensions; neither confidence score is equivalent to verification or evidence."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "provenance"]

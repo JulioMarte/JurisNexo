@@ -25,6 +25,7 @@ def test_legacy_relation_aliases_are_absent(
         "precedential_authority_assertions",
         "claim_effect_concepts",
         "disposition_claim_effects",
+        "disposition_targets",
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -41,8 +42,8 @@ def test_legacy_relation_aliases_are_absent(
         actual = {row[0] for row in cursor.fetchall()}
 
     assert actual == set(), (
-        "Legal Reality V3 requires one canonical physical representation. "
-        f"Remove legacy relation aliases instead of restoring compatibility views: {sorted(actual)}"
+        "Canonical legal reality requires one writable representation. "
+        f"Remove legacy relation aliases/superseded target tables: {sorted(actual)}"
     )
 
 
@@ -58,8 +59,8 @@ def test_legacy_scalar_and_text_mirror_columns_are_absent(
         ("judicial_vote_stances", "stance_type"),
         ("judicial_authority_assertions", "authority_type"),
         ("decision_legal_status_events", "status_type"),
-        ("disposition_targets", "effect_concept_id"),
         ("controversy_proceedings", "relation_type"),
+        ("disposition_effect_concepts", "target_type"),
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -81,7 +82,7 @@ def test_legacy_scalar_and_text_mirror_columns_are_absent(
     )
 
 
-def test_canonical_v3_relation_and_concept_columns_exist(
+def test_canonical_v3_relations_survive_v4_and_action_arguments_are_canonical(
     connection: psycopg.Connection[Any],
 ) -> None:
     required_columns = {
@@ -92,7 +93,9 @@ def test_canonical_v3_relation_and_concept_columns_exist(
         ("judicial_authority_assertions", "authority_effect_concept_id"),
         ("decision_legal_status_events", "event_type_concept_id"),
         ("judicial_disposition_actions", "effect_concept_id"),
-        ("disposition_targets", "action_id"),
+        ("judicial_disposition_action_arguments", "action_id"),
+        ("judicial_disposition_action_arguments", "role_concept_id"),
+        ("judicial_disposition_action_arguments", "object_type"),
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -106,8 +109,8 @@ def test_canonical_v3_relation_and_concept_columns_exist(
 
     missing = required_columns - actual
     assert missing == set(), (
-        "Canonical Legal Reality V3 columns are part of the persisted model; "
-        f"missing: {sorted(missing)}"
+        "V3 legal identities must survive the V4 refinement and dispositive actions "
+        f"must expose typed arguments; missing: {sorted(missing)}"
     )
 
 
@@ -123,6 +126,8 @@ def test_removed_legacy_sync_triggers_and_functions_stay_removed(
         "judicial_authority_assertions_sync_effect_concept",
         "decision_legal_status_events_sync_type_concept",
         "disposition_targets_prepare_action",
+        "disposition_targets_validate_target",
+        "disposition_targets_validate_action_effect_type",
     }
     legacy_functions = {
         "sync_legacy_decision_classification",
@@ -133,6 +138,9 @@ def test_removed_legacy_sync_triggers_and_functions_stay_removed(
         "sync_judicial_authority_effect_concept",
         "sync_judicial_event_type_concept",
         "prepare_disposition_target_action",
+        "validate_disposition_target",
+        "validate_disposition_action_target_type",
+        "validate_disposition_action_effect_change",
         "default_adjudicative_act_type",
     }
 
