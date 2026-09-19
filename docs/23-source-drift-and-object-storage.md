@@ -7,10 +7,11 @@ Official legal-document acquisition is deterministic by default. The normal path
 1. fetch an allowlisted official URL;
 2. validate the expected source-surface contract;
 3. discover document links deterministically;
-4. download and validate PDF bytes;
-5. hash with SHA-256;
-6. store under a content-addressed object key;
-7. checkpoint the successful acquisition.
+4. download the source bytes and classify the document format by content signature;
+5. accept supported source documents (PDF, legacy Word DOC, DOCX, or RTF) and reject HTML/error payloads;
+6. hash the exact source bytes with SHA-256;
+7. store the source artifact under a content-addressed object key without conversion;
+8. checkpoint the acquisition observation.
 
 ## Source drift
 
@@ -125,6 +126,9 @@ Object identity is provider-neutral and content-addressed. Current official-corp
 
 ```text
 jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.pdf
+jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.doc
+jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.docx
+jurisdictions/do/scj/decisions/{sha256[0:2]}/{sha256}.rtf
 jurisdictions/do/scj/bulletins/{sha256[0:2]}/{sha256}.pdf
 jurisdictions/do/tc/decisions/{sha256[0:2]}/{sha256}.pdf
 ```
@@ -133,6 +137,113 @@ The SHA-256 digest, source URL, source identifier, byte count, acquisition manif
 
 Bucket versioning is not assumed. JurisNexo detects changed content by digest and preserves new bytes under a new content-addressed key rather than overwriting canonical historical evidence.
 
+## Durable acquisition run manifests
+
+Every production document-acquisition run that writes official artifacts to object storage must also
+close with one durable **run manifest** in the same bucket. The manifest is the handoff contract
+between acquisition/storage and later consumers such as PostgreSQL ingestion. Acquisition does not
+need database access in order to produce this record.
+
+Run manifests use an append-only namespace:
+
+```text
+_manifests/<source>/<scope>/<YYYY>/<MM>/<DD>/<ingestion-id>.json
+```
+
+Examples:
+
+```text
+_manifests/scj/principales-sentencias/2026/09/19/<ingestion-id>.json
+_manifests/tc/decisions/2026/09/19/<ingestion-id>.json
+```
+
+The manifest is written **after** the run has finished processing its assigned source observations.
+Its existence means the run was closed and is ready to be inspected by a consumer; it does not
+mean every document succeeded. The manifest carries an explicit run status plus counts for
+`uploaded`, `already_present`, `unavailable` and `failed` items. A run with item failures is
+therefore still observable without pretending that coverage is complete.
+
+Each item preserves the source collection, source identifier, discovery URL, document URL when
+known, object key and SHA-256 when stored, byte count when known, detected source content type and
+file extension for stored artifacts, and bounded failure/unavailability information when acquisition
+could not produce a supported source document. Run-manifest schema version 2 adds the stored source
+format fields. The manifest also records the storage bucket explicitly. Therefore a
+consumer has a complete provider-neutral object locator as `s3://<storage_bucket>/<object_key>`
+without relying on deployment-local knowledge of which bucket produced the manifest.
+
+The manifest additionally contains:
+
+- a deterministic `source_inventory_sha256` over the observed source identities/URLs;
+- a deterministic `artifact_set_sha256` over the successfully stored/verified artifact set;
+- UTC start/completion timestamps;
+- a schema version and stable ingestion identifier;
+- a `batch_id`, `partition_index` and `partition_count` so sharded acquisitions remain
+  reconstructable as one logical ingestion batch.
+
+Each partition writes its own immutable manifest. A consumer may process partitions independently,
+but it can only claim the whole logical batch has arrived when it has observed every partition
+index from `0` through `partition_count - 1` for the same `batch_id`.
+
+The manifest payload itself is canonical JSON and its SHA-256 is stored as S3 object metadata.
+The writer performs a `HeadObject` check and refuses to overwrite an existing manifest key. Run
+identifiers should still be unique per execution; the current object-store contract does not claim
+a cross-provider atomic compare-and-swap primitive.
+
+This run manifest is distinct from `FileAcquisitionManifest`. The file manifest is a local,
+append-only resume checkpoint for deterministic downloading. It is not the durable inter-system
+handoff contract and consumers must not treat it as one.
+
+A future database consumer should list only the relevant `_manifests/<source>/<scope>/` prefix,
+validate schema and payload integrity, process unseen `ingestion_id` values idempotently, and
+persist its own consumer checkpoint. It should not use `LastModified` timestamps or a mutable
+`latest.json` as correctness cursors.
+
+Run manifests do not replace periodic reconciliation. Reconciliation remains the independent check
+that objects claimed by manifests actually exist in storage and that storage has not accumulated
+unreferenced/orphaned artifacts.
+
+### Artifact hashing and verification semantics
+
+The content SHA-256 is established during acquisition, before an artifact is committed to object
+storage. The canonical path is:
+
+```text
+official source
+  -> staged file
+  -> classify source bytes by signature (PDF / DOC / DOCX / RTF)
+  -> reject HTML/error/unknown responses as unavailable
+  -> SHA-256 over the staged source bytes
+  -> derive content-addressed object key
+  -> HEAD object storage
+  -> PUT the same staged bytes only when missing
+  -> record manifest item
+```
+
+The staged file is hashed in chunks so the hashing step does not require loading the whole document
+into memory. Fetchers that support direct file download should write directly to the staged file.
+Legacy byte-returning fetchers may still be adapted by materializing their returned bytes to the
+staging file before hashing. In every case, the object key and manifest SHA refer to the exact bytes
+that were staged and, when a PUT occurs, uploaded.
+
+Stored manifest items carry a `verification_method`:
+
+- `downloaded_and_hashed`: this run obtained the source bytes and recomputed their SHA-256 before
+  checking/storing the content-addressed object;
+- `prior_manifest_and_head`: this run reused a previously known SHA/object key and verified that
+  the referenced object still exists in storage without re-downloading the source bytes.
+
+These methods are intentionally distinct. `already_present` describes storage state; it does not
+by itself prove that the source bytes were freshly revalidated.
+
+### Preserve source bytes; normalize later
+
+Acquisition stores the exact official source artifact. It does **not** convert Word/RTF documents to PDF before hashing or storage. A conversion performed during acquisition would make the stored bytes different from the bytes published by the court and would weaken provenance.
+
+When an official SCJ record resolves to a valid Word or RTF document, JurisNexo stores that original artifact content-addressed with the detected extension and records its detected content type in the run manifest. A later normalization/ingestion stage may derive PDF, text, page images, OCR, or other representations, but those are derivatives and must retain a provenance edge back to the immutable source artifact.
+
+When an official locator returns HTML, XML/error markup, JSON/text error payloads, an empty body, an unrecognized binary format, or a ZIP that is not a Word document, the bytes are not stored beneath the legal-document namespace. The manifest records the source observation as `unavailable` with a normalized reason. `unavailable` means the source record was accounted for but the official locator did not yield a supported legal-document artifact at acquisition time; it is not silently discarded and it does not pretend coverage is complete.
+
+For batch reconciliation, every certified source identifier must be represented exactly once as `uploaded`, `already_present`, or `unavailable`. Any `failed` item or missing source identifier makes the batch incomplete. A fully accounted batch with one or more unavailable source records is reported as `COMPLETE_WITH_UNAVAILABLE`, not `COMPLETE`.
 ## Production connectivity smoke
 
 The full official-corpus workflow validates the configured object store before database validation, inventory work or mass acquisition. The smoke probe exercises only the S3 operations required by the current corpus storage path:
@@ -158,3 +269,18 @@ The workflow exposes a manual `s3-smoke` scope so production S3 credentials and 
 The generic S3 runtime is implemented for official-corpus acquisition and verification. It does **not** yet mean that every future product storage concern is finished.
 
 Private tenant uploads, report exports, presigned upload/download URLs, lifecycle policies, multipart thresholds, encryption policy and tenant-specific authorization still require their own product contracts before they are treated as implemented capabilities. Those features should reuse the same provider-neutral S3 infrastructure where appropriate rather than bypassing it with vendor-specific application logic.
+
+
+## Resumable acquisition and infrastructure interruptions
+
+Large corpus acquisitions must assume that object storage, runners and networks can fail mid-shard. A completed object is never discarded merely because the run that created it did not reach its final manifest.
+
+The SCJ 1994+ backfill therefore keeps an append-only local recovery journal during each shard. The journal is flushed and fsynced after every resolved source observation and is uploaded by GitHub Actions with `if: always()`. Stored records contain the source identifier/URL, SHA-256, object key, byte count and detected format. Unavailable and item-failure observations are recorded separately.
+
+A resume operation may restore a prior shard journal. For a stored record, resume performs `HeadObject` before skipping the source download and verifies the recorded byte count plus SHA/content-type metadata when the provider returns those fields. A mismatch is an integrity failure and must not be silently overwritten. A previously unavailable observation is reused; an ordinary failed observation is attempted again.
+
+Infrastructure failures are classified separately from document failures. Capacity/quota exhaustion, invalid credentials, authorization failures and missing/misconfigured buckets are terminal for the shard and activate a circuit breaker. Rate limiting, provider 5xx responses and transport failures are retried within the bounded item budget; if they remain unresolved, the shard is interrupted rather than producing thousands of misleading document failures.
+
+An interrupted shard writes local recovery evidence and exits non-zero with `RUN_INTERRUPTED`, the cause, the interruption point, processed/pending counts and `resumable: true`. It does **not** attempt to commit the final object-storage run manifest when storage itself is the failing dependency. The final immutable run manifest remains a closure record and is committed only after the shard reaches a controlled end.
+
+The production SCJ full backfill workflow is manual-only. Running it requires the explicit `confirm_production=RUN` input. An optional `resume_run_id` restores the matching shard artifacts from a prior workflow run and feeds each `recovery-checkpoint.jsonl` back to the shard. This keeps recovery a normal operation rather than requiring a destructive restart.

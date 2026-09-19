@@ -1,0 +1,48 @@
+name: SCJ 1994+ count probe
+
+on:
+  push:
+    branches:
+      - feature/acquisition-run-manifests
+    paths:
+      - '.github/workflows/scj-1994-count-probe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-1994-count-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Measure yearly SCJ decision counts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install Playwright
+        run: python -m pip install 'playwright==1.62.0'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Probe 1994 through 2026
+        env:
+          SCJ_YEAR_MIN: '1994'
+          SCJ_YEAR_MAX: '2026'
+          SCJ_YEAR_PROBE_OUTPUT: ${{ runner.temp }}/scj-year-probe
+        run: |
+          set -o pipefail
+          python backend/scripts/scj_year_count_probe.py 2>&1 | tee scj-year-count-probe.log
+      - name: Preserve probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-1994-count-probe-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/scj-year-probe/**
+            scj-year-count-probe.log
