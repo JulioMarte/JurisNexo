@@ -66,7 +66,11 @@ def test_journal_is_durable_and_latest_record_wins(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("error", "kind", "retryable"),
     [
-        (FakeS3Error("QuotaExceeded", 400, "storage quota exceeded"), "storage_capacity_exceeded", False),
+        (
+            FakeS3Error("QuotaExceeded", 400, "storage quota exceeded"),
+            "storage_capacity_exceeded",
+            False,
+        ),
         (FakeS3Error("AccessDenied", 403, "no"), "authorization_error", False),
         (FakeS3Error("NoSuchBucket", 404, "missing"), "bucket_configuration_error", False),
         (FakeS3Error("SlowDown", 429, "slow down"), "rate_limited", True),
