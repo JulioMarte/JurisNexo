@@ -3,7 +3,8 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, BinaryIO, Protocol, cast
+from pathlib import Path
+from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 from pydantic import SecretStr, model_validator
@@ -20,7 +21,7 @@ class S3Client(Protocol):
         *,
         Bucket: str,
         Key: str,
-        Body: bytes | BinaryIO,
+        Body: bytes,
         ContentType: str,
         Metadata: dict[str, str],
     ) -> object: ...
@@ -196,7 +197,7 @@ class S3ObjectStore:
         self,
         *,
         key: str,
-        content: bytes | BinaryIO,
+        content: bytes,
         content_type: str,
         metadata: dict[str, str],
     ) -> None:
@@ -207,6 +208,25 @@ class S3ObjectStore:
             ContentType=content_type,
             Metadata=metadata,
         )
+
+
+    def put_file(
+        self,
+        *,
+        key: str,
+        path: Path,
+        content_type: str,
+        metadata: dict[str, str],
+    ) -> None:
+        with path.open("rb") as stream:
+            client = cast(Any, self.client)
+            client.put_object(
+                Bucket=self.config.bucket,
+                Key=key,
+                Body=stream,
+                ContentType=content_type,
+                Metadata=metadata,
+            )
 
 
 def build_s3_object_store(
