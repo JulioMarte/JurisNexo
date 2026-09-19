@@ -133,7 +133,6 @@ def main() -> None:
         failed_count += int(payload.get("failed_count") or 0)
         uploaded_count += int(payload.get("uploaded_count") or 0)
         already_present_count += int(payload.get("already_present_count") or 0)
-        unavailable_count += int(payload.get("unavailable_count") or 0)
         items = payload.get("items")
         if not isinstance(items, list):
             raise TypeError(f"manifest {key} lacks items array")
