@@ -170,6 +170,12 @@ Budget exhaustion must lead to an explicit terminal/limited state. It must never
 
 Already completed stage artifacts may remain available for diagnosis or explicit later resume when policy permits.
 
+For large official-corpus acquisition, an infrastructure interruption is an expected operational
+state, not an application crash. The acquisition runner must persist incremental recovery state
+outside ephemeral runner memory/disk, report `RUN_INTERRUPTED` with a resumable/non-resumable
+classification, stop further expensive mutation through a circuit breaker, and avoid publishing
+a final immutable run manifest until the shard reaches a controlled closure state.
+
 ## 10. Progress reporting
 
 User-visible progress should derive from persisted state and counts, for example:
