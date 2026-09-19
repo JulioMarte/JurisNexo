@@ -12,6 +12,8 @@ from jurisnexo.acquisition.http_fetcher import OFFICIAL_SOURCE_HOSTS
 from jurisnexo.acquisition.manifest import AcquisitionRunManifestBuilder
 from jurisnexo.acquisition.official_corpus import (
     SCJ_PRINCIPALES_URL,
+    OfficialDocumentCandidate,
+    StoredOfficialArtifact,
     acquire_candidates,
     discover_scj_principales_candidates_from_html,
 )
@@ -57,7 +59,7 @@ def _ingestion_id() -> str:
     return f"local-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-scj-principales-full"
 
 
-def _discover(fetcher: PlaywrightVerifiedFetcher) -> tuple[object, ...]:
+def _discover(fetcher: PlaywrightVerifiedFetcher) -> tuple[OfficialDocumentCandidate, ...]:
     _event("principales.backfill.discovery_started", url=SCJ_PRINCIPALES_URL)
     html_bytes = fetcher.get_bytes(SCJ_PRINCIPALES_URL)
     html_sha256 = hashlib.sha256(html_bytes).hexdigest()
@@ -104,10 +106,10 @@ def _acquire_one(
     *,
     fetcher: PlaywrightVerifiedFetcher,
     store: S3ObjectStore,
-    candidate: object,
+    candidate: OfficialDocumentCandidate,
     index: int,
     total: int,
-):
+) -> StoredOfficialArtifact:
     last_error: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
