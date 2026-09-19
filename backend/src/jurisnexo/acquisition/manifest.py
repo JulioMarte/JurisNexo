@@ -308,6 +308,8 @@ class AcquisitionRunManifestBuilder:
         source_identifier: str,
         discovery_url: str,
         document_url: str | None = None,
+        error_type: str | None = None,
+        reason: str | None = None,
     ) -> None:
         self._record(
             AcquisitionRunItem(
@@ -316,6 +318,8 @@ class AcquisitionRunManifestBuilder:
                 discovery_url=discovery_url,
                 document_url=document_url,
                 status="unavailable",
+                error_type=error_type,
+                error=reason[:2000] if reason else None,
             )
         )
 
