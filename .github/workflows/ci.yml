@@ -155,7 +155,6 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
       SCJ_PRINCIPALES_CANARY_LIMIT: '1'
-      SCJ_PRINCIPALES_CANARY_OUTPUT: ${{ runner.temp }}/scj-principales-canary
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
       JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
       JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
@@ -184,6 +183,8 @@ jobs:
         run: python -m pip install -e ./backend 'boto3==1.43.93'
       - name: Acquire, verify and manifest one live Principales PDF
         shell: bash
+        env:
+          SCJ_PRINCIPALES_CANARY_OUTPUT: ${{ runner.temp }}/scj-principales-canary
         run: |
           set -o pipefail
           python backend/scripts/scj_principales_canary.py 2>&1 | tee scj-principales-canary.log
