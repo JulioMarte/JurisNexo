@@ -216,7 +216,7 @@ risk = ["architecture", "provenance", "legal_quality"]
 
 [[guarantees]]
 id = "INV-AGENT-DATA-ACCESS-001"
-statement = "Agents and model runtimes do not receive unrestricted SQL or production database credentials; legal corpus access crosses explicit Document Workspace or Corpus API capabilities with deterministic authorization and validation."
+statement = "Agents, agent benchmarks and model runtimes do not receive unrestricted SQL, production database credentials, or direct/transitive imports to persistence authority; legal corpus access crosses explicit Document Workspace or Corpus API capabilities with deterministic authorization and validation."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["fitness", "security", "adversarial"]
@@ -264,7 +264,7 @@ risk = ["legal_quality", "architecture"]
 
 [[guarantees]]
 id = "FIT-ARCH-BOUNDARY-001"
-statement = "Agent/runtime, provider, persistence and HTTP concerns cross explicit supported boundaries; agent-like modules do not gain direct database authority and provider contracts remain independent from concrete provider implementations."
+statement = "Agent/runtime, provider, persistence and HTTP concerns cross explicit supported boundaries; agent-like modules and agent benchmark entrypoints have no direct or transitive dependency path to database drivers/persistence adapters, and provider contracts remain independent from concrete provider implementations."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["fitness"]
