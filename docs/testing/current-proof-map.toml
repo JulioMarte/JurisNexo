@@ -152,3 +152,208 @@ evidence = ["fitness"]
 guarantee = "FIT-ENGINEERING-SIGNALS-001"
 path = "backend/tests/architecture/test_engineering_quality_diff.py"
 evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-IDENTITY-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-JUDICIAL-DECISION-PHYSICAL-001"
+path = "backend/tests/legal_model/test_schema_governance_v4.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-JUDICIAL-DECISION-PHYSICAL-001"
+path = "backend/tests/legal_model/test_schema_governance_v4.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-PROPOSITION-EPISTEMICS-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-PROPOSITION-SUBJECT-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-PROVISION-HIERARCHY-001"
+path = "backend/tests/integration/test_legal_instrument_temporal_schema.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-TEMPORAL-IDENTITY-001"
+path = "backend/tests/integration/test_legal_instrument_temporal_schema.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-BITEMPORAL-KNOWLEDGE-001"
+path = "backend/tests/integration/test_final_assertion_history.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-BITEMPORAL-ASSERTIONS-001"
+path = "backend/tests/integration/test_final_assertion_history.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-NORM-EPISTEMICS-001"
+path = "backend/tests/integration/test_final_legal_model_normalization.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-RELATION-HISTORY-001"
+path = "backend/tests/integration/test_final_legal_model_normalization.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-TAXONOMY-DAG-001"
+path = "backend/tests/integration/test_comprehensive_legal_semantics_schema.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-EXTENSIBLE-ROLE-DISPOSITION-001"
+path = "backend/tests/integration/test_extensible_judicial_semantics.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-PARTY-ROLE-REPRESENTATION-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-JUDICIAL-STANCE-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-JUDICIAL-OPINION-PANEL-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-DECISION-LEGAL-STATUS-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-COURT-COMPETENCE-001"
+path = "backend/tests/integration/test_legal_reality_foundations_schema.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-CONTEXTUAL-AUTHORITY-001"
+path = "backend/tests/integration/test_legal_reality_v3_schema_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-CONTEXTUAL-TREATMENT-001"
+path = "backend/tests/integration/test_legal_reality_v3_schema_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-TREATMENT-EVIDENCE-001"
+path = "backend/tests/integration/test_adversarial_legal_reality_v3.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-AMENDMENT-RECONSTRUCTION-001"
+path = "backend/tests/integration/test_legal_instrument_temporal_schema.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-AUTHORITY-IDENTITY-001"
+path = "backend/tests/integration/test_legal_reality_foundations_schema.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-PROPOSITION-SUBJECT-CARDINALITY-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-JUDICIAL-PARTIAL-STANCE-001"
+path = "backend/tests/integration/test_legal_reality_v2_conformance.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORM-CLAIM-CONTEXT-001"
+path = "backend/tests/integration/test_legal_reality_v2_conformance.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-CLAIM-DISPOSITION-MEMBERSHIP-001"
+path = "backend/tests/integration/test_legal_reality_v3_schema_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-COMMON-LEGAL-ENTITY-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-DECISION-STATE-EVENT-001"
+path = "backend/tests/integration/test_legal_reality_v2.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-CANONICAL-ONLY-LEGAL-SEMANTICS-001"
+path = "backend/tests/integration/test_adversarial_legal_reality_v3.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-CANONICAL-ONLY-LEGAL-SEMANTICS-001"
+path = "backend/tests/legal_model/test_schema_governance_v4.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-CLAIM-PROCEEDING-CONTEXT-001"
+path = "backend/tests/integration/test_legal_reality_v3_schema_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-EXTENSIBLE-JUDICIAL-OPINION-001"
+path = "backend/tests/integration/test_extensible_judicial_semantics.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-EXTENSIBLE-JUDICIAL-STANCE-001"
+path = "backend/tests/integration/test_extensible_judicial_semantics.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-EXTENSIBLE-JUDICIAL-AUTHORITY-001"
+path = "backend/tests/integration/test_extensible_judicial_semantics.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-LEGAL-ISSUE-IDENTITY-001"
+path = "backend/tests/legal_model/test_v4_semantic_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-FACTUAL-EPISTEMICS-001"
+path = "backend/tests/legal_model/test_v4_semantic_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-DISPOSITION-ACTION-ARGUMENT-001"
+path = "backend/tests/legal_model/test_v4_semantic_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-ENTITY-RESOLUTION-HISTORY-001"
+path = "backend/tests/legal_model/test_v4_semantic_contract.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-SHARED-CONCEPT-JURISDICTION-001"
+path = "backend/tests/legal_model/test_v4_semantic_contract.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-CONFIDENCE-SEPARATION-001"
+path = "backend/tests/legal_model/test_v4_semantic_contract.py"
+evidence = ["invariant", "integration"]
