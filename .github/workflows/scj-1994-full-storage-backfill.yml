@@ -1,18 +1,21 @@
 name: SCJ 1994+ one-shot storage backfill
 
 on:
-  push:
-    branches:
-      - feature/acquisition-run-manifests
-    paths:
-      - '.github/workflows/scj-1994-full-storage-backfill.yml'
-      - 'backend/scripts/scj_1994_storage_backfill.py'
-      - 'backend/scripts/validate_scj_1994_certified_artifact.py'
-      - 'backend/scripts/verify_scj_1994_storage_backfill.py'
-      - 'backend/src/jurisnexo/acquisition/**'
+  workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: 'Type RUN to execute the production backfill'
+        required: true
+        default: ''
+      resume_run_id:
+        description: 'Optional prior workflow run ID whose shard checkpoints should be reused'
+        required: false
+        default: ''
+
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: scj-1994-full-storage-backfill
@@ -26,6 +29,7 @@ env:
 
 jobs:
   inventory:
+    if: inputs.confirm_production == 'RUN'
     name: Inventory decisions year-index ${{ matrix.shard }}/33
     runs-on: ubuntu-24.04
     timeout-minutes: 60
