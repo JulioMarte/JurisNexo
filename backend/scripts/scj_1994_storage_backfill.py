@@ -114,6 +114,10 @@ def _load_assigned(
     return assigned
 
 
+def _is_retryable_item_error(exc: Exception) -> bool:
+    return not isinstance(exc, (ValueError, TypeError, FileNotFoundError))
+
+
 def _acquire_one(
     *,
     candidate: OfficialDocumentCandidate,
@@ -145,7 +149,7 @@ def _acquire_one(
             return artifact
         except Exception as exc:
             last_error = exc
-            retryable = not isinstance(exc, (ValueError, TypeError, FileNotFoundError))
+            retryable = _is_retryable_item_error(exc)
             _event(
                 "scj.1994_backfill.item_attempt_failed",
                 ordinal=ordinal,
