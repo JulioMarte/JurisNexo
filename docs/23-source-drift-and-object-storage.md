@@ -161,12 +161,22 @@ therefore still observable without pretending that coverage is complete.
 
 Each item preserves the source collection, source identifier, discovery URL, document URL when
 known, object key and SHA-256 when stored, byte count when known, and bounded failure information
-when acquisition failed. The manifest additionally contains:
+when acquisition failed. The manifest also records the storage bucket explicitly. Therefore a
+consumer has a complete provider-neutral object locator as `s3://<storage_bucket>/<object_key>`
+without relying on deployment-local knowledge of which bucket produced the manifest.
+
+The manifest additionally contains:
 
 - a deterministic `source_inventory_sha256` over the observed source identities/URLs;
 - a deterministic `artifact_set_sha256` over the successfully stored/verified artifact set;
 - UTC start/completion timestamps;
-- a schema version and stable ingestion identifier.
+- a schema version and stable ingestion identifier;
+- a `batch_id`, `partition_index` and `partition_count` so sharded acquisitions remain
+  reconstructable as one logical ingestion batch.
+
+Each partition writes its own immutable manifest. A consumer may process partitions independently,
+but it can only claim the whole logical batch has arrived when it has observed every partition
+index from `0` through `partition_count - 1` for the same `batch_id`.
 
 The manifest payload itself is canonical JSON and its SHA-256 is stored as S3 object metadata.
 The writer performs a `HeadObject` check and refuses to overwrite an existing manifest key. Run
