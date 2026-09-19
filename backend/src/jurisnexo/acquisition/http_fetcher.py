@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -8,8 +7,6 @@ from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-
-import certifi
 
 from jurisnexo.observability import acquisition_span, span_event
 
@@ -47,12 +44,7 @@ class UrllibHttpTransport:
                 "Accept": "text/html,application/pdf;q=0.9,*/*;q=0.1",
             },
         )
-        tls_context = ssl.create_default_context(cafile=certifi.where())
-        with urlopen(  # noqa: S310
-            request,
-            timeout=timeout_seconds,
-            context=tls_context,
-        ) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
             status = int(response.status)
             final_url = response.geturl()
             content = response.read()
