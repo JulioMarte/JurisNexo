@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
-
-from playwright.sync_api import Browser, Playwright, sync_playwright
 
 
 class PlaywrightVerifiedFetcher:
@@ -11,10 +11,17 @@ class PlaywrightVerifiedFetcher:
 
     def __init__(self, *, allowed_hosts: frozenset[str]) -> None:
         self.allowed_hosts = allowed_hosts
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
+        self._playwright: Any | None = None
+        self._browser: Any | None = None
 
     def __enter__(self) -> PlaywrightVerifiedFetcher:
+        try:
+            sync_api = importlib.import_module("playwright.sync_api")
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "PlaywrightVerifiedFetcher requires the optional playwright package"
+            ) from exc
+        sync_playwright: Any = getattr(sync_api, "sync_playwright")
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=True)
         return self
