@@ -1,22 +1,18 @@
-name: SCJ Principales storage target audit
+name: SCJ Principales storage audit
 
 on:
-  push:
-    branches:
-      - feature/acquisition-run-manifests
-    paths:
-      - '.github/workflows/scj-principales-storage-audit.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: scj-principales-storage-target-audit
+  group: scj-principales-storage-audit
   cancel-in-progress: false
 
 jobs:
   audit:
-    name: Fingerprint effective S3 target
+    name: Verify effective S3 target and Principales state
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -34,19 +30,13 @@ jobs:
           python-version: '3.13'
       - name: Install pinned storage runtime
         run: python -m pip install -e ./backend 'boto3==1.43.93'
-      - name: Permanently purge only historical canary manifest versions
-        env:
-          SCJ_PRINCIPALES_ADMIN_OUTPUT: ${{ runner.temp }}/scj-principales-admin
-        run: |
-          set -o pipefail
-          python backend/scripts/scj_principales_storage_admin.py --cleanup-canaries 2>&1 | tee scj-principales-canary-purge.log
-      - name: Read-only storage audit after purge
+      - name: Read-only storage audit
         env:
           SCJ_PRINCIPALES_ADMIN_OUTPUT: ${{ runner.temp }}/scj-principales-admin
         run: |
           set -o pipefail
           python backend/scripts/scj_principales_storage_admin.py --audit-only 2>&1 | tee scj-principales-storage-audit.log
-      - name: Assert expected bucket fingerprint
+      - name: Assert expected Principales storage state
         env:
           SCJ_PRINCIPALES_ADMIN_OUTPUT: ${{ runner.temp }}/scj-principales-admin
         run: |
@@ -56,8 +46,6 @@ jobs:
           data = json.loads((Path(os.environ['SCJ_PRINCIPALES_ADMIN_OUTPUT'])/'manifest-audit.json').read_text())
           expected = '02ab33707c72f445f70f400f18e089c00328ff19bbd5c306a93eeee1ffe2101f'
           actual = data['storage_identity']['bucket_sha256']
-          print('expected_bucket_sha256=', expected)
-          print('actual_bucket_sha256=', actual)
           assert actual == expected, f'CI S3 bucket fingerprint mismatch: {actual}'
           assert data['principales_objects']['count'] == 36, data['principales_objects']
           assert data['manifest_count'] == 1, data['records']
@@ -65,11 +53,17 @@ jobs:
           assert record['classification'] == 'non-canary', record
           assert record['status'] == 'succeeded', record
           versions = data['manifest_versions']
-          canary_versions = [
-              x for x in versions['versions'] + versions['delete_markers']
-              if 'scj-principales-canary.json' in x['key']
-          ]
-          assert not canary_versions, canary_versions
+          assert versions['delete_marker_count'] == 0, versions
+          assert versions['version_count'] == 1, versions
+          assert 'scj-principales-full.json' in versions['versions'][0]['key'], versions
+          print(json.dumps({
+              'bucket_fingerprint': actual,
+              'pdf_count': data['principales_objects']['count'],
+              'pdf_total_size': data['principales_objects']['total_size'],
+              'manifest_count': data['manifest_count'],
+              'manifest_version_count': versions['version_count'],
+              'delete_marker_count': versions['delete_marker_count'],
+          }, indent=2, sort_keys=True))
           PY
       - name: Preserve audit evidence
         if: always()
@@ -81,4 +75,3 @@ jobs:
           path: |
             ${{ runner.temp }}/scj-principales-admin/**
             scj-principales-storage-audit.log
-            scj-principales-canary-purge.log
