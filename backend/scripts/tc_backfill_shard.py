@@ -18,6 +18,13 @@ from jurisnexo.acquisition.official_corpus import (
     discover_pdf_link,
     object_key_for,
 )
+from jurisnexo.acquisition.recovery import (
+    AcquisitionRecoveryJournal,
+    RecoveryCheckpointRecord,
+    S3RecoveryCheckpointMirror,
+    classify_infrastructure_error,
+    utc_now_z,
+)
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.corpus.artifact_catalog import PostgresOfficialArtifactCatalog
 from jurisnexo.corpus.artifact_inventory import PostgresRegisteredArtifactInventory
@@ -106,7 +113,7 @@ def assigned_records(
     return records
 
 
-def main() -> None:
+def main() -> int:
     require_environment()
     shard_index = int(os.environ["TC_BACKFILL_SHARD_INDEX"])
     shard_count = int(os.environ["TC_BACKFILL_SHARD_COUNT"])
@@ -118,6 +125,13 @@ def main() -> None:
     tracer = trace.get_tracer("jurisnexo.tc.backfill")
     fetcher = BoundedHttpFetcher(allowed_hosts=OFFICIAL_SOURCE_HOSTS)
     object_store = build_s3_object_store()
+    recovery_journal = AcquisitionRecoveryJournal(output_dir / "recovery-checkpoint.jsonl")
+    recovery_mirror = S3RecoveryCheckpointMirror(
+        object_store=object_store,
+        object_key=f"_checkpoints/tc/decisions/shard-{shard_index:03d}.jsonl",
+    )
+    if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
+        recovery_mirror.load_if_present(recovery_journal)
     records = assigned_records(
         inventory_path=Path(os.environ["TC_INVENTORY_FILE"]),
         shard_index=shard_index,
@@ -213,6 +227,36 @@ def main() -> None:
                             collection="decisions",
                         )
 
+                        recovered = recovery_journal.get(
+                            source_identifier=sentence_id,
+                            document_url=document_url,
+                        )
+                        if recovered is not None and recovered.status == "stored":
+                            assert recovered.object_key is not None
+                            head = object_store.client.head_object(
+                                Bucket=object_store.config.bucket,
+                                Key=recovered.object_key,
+                            )
+                            if int(head.get("ContentLength") or -1) != recovered.byte_count:
+                                raise RuntimeError(
+                                    f"INTEGRITY_MISMATCH byte_count for {recovered.object_key}"
+                                )
+                            run_manifest.record_existing(
+                                candidate=candidate,
+                                sha256=recovered.sha256 or "",
+                                object_key=recovered.object_key,
+                                byte_count=recovered.byte_count,
+                                content_type=recovered.content_type or "application/pdf",
+                                file_extension=recovered.file_extension or "pdf",
+                            )
+                            source_inventory.link_artifact_sha256(
+                                source_document_id=source_document_id,
+                                sha256=recovered.sha256 or "",
+                            )
+                            skipped_verified += 1
+                            span.set_attribute("artifact.recovered", True)
+                            continue
+
                         existing_digest = current.get((sentence_id, document_url))
                         if existing_digest is not None:
                             key = object_key_for(
@@ -221,15 +265,35 @@ def main() -> None:
                                 sha256=existing_digest,
                             )
                             if object_store.exists(key):
+                                head = object_store.client.head_object(
+                                    Bucket=object_store.config.bucket,
+                                    Key=key,
+                                )
+                                byte_count = int(head.get("ContentLength") or 0)
                                 run_manifest.record_existing(
                                     candidate=candidate,
                                     sha256=existing_digest,
                                     object_key=key,
+                                    byte_count=byte_count,
                                 )
                                 source_inventory.link_artifact_sha256(
                                     source_document_id=source_document_id,
                                     sha256=existing_digest,
                                 )
+                                recovery_journal.append(
+                                    RecoveryCheckpointRecord(
+                                        source_identifier=sentence_id,
+                                        document_url=document_url,
+                                        status="stored",
+                                        recorded_at=utc_now_z(),
+                                        sha256=existing_digest,
+                                        object_key=key,
+                                        byte_count=byte_count,
+                                        content_type="application/pdf",
+                                        file_extension="pdf",
+                                    )
+                                )
+                                recovery_mirror.persist(recovery_journal)
                                 skipped_verified += 1
                                 span.set_attribute("artifact.already_verified", True)
                                 continue
@@ -253,10 +317,46 @@ def main() -> None:
                             sha256=artifact.sha256,
                         )
                         current[(sentence_id, document_url)] = artifact.sha256
+                        recovery_journal.append(
+                            RecoveryCheckpointRecord(
+                                source_identifier=sentence_id,
+                                document_url=document_url,
+                                status="stored",
+                                recorded_at=utc_now_z(),
+                                sha256=artifact.sha256,
+                                object_key=artifact.object_key,
+                                byte_count=artifact.byte_count,
+                                content_type=artifact.content_type,
+                                file_extension=artifact.file_extension,
+                            )
+                        )
+                        recovery_mirror.persist(recovery_journal)
                         acquired += 1
                         bytes_acquired += artifact.byte_count
                         span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
                 except Exception as exc:
+                    infrastructure_failure = classify_infrastructure_error(exc)
+                    if infrastructure_failure is not None:
+                        interruption = {
+                            "status": "RUN_INTERRUPTED",
+                            "cause": infrastructure_failure.kind,
+                            "retryable": infrastructure_failure.retryable,
+                            "error_code": infrastructure_failure.code,
+                            "http_status": infrastructure_failure.http_status,
+                            "detail": infrastructure_failure.detail,
+                            "processed_count": acquired + skipped_verified + len(failures),
+                            "pending_count": max(
+                                0,
+                                len(records) - acquired - skipped_verified - len(failures),
+                            ),
+                            "resumable": True,
+                        }
+                        (output_dir / f"backfill-{shard_index:02d}-interruption.json").write_text(
+                            json.dumps(interruption, indent=2, sort_keys=True) + "\n",
+                            encoding="utf-8",
+                        )
+                        print(json.dumps({"event": "tc_backfill_interrupted", **interruption}), flush=True)
+                        return 75
                     run_manifest.record_failure(
                         collection="decisions",
                         source_identifier=sentence_id,
@@ -271,6 +371,35 @@ def main() -> None:
                         "error": str(exc)[:2000],
                     }
                     failures.append(failure)
+                    if document_url:
+                        recovery_journal.append(
+                            RecoveryCheckpointRecord(
+                                source_identifier=sentence_id,
+                                document_url=document_url,
+                                status="failed",
+                                recorded_at=utc_now_z(),
+                                error_type=type(exc).__name__,
+                                reason=str(exc)[:2000],
+                            )
+                        )
+                        try:
+                            recovery_mirror.persist(recovery_journal)
+                        except Exception as checkpoint_exc:
+                            checkpoint_failure = classify_infrastructure_error(checkpoint_exc)
+                            if checkpoint_failure is not None:
+                                interruption = {
+                                    "status": "RUN_INTERRUPTED",
+                                    "cause": checkpoint_failure.kind,
+                                    "retryable": checkpoint_failure.retryable,
+                                    "phase": "checkpoint_persist",
+                                    "resumable": True,
+                                }
+                                (output_dir / f"backfill-{shard_index:02d}-interruption.json").write_text(
+                                    json.dumps(interruption, indent=2, sort_keys=True) + "\n",
+                                    encoding="utf-8",
+                                )
+                                return 75
+                            raise
                     print(
                         json.dumps(
                             {"event": "tc_backfill_item_failed", **failure},
@@ -297,7 +426,24 @@ def main() -> None:
                         flush=True,
                     )
 
-        stored_manifest = run_manifest.commit(object_store=object_store)
+        try:
+            stored_manifest = run_manifest.commit(object_store=object_store)
+        except Exception as exc:
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is None:
+                raise
+            interruption = {
+                "status": "RUN_INTERRUPTED",
+                "cause": infrastructure_failure.kind,
+                "phase": "manifest_commit",
+                "retryable": infrastructure_failure.retryable,
+                "resumable": True,
+            }
+            (output_dir / f"backfill-{shard_index:02d}-interruption.json").write_text(
+                json.dumps(interruption, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return 75
         (output_dir / f"backfill-{shard_index:02d}-run-manifest.json").write_bytes(
             stored_manifest.manifest.canonical_bytes()
         )
@@ -332,10 +478,9 @@ def main() -> None:
     if hasattr(provider, "force_flush"):
         provider.force_flush()  # type: ignore[attr-defined]
     if failures:
-        raise RuntimeError(
-            f"TC shard {shard_index} completed with {len(failures)} failed documents"
-        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
