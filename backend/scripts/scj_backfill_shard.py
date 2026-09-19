@@ -40,15 +40,19 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw.strip().casefold() not in {"", "0", "false", "no", "off"}
 
 
-def _ingestion_id(*, source: str, shard_index: int) -> str | None:
-    explicit = os.environ.get("ACQUISITION_INGESTION_ID", "").strip()
+def _batch_id(*, source: str) -> str:
+    explicit = os.environ.get("ACQUISITION_BATCH_ID", "").strip()
     if explicit:
         return explicit
     run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
     run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "").strip()
     if run_id and run_attempt:
-        return f"github-{run_id}-{run_attempt}-{source}-{shard_index}"
-    return None
+        return f"github-{run_id}-{run_attempt}-{source}"
+    return f"local-{source}"
+
+
+def _ingestion_id(*, batch_id: str, shard_index: int) -> str:
+    return f"{batch_id}-part-{shard_index:03d}"
 
 
 def require_environment() -> None:
@@ -164,10 +168,15 @@ def main() -> None:
         shard_index=shard_index,
         shard_count=shard_count,
     )
+    batch_id = _batch_id(source="scj")
     run_manifest = AcquisitionRunManifestBuilder(
         source="scj",
         scope=os.environ.get("ACQUISITION_MANIFEST_SCOPE", "official-corpus").strip(),
-        ingestion_id=_ingestion_id(source="scj", shard_index=shard_index),
+        storage_bucket=object_store.config.bucket,
+        ingestion_id=_ingestion_id(batch_id=batch_id, shard_index=shard_index),
+        batch_id=batch_id,
+        partition_index=shard_index,
+        partition_count=shard_count,
     )
 
     acquired = 0
