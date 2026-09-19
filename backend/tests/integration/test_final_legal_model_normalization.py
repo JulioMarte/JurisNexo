@@ -192,13 +192,25 @@ def test_verified_treatment_requires_source_evidence_and_correct_membership(
         target_prop = _proposition(cursor, target, "Regla del objetivo")
         wrong_prop = _proposition(cursor, unrelated, "Regla ajena")
         evidence_id = _evidence(cursor, source, source_prop)
+        cursor.execute(
+            """
+            INSERT INTO corpus.legal_issues(
+                canonical_question, assertion_kind,
+                verification_status, verification_method
+            ) VALUES (
+                '¿Es distinguible el precedente?', 'human_authored',
+                'candidate', 'human_legal_review'
+            ) RETURNING id
+            """
+        )
+        legal_issue = _one(cursor)
 
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
                 INSERT INTO corpus.legal_treatment_assertions (
                     source_case_id, target_case_id, treatment_type,
-                    issue_proposition_id, source_proposition_id,
+                    legal_issue_id, source_proposition_id,
                     target_proposition_id, verification_status,
                     verification_method
                 ) VALUES (
@@ -206,7 +218,7 @@ def test_verified_treatment_requires_source_evidence_and_correct_membership(
                     'verified','human_legal_review'
                 )
                 """,
-                (source, target, source_prop, source_prop, target_prop),
+                (source, target, legal_issue, source_prop, target_prop),
             )
 
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
@@ -214,7 +226,7 @@ def test_verified_treatment_requires_source_evidence_and_correct_membership(
                 """
                 INSERT INTO corpus.legal_treatment_assertions (
                     source_case_id, target_case_id, treatment_type,
-                    issue_proposition_id, source_proposition_id,
+                    legal_issue_id, source_proposition_id,
                     target_proposition_id, evidence_id,
                     verification_status, verification_method
                 ) VALUES (
@@ -225,7 +237,7 @@ def test_verified_treatment_requires_source_evidence_and_correct_membership(
                 (
                     source,
                     target,
-                    source_prop,
+                    legal_issue,
                     wrong_prop,
                     target_prop,
                     evidence_id,
@@ -236,7 +248,7 @@ def test_verified_treatment_requires_source_evidence_and_correct_membership(
             """
             INSERT INTO corpus.legal_treatment_assertions (
                 source_case_id, target_case_id, treatment_type,
-                issue_proposition_id, source_proposition_id,
+                legal_issue_id, source_proposition_id,
                 target_proposition_id, evidence_id,
                 verification_status, verification_method
             ) VALUES (
@@ -247,7 +259,7 @@ def test_verified_treatment_requires_source_evidence_and_correct_membership(
             (
                 source,
                 target,
-                source_prop,
+                legal_issue,
                 source_prop,
                 target_prop,
                 evidence_id,
