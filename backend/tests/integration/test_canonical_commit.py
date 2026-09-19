@@ -201,7 +201,7 @@ def test_verified_private_commit_is_atomic_and_source_faithful(
         cursor.execute(
             """
             select scope_id, court_id, identity_status, quality_status
-            from corpus.cases
+            from corpus.judicial_decisions
             where id = %s
             """,
             (result.case_id,),
@@ -272,7 +272,10 @@ def test_rejected_extraction_audit_writes_nothing(
             extraction_state="REJECTED",
         )
 
-        cursor.execute("select count(*) from corpus.cases where court_id = %s", (court_id,))
+        cursor.execute(
+            "select count(*) from corpus.judicial_decisions where court_id = %s",
+            (court_id,),
+        )
         assert cursor.fetchone() == (0,)
         with pytest.raises(CorpusAuthorizationError):
             commit_canonical_case(
@@ -280,7 +283,10 @@ def test_rejected_extraction_audit_writes_nothing(
                 principal=_principal(),
                 request=request,
             )
-        cursor.execute("select count(*) from corpus.cases where court_id = %s", (court_id,))
+        cursor.execute(
+            "select count(*) from corpus.judicial_decisions where court_id = %s",
+            (court_id,),
+        )
         assert cursor.fetchone() == (0,)
 
 
@@ -310,7 +316,10 @@ def test_rejected_structure_audit_writes_nothing(
                 principal=_principal(),
                 request=request,
             )
-        cursor.execute("select count(*) from corpus.cases where court_id = %s", (court_id,))
+        cursor.execute(
+            "select count(*) from corpus.judicial_decisions where court_id = %s",
+            (court_id,),
+        )
         assert cursor.fetchone() == (0,)
 
 
@@ -345,7 +354,10 @@ def test_artifact_page_from_another_artifact_is_rejected_before_case_insert(
                 principal=_principal(),
                 request=request,
             )
-        cursor.execute("select count(*) from corpus.cases where court_id = %s", (court_id,))
+        cursor.execute(
+            "select count(*) from corpus.judicial_decisions where court_id = %s",
+            (court_id,),
+        )
         assert cursor.fetchone() == (0,)
 
 
@@ -374,7 +386,10 @@ def test_source_text_mismatch_is_rejected_before_case_insert(
                 principal=_principal(),
                 request=request,
             )
-        cursor.execute("select count(*) from corpus.cases where court_id = %s", (court_id,))
+        cursor.execute(
+            "select count(*) from corpus.judicial_decisions where court_id = %s",
+            (court_id,),
+        )
         assert cursor.fetchone() == (0,)
 
 
@@ -404,6 +419,9 @@ def test_artifact_from_another_scope_is_rejected(
                 principal=_principal(),
                 request=request,
             )
-        cursor.execute("select count(*) from corpus.cases where court_id = %s", (court_id,))
+        cursor.execute(
+            "select count(*) from corpus.judicial_decisions where court_id = %s",
+            (court_id,),
+        )
         assert cursor.fetchone() == (0,)
         assert scope_a != scope_b

@@ -30,16 +30,14 @@ class CanonicalCommitError(ValueError):
 
 
 class CanonicalSourcePageBinding(BaseModel):
-    """Bridge one bounded document-view page to its durable source artifact page."""
-
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     view_page: int = Field(ge=1)
     artifact_page_id: UUID
 
 
-class CanonicalCaseCommitRequest(BaseModel):
-    """Provider-neutral input for committing one audited, source-faithful decision."""
+class CanonicalJudicialDecisionCommitRequest(BaseModel):
+    """Provider-neutral input for committing one audited judicial decision."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -50,36 +48,47 @@ class CanonicalCaseCommitRequest(BaseModel):
     page_bindings: tuple[CanonicalSourcePageBinding, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_source_bindings(self) -> CanonicalCaseCommitRequest:
+    def validate_source_bindings(self) -> CanonicalJudicialDecisionCommitRequest:
         expected_view_pages = [page.view_page for page in self.decision.pages]
         bound_view_pages = [binding.view_page for binding in self.page_bindings]
         if bound_view_pages != expected_view_pages:
             raise ValueError(
-                "page_bindings must cover the source-faithful decision exactly and in order"
+                "page_bindings must cover the source-faithful decision exactly "
+                "and in order"
             )
-
         bound_page_ids = [binding.artifact_page_id for binding in self.page_bindings]
         if len(set(bound_page_ids)) != len(bound_page_ids):
             raise ValueError("page_bindings must not reuse an artifact page")
-
         approved_page_ids = list(self.authorization.approved_artifact_page_ids)
         if len(set(approved_page_ids)) != len(approved_page_ids):
             raise ValueError("approved_artifact_page_ids must not contain duplicates")
         if set(bound_page_ids) != set(approved_page_ids):
-            raise ValueError(
-                "page_bindings must match approved_artifact_page_ids exactly"
-            )
+            raise ValueError("page_bindings must match approved_artifact_page_ids exactly")
         return self
 
 
-class CanonicalCaseCommitResult(BaseModel):
+class CanonicalJudicialDecisionCommitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     scope_id: UUID
-    case_id: UUID
+    judicial_decision_id: UUID
     occurrence_id: UUID
-    case_page_ids: tuple[UUID, ...]
+    decision_page_ids: tuple[UUID, ...]
     passage_ids: tuple[UUID, ...]
+
+    @property
+    def case_id(self) -> UUID:
+        """Deprecated read alias for callers migrating to judicial_decision_id."""
+        return self.judicial_decision_id
+
+    @property
+    def case_page_ids(self) -> tuple[UUID, ...]:
+        """Deprecated read alias for callers migrating to decision_page_ids."""
+        return self.decision_page_ids
+
+
+CanonicalCaseCommitRequest = CanonicalJudicialDecisionCommitRequest
+CanonicalCaseCommitResult = CanonicalJudicialDecisionCommitResult
 
 
 def _resolve_scope_id(cursor: psycopg.Cursor[Any], scope: CorpusScope) -> UUID:
@@ -113,11 +122,7 @@ def _require_artifact_in_scope(
     cursor: psycopg.Cursor[Any], *, artifact_id: UUID, scope_id: UUID
 ) -> None:
     cursor.execute(
-        """
-        select 1
-        from corpus.source_artifacts
-        where id = %s and scope_id = %s
-        """,
+        "select 1 from corpus.source_artifacts where id = %s and scope_id = %s",
         (artifact_id, scope_id),
     )
     if cursor.fetchone() is None:
@@ -152,7 +157,6 @@ def _validate_artifact_pages(
                 "source-faithful decision text does not match durable artifact page text"
             )
         page_numbers.append(page_number)
-
     if any(
         right <= left
         for left, right in zip(page_numbers, page_numbers[1:], strict=False)
@@ -163,12 +167,12 @@ def _validate_artifact_pages(
     return page_numbers
 
 
-def _insert_case(
+def _insert_judicial_decision(
     cursor: psycopg.Cursor[Any], *, court_id: UUID, scope_id: UUID
 ) -> UUID:
     cursor.execute(
         """
-        insert into corpus.cases (court_id, scope_id)
+        insert into corpus.judicial_decisions (court_id, scope_id)
         values (%s, %s)
         returning id
         """,
@@ -176,14 +180,14 @@ def _insert_case(
     )
     row = cursor.fetchone()
     if row is None:
-        raise CanonicalCommitError("case insert did not return an identifier")
+        raise CanonicalCommitError("judicial decision insert did not return an identifier")
     return row[0]
 
 
 def _insert_occurrence(
     cursor: psycopg.Cursor[Any],
     *,
-    case_id: UUID,
+    judicial_decision_id: UUID,
     artifact_id: UUID,
     scope_id: UUID,
     page_numbers: list[int],
@@ -193,44 +197,46 @@ def _insert_occurrence(
         insert into corpus.case_artifact_occurrences (
             case_id, artifact_id, start_page, end_page,
             segmentation_status, segmentation_method, scope_id
-        )
-        values (%s, %s, %s, %s, 'verified', 'audited-canonical-commit', %s)
+        ) values (%s, %s, %s, %s, 'verified', 'audited-canonical-commit', %s)
         returning id
         """,
-        (case_id, artifact_id, page_numbers[0], page_numbers[-1], scope_id),
+        (
+            judicial_decision_id,
+            artifact_id,
+            page_numbers[0],
+            page_numbers[-1],
+            scope_id,
+        ),
     )
     row = cursor.fetchone()
     if row is None:
-        raise CanonicalCommitError("occurrence insert did not return an identifier")
+        raise CanonicalCommitError("decision occurrence insert did not return an identifier")
     return row[0]
 
 
 def _insert_pages_and_passages(
     cursor: psycopg.Cursor[Any],
     *,
-    case_id: UUID,
+    judicial_decision_id: UUID,
     artifact_id: UUID,
     scope_id: UUID,
     decision: SourceFaithfulDecision,
     bindings: tuple[CanonicalSourcePageBinding, ...],
 ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
-    case_page_ids: list[UUID] = []
+    decision_page_ids: list[UUID] = []
     passage_ids: list[UUID] = []
-    for ordinal, (page, binding) in enumerate(
-        zip(decision.pages, bindings, strict=True), start=1
-    ):
+    page_pairs = zip(decision.pages, bindings, strict=True)
+    for ordinal, (page, binding) in enumerate(page_pairs, start=1):
         printed_page_label = None if page.printed_page is None else str(page.printed_page)
         cursor.execute(
             """
             insert into corpus.case_pages (
                 case_id, artifact_id, artifact_page_id, ordinal_in_case,
                 printed_page_label, scope_id
-            )
-            values (%s, %s, %s, %s, %s, %s)
-            returning id
+            ) values (%s, %s, %s, %s, %s, %s) returning id
             """,
             (
-                case_id,
+                judicial_decision_id,
                 artifact_id,
                 binding.artifact_page_id,
                 ordinal,
@@ -238,43 +244,38 @@ def _insert_pages_and_passages(
                 scope_id,
             ),
         )
-        case_page = cursor.fetchone()
-        if case_page is None:
-            raise CanonicalCommitError("case page insert did not return an identifier")
-        case_page_ids.append(case_page[0])
-
+        decision_page = cursor.fetchone()
+        if decision_page is None:
+            raise CanonicalCommitError("decision page insert did not return an identifier")
+        decision_page_ids.append(decision_page[0])
         cursor.execute(
             """
             insert into corpus.passages (
                 case_id, page_start, page_end, passage_order, text, section_type
-            )
-            values (%s, %s, %s, %s, %s, 'source_page')
-            returning id
+            ) values (%s, %s, %s, %s, %s, 'source_page') returning id
             """,
-            (case_id, ordinal, ordinal, ordinal, page.text),
+            (judicial_decision_id, ordinal, ordinal, ordinal, page.text),
         )
         passage = cursor.fetchone()
         if passage is None:
             raise CanonicalCommitError("passage insert did not return an identifier")
         passage_ids.append(passage[0])
+    return tuple(decision_page_ids), tuple(passage_ids)
 
-    return tuple(case_page_ids), tuple(passage_ids)
 
-
-def commit_canonical_case(
+def commit_canonical_judicial_decision(
     *,
     connection: psycopg.Connection[Any],
     principal: CorpusPrincipal,
-    request: CanonicalCaseCommitRequest,
-) -> CanonicalCaseCommitResult:
-    """Commit one audited decision atomically after deterministic provenance checks."""
-
+    request: CanonicalJudicialDecisionCommitRequest,
+) -> CanonicalJudicialDecisionCommitResult:
+    """Commit one audited judicial decision atomically after provenance checks."""
     authorize_canonical_commit(principal=principal, request=request.authorization)
     if request.structure_audit_state not in _ALLOW_STRUCTURE_STATES:
         raise CanonicalCommitError(
-            "canonical commit requires APPROVED or APPROVED_WITH_AMENDMENTS structure audit"
+            "canonical commit requires APPROVED or APPROVED_WITH_AMENDMENTS "
+            "structure audit"
         )
-
     with connection.transaction(), connection.cursor() as cursor:
         scope_id = _resolve_scope_id(cursor, request.authorization.scope)
         _require_court(cursor, request.court_id)
@@ -289,27 +290,44 @@ def commit_canonical_case(
             decision=request.decision,
             bindings=request.page_bindings,
         )
-        case_id = _insert_case(cursor, court_id=request.court_id, scope_id=scope_id)
+        judicial_decision_id = _insert_judicial_decision(
+            cursor,
+            court_id=request.court_id,
+            scope_id=scope_id,
+        )
         occurrence_id = _insert_occurrence(
             cursor,
-            case_id=case_id,
+            judicial_decision_id=judicial_decision_id,
             artifact_id=request.authorization.source_artifact_id,
             scope_id=scope_id,
             page_numbers=page_numbers,
         )
-        case_page_ids, passage_ids = _insert_pages_and_passages(
+        decision_page_ids, passage_ids = _insert_pages_and_passages(
             cursor,
-            case_id=case_id,
+            judicial_decision_id=judicial_decision_id,
             artifact_id=request.authorization.source_artifact_id,
             scope_id=scope_id,
             decision=request.decision,
             bindings=request.page_bindings,
         )
-
-    return CanonicalCaseCommitResult(
+    return CanonicalJudicialDecisionCommitResult(
         scope_id=scope_id,
-        case_id=case_id,
+        judicial_decision_id=judicial_decision_id,
         occurrence_id=occurrence_id,
-        case_page_ids=case_page_ids,
+        decision_page_ids=decision_page_ids,
         passage_ids=passage_ids,
+    )
+
+
+def commit_canonical_case(
+    *,
+    connection: psycopg.Connection[Any],
+    principal: CorpusPrincipal,
+    request: CanonicalCaseCommitRequest,
+) -> CanonicalCaseCommitResult:
+    """Deprecated compatibility wrapper; use commit_canonical_judicial_decision."""
+    return commit_canonical_judicial_decision(
+        connection=connection,
+        principal=principal,
+        request=request,
     )

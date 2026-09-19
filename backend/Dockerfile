@@ -17,9 +17,10 @@ COPY migrations ./migrations
 COPY src ./src
 
 FROM base AS runtime
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev \
+    && uv pip install "boto3==1.43.93"
 EXPOSE 8000
-CMD ["uvicorn", "jurisnexo.entrypoints.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "jurisnexo.entrypoints.http.app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS test
 ENV RUFF_CACHE_DIR=/tmp/ruff-cache
