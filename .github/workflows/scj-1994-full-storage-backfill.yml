@@ -22,15 +22,14 @@ env:
 
 jobs:
   inventory:
-    name: Inventory ${{ matrix.surface }} shard ${{ matrix.shard }}/8
+    name: Inventory decisions year-index ${{ matrix.shard }}/33
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 12
+      max-parallel: 16
       matrix:
-        surface: [decisions, historical]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -42,24 +41,24 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Inventory assigned years
         env:
-          SCJ_SURFACE: ${{ matrix.surface }}
+          SCJ_SURFACE: decisions
           SCJ_SHARD_INDEX: ${{ matrix.shard }}
-          SCJ_SHARD_COUNT: '8'
-          SCJ_PAGE_SIZE: '200'
+          SCJ_SHARD_COUNT: '33'
+          SCJ_PAGE_SIZE: '10'
           SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-year-inventory
         run: |
           set -o pipefail
-          python backend/scripts/scj_year_inventory.py 2>&1 | tee scj-year-${{ matrix.surface }}-${{ matrix.shard }}.log
+          python backend/scripts/scj_year_inventory.py 2>&1 | tee scj-year-decisions-${{ matrix.shard }}.log
       - name: Preserve yearly inventory shard
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-year-inventory-${{ matrix.surface }}-${{ matrix.shard }}
+          name: scj-year-inventory-decisions-${{ matrix.shard }}
           if-no-files-found: error
           retention-days: 30
           path: |
             ${{ runner.temp }}/scj-year-inventory/**
-            scj-year-${{ matrix.surface }}-${{ matrix.shard }}.log
+            scj-year-decisions-${{ matrix.shard }}.log
 
   certify:
     name: Certify 1994+ acquisition inventory
@@ -94,7 +93,6 @@ jobs:
           assert summary['status']=='COMPLETE', summary
           assert summary['year_min']==1994 and summary['year_max']==2026, summary
           assert summary['requested_year_count']==33, summary
-          assert summary['surface_counts'].get('historical',0)==0, summary['surface_counts']
           assert summary['surface_counts'].get('decisions',0)>80000, summary['surface_counts']
           assert summary['acquisition_year_counts'].get('2026',0)==0, summary['acquisition_year_counts']
           print(json.dumps(summary, indent=2, sort_keys=True))
