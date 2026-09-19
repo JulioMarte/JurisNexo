@@ -29,6 +29,7 @@ The documents are intentionally ordered from product intent to implementation, o
 21. [`20-document-intelligence-and-structure-discovery.md`](./20-document-intelligence-and-structure-discovery.md) — two-path ingestion, OCR/page diagnostics, RLM-style discovery workspaces, DocETL/LOTUS roles, family specifications, validation, heterogeneous-source matching, and canonical-write boundaries.
 22. [`21-google-gemini-model-selection-and-ci.md`](./21-google-gemini-model-selection-and-ci.md) — current Gemini model/cost evaluation, provider choice, bounded paid-model CI policy, GitHub Environment secret contract, and model-selection rules.
 23. [`22-document-environment-v1-and-agentic-baseline.md`](./22-document-environment-v1-and-agentic-baseline.md) — first live Gemini baseline, read-only Document Environment v1, bounded agentic tool loop, runtime correction, and one-shot-vs-agentic benchmark contract.
+24. [`38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`](./38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md) — canonical current corpus/product strategy: two-speed breadth/depth, SCJ Principales seed, citation-first expansion, selective treatment, Golden Precedent Set, failure corpus, coverage discipline, and explicit non-goals.
 
 ## Current MVP definition
 
@@ -36,7 +37,7 @@ JurisNexo is a multi-tenant experimental legal research product initially valida
 
 The first product is a **Precedent & Adverse Authority Report**. A user provides a legal question or fact pattern. JurisNexo investigates relevant Dominican jurisprudence, reviews supporting and adverse authorities, follows material citations, verifies important claims against primary sources, and returns an auditable report.
 
-The MVP begins with a deliberately constrained SCJ corpus using real Supreme Court compilation PDFs already present in the JurisNexo Supabase Storage project. TC and broader corpus expansion follow after the first ingestion/retrieval slice is trustworthy.
+The MVP is multi-court by architecture and uses a **two-speed corpus strategy**. SCJ Principales is the initial high-signal seed for deep legal intelligence, while broader official SCJ material should become discoverable/searchable as cheaply as provenance and identity quality allow. Citation traversal, benchmark membership, real lawyer research and adverse-authority findings drive which decisions receive expensive semantic normalization. TC, TSA and other courts enter through the same source/corpus contracts according to source reliability and professional value.
 
 ## Frozen implementation direction
 
@@ -116,34 +117,27 @@ For known publication families, deterministic extraction, page preservation, seg
 
 ## Immediate implementation target
 
-Build the smallest end-to-end slice that can prove the thesis using the existing SCJ source material while establishing a general path for unknown legal artifacts.
+Prove the existing SCJ vertical fixture while starting the compounding corpus loop described in `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`.
 
 ```text
-representative SCJ compilations 2023-2025
-    -> immutable artifact registration + SHA-256
-    -> page-preserving extraction
-    -> digital/scanned/mixed page diagnostics
-    -> known family? deterministic parser : bounded structure-discovery workspace
-    -> publication/layout-family detection or candidate family specification
-    -> individual decision segmentation
-    -> parser/discovery diagnostics + unknown/review-required routing
-    -> decision number / expediente / organ / decision date observations with provenance
-    -> gold boundary/metadata evaluation
-    -> immutable reconciliation/resolution ledger
-    -> controlled canonical promotion
-    -> normalized case pages
-    -> lexical passages/index
-    -> semantic retrieval only after source model is trustworthy
-    -> benchmark legal research request
-    -> iterative agent research
-    -> adverse search + citation traversal when applicable
-    -> evidence verification against original pages
-    -> auditable report snapshot
+SCJ Principales inventory 2005-present
+    -> immutable acquisition + exact provenance
+    -> audited decision segmentation/canonical identity
+    -> searchable Principal decisions
+    -> raw explicit citation extraction
+    -> conservative citation resolution
+    -> Golden Precedent Set
+    -> broad SCJ inventory/search layer
+    -> backward/forward citation expansion
+    -> priority-driven issue/proposition/treatment analysis
+    -> evidence audit
+    -> Precedent & Adverse Authority research
+    -> lawyer feedback -> benchmark/regression corpus
 ```
 
-Only after this slice works should corpus breadth and sophisticated retrieval/graph techniques become the priority.
+The existing 2023–2025 Principales compilations remain excellent deterministic/agentic ingestion fixtures, but they no longer define the full corpus-growth sequence. Cheap trustworthy breadth may expand in parallel; expensive semantic depth must remain selective.
 
-The existing Supreme Court Storage collection is a meaningful head start, but it is raw source material rather than evidence that the corpus or MVP is already complete.
+Do not add another foundational schema redesign unless real source data demonstrates that V4 cannot represent a required legal fact. Do not treat raw PDF count, embeddings, generic chat, or a graph database as the moat.
 
 ## Documentation completeness rule
 
