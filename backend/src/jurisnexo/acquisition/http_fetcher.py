@@ -146,5 +146,7 @@ OFFICIAL_SOURCE_HOSTS = frozenset(
         "transparencia.poderjudicial.gob.do",
         "consultasentenciascj.poderjudicial.gob.do",
         "consultaglobal.blob.core.windows.net",
+        "poderjudicial.gob.do",
+        "www.poderjudicial.gob.do",
     }
 )
