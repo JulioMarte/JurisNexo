@@ -38,6 +38,35 @@ def test_v4_superseded_surfaces_are_absent(
         assert _one(cursor) == 0
 
 
+def test_judicial_treatments_use_first_class_legal_issues(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='corpus'
+              AND table_name='legal_treatment_assertions'
+              AND column_name IN ('legal_issue_id','issue_proposition_id')
+            ORDER BY column_name
+            """
+        )
+        assert [row[0] for row in cursor.fetchall()] == ['legal_issue_id']
+
+        cursor.execute(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid='corpus.legal_treatment_assertions'::regclass
+              AND conname='legal_treatment_assertions_context_check'
+            """
+        )
+        definition = _one(cursor)
+        assert 'legal_issue_id' in definition
+        assert 'issue_proposition_id' not in definition
+
+
 def test_issue_and_fact_categories_cannot_leak_back_into_legal_propositions(
     connection: psycopg.Connection[Any],
 ) -> None:
