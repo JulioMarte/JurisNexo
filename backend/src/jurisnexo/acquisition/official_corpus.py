@@ -312,9 +312,8 @@ def acquire_candidates(
                 source_identifier=candidate.source_identifier,
                 collection=candidate.collection,
                 **{"server.address": host},
-            ) as artifact_span:
-                with TemporaryDirectory(prefix="jurisnexo-acquisition-") as temp_dir:
-                    document_path = Path(temp_dir) / "document.pdf"
+            ) as artifact_span, TemporaryDirectory(prefix="jurisnexo-acquisition-") as temp_dir:
+                document_path = Path(temp_dir) / "document.pdf"
                     with acquisition_span("acquisition.download"):
                         _materialize_document(
                             fetcher=fetcher,
@@ -344,9 +343,8 @@ def acquire_candidates(
                             "acquisition.object_store.put",
                             object_key=key,
                             byte_count=byte_count,
-                        ):
-                            with document_path.open("rb") as content:
-                                object_store.put(
+                        ), document_path.open("rb") as content:
+                            object_store.put(
                                     key=key,
                                     content=content,
                                     content_type="application/pdf",
