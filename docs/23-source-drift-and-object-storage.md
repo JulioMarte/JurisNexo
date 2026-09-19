@@ -196,6 +196,38 @@ Run manifests do not replace periodic reconciliation. Reconciliation remains the
 that objects claimed by manifests actually exist in storage and that storage has not accumulated
 unreferenced/orphaned artifacts.
 
+### Artifact hashing and verification semantics
+
+The content SHA-256 is established during acquisition, before an artifact is committed to object
+storage. The canonical path is:
+
+```text
+official source
+  -> staged file
+  -> validate PDF signature
+  -> SHA-256 over the staged bytes
+  -> derive content-addressed object key
+  -> HEAD object storage
+  -> PUT the same staged bytes only when missing
+  -> record manifest item
+```
+
+The staged file is hashed in chunks so the hashing step does not require loading the whole document
+into memory. Fetchers that support direct file download should write directly to the staged file.
+Legacy byte-returning fetchers may still be adapted by materializing their returned bytes to the
+staging file before hashing. In every case, the object key and manifest SHA refer to the exact bytes
+that were staged and, when a PUT occurs, uploaded.
+
+Stored manifest items carry a `verification_method`:
+
+- `downloaded_and_hashed`: this run obtained the source bytes and recomputed their SHA-256 before
+  checking/storing the content-addressed object;
+- `prior_manifest_and_head`: this run reused a previously known SHA/object key and verified that
+  the referenced object still exists in storage without re-downloading the source bytes.
+
+These methods are intentionally distinct. `already_present` describes storage state; it does not
+by itself prove that the source bytes were freshly revalidated.
+
 ## Production connectivity smoke
 
 The full official-corpus workflow validates the configured object store before database validation, inventory work or mass acquisition. The smoke probe exercises only the S3 operations required by the current corpus storage path:
