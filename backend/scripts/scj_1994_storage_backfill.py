@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 import traceback
 from datetime import UTC, datetime
@@ -17,6 +18,13 @@ from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
     UnsupportedOfficialDocumentResponse,
     acquire_candidates,
+)
+from jurisnexo.acquisition.recovery import (
+    AcquisitionRecoveryJournal,
+    GlobalAcquisitionInterruption,
+    RecoveryCheckpointRecord,
+    classify_infrastructure_error,
+    utc_now_z,
 )
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 
@@ -153,7 +161,11 @@ def _acquire_one(
             return artifact
         except Exception as exc:
             last_error = exc
-            retryable = _is_retryable_item_error(exc)
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is not None:
+                retryable = infrastructure_failure.retryable
+            else:
+                retryable = _is_retryable_item_error(exc)
             _event(
                 "scj.1994_backfill.item_attempt_failed",
                 ordinal=ordinal,
@@ -164,12 +176,59 @@ def _acquire_one(
                 error=str(exc),
                 retryable=retryable,
             )
+            if infrastructure_failure is not None and (
+                not infrastructure_failure.retryable or attempt == MAX_ATTEMPTS
+            ):
+                raise GlobalAcquisitionInterruption(
+                    infrastructure_failure,
+                    exc,
+                ) from exc
             if not retryable:
                 break
             if attempt < MAX_ATTEMPTS:
                 time.sleep(min(8.0, float(2 ** (attempt - 1))))
     assert last_error is not None
     raise last_error
+
+
+def _restore_recovery_journal(output_dir: Path) -> AcquisitionRecoveryJournal:
+    current = output_dir / "recovery-checkpoint.jsonl"
+    resume = os.environ.get("SCJ_BACKFILL_RESUME_CHECKPOINT", "").strip()
+    if resume:
+        resume_path = Path(resume)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"resume checkpoint does not exist: {resume_path}")
+        if resume_path.resolve() != current.resolve():
+            current.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(resume_path, current)
+    return AcquisitionRecoveryJournal(current)
+
+
+def _verify_recovered_object(*, object_store: Any, record: RecoveryCheckpointRecord) -> None:
+    if record.status != "stored":
+        raise ValueError("only stored checkpoint records can be verified")
+    assert record.object_key is not None
+    response = object_store.client.head_object(
+        Bucket=object_store.config.bucket,
+        Key=record.object_key,
+    )
+    content_length = int(response.get("ContentLength") or -1)
+    metadata = response.get("Metadata") or {}
+    if content_length != record.byte_count:
+        raise RuntimeError(
+            f"INTEGRITY_MISMATCH byte_count for {record.object_key}: "
+            f"expected {record.byte_count}, got {content_length}"
+        )
+    stored_sha = str(metadata.get("sha256") or "")
+    if stored_sha and stored_sha != record.sha256:
+        raise RuntimeError(
+            f"INTEGRITY_MISMATCH sha256 metadata for {record.object_key}"
+        )
+    stored_content_type = str(metadata.get("content_type") or "")
+    if stored_content_type and stored_content_type != record.content_type:
+        raise RuntimeError(
+            f"INTEGRITY_MISMATCH content_type metadata for {record.object_key}"
+        )
 
 
 def main() -> None:
@@ -184,6 +243,7 @@ def main() -> None:
 
     output_dir = Path(os.environ["SCJ_BACKFILL_OUTPUT"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    recovery_journal = _restore_recovery_journal(output_dir)
     inventory_path = Path(os.environ["SCJ_1994_INVENTORY_FILE"])
     candidates = _load_assigned(
         path=inventory_path,
@@ -222,7 +282,66 @@ def main() -> None:
     completed: list[dict[str, object]] = []
     unavailable: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
+    interruption: dict[str, object] | None = None
     for ordinal, candidate in enumerate(candidates, start=1):
+        recovered = recovery_journal.get(
+            source_identifier=candidate.source_identifier,
+            document_url=candidate.document_url,
+        )
+        if recovered is not None and recovered.status == "stored":
+            _verify_recovered_object(object_store=object_store, record=recovered)
+            assert recovered.sha256 is not None
+            assert recovered.object_key is not None
+            manifest.record_existing(
+                candidate=candidate,
+                sha256=recovered.sha256,
+                object_key=recovered.object_key,
+                byte_count=recovered.byte_count,
+                content_type=recovered.content_type or "application/pdf",
+                file_extension=recovered.file_extension or "pdf",
+            )
+            completed.append(
+                {
+                    "source_identifier": candidate.source_identifier,
+                    "document_url": candidate.document_url,
+                    "sha256": recovered.sha256,
+                    "byte_count": recovered.byte_count,
+                    "object_key": recovered.object_key,
+                    "already_present": True,
+                    "content_type": recovered.content_type,
+                    "file_extension": recovered.file_extension,
+                    "verification_method": "prior_manifest_and_head",
+                    "recovered": True,
+                }
+            )
+            _event(
+                "scj.1994_backfill.item_recovered",
+                ordinal=ordinal,
+                total=len(candidates),
+                source_identifier=candidate.source_identifier,
+                object_key=recovered.object_key,
+            )
+            continue
+        if recovered is not None and recovered.status == "unavailable":
+            manifest.record_unavailable(
+                collection=candidate.collection,
+                source_identifier=candidate.source_identifier,
+                discovery_url=candidate.discovery_url,
+                document_url=candidate.document_url,
+                error_type=recovered.error_type,
+                reason=recovered.reason,
+            )
+            unavailable.append(
+                {
+                    "source_identifier": candidate.source_identifier,
+                    "document_url": candidate.document_url,
+                    "reason": recovered.reason,
+                    "error_type": recovered.error_type,
+                    "recovered": True,
+                }
+            )
+            continue
+
         try:
             artifact = _acquire_one(
                 candidate=candidate,
@@ -244,6 +363,19 @@ def main() -> None:
                 "verification_method": "downloaded_and_hashed",
             }
             completed.append(record)
+            recovery_journal.append(
+                RecoveryCheckpointRecord(
+                    source_identifier=candidate.source_identifier,
+                    document_url=candidate.document_url,
+                    status="stored",
+                    recorded_at=utc_now_z(),
+                    sha256=artifact.sha256,
+                    object_key=artifact.object_key,
+                    byte_count=artifact.byte_count,
+                    content_type=artifact.content_type,
+                    file_extension=artifact.file_extension,
+                )
+            )
             _event(
                 "scj.1994_backfill.item_completed",
                 ordinal=ordinal,
@@ -266,6 +398,16 @@ def main() -> None:
                 "error_type": type(exc).__name__,
             }
             unavailable.append(unavailable_record)
+            recovery_journal.append(
+                RecoveryCheckpointRecord(
+                    source_identifier=candidate.source_identifier,
+                    document_url=candidate.document_url,
+                    status="unavailable",
+                    recorded_at=utc_now_z(),
+                    error_type=type(exc).__name__,
+                    reason=exc.reason,
+                )
+            )
             _event(
                 "scj.1994_backfill.item_unavailable",
                 ordinal=ordinal,
@@ -274,6 +416,24 @@ def main() -> None:
                 document_url=candidate.document_url,
                 reason=exc.reason,
             )
+        except GlobalAcquisitionInterruption as exc:
+            interruption = {
+                "status": "RUN_INTERRUPTED",
+                "cause": exc.failure.kind,
+                "retryable": exc.failure.retryable,
+                "error_code": exc.failure.code,
+                "http_status": exc.failure.http_status,
+                "detail": exc.failure.detail,
+                "interruption_source_identifier": candidate.source_identifier,
+                "interruption_document_url": candidate.document_url,
+                "processed_count": len(completed) + len(unavailable) + len(failures),
+                "pending_count": len(candidates)
+                - (len(completed) + len(unavailable) + len(failures)),
+                "resumable": True,
+            }
+            _write_json(output_dir / "interruption.json", interruption)
+            _event("scj.1994_backfill.interrupted", **interruption)
+            break
         except Exception as exc:
             manifest.record_failure(
                 collection=candidate.collection,
@@ -290,6 +450,16 @@ def main() -> None:
                 "traceback": traceback.format_exc(),
             }
             failures.append(failure)
+            recovery_journal.append(
+                RecoveryCheckpointRecord(
+                    source_identifier=candidate.source_identifier,
+                    document_url=candidate.document_url,
+                    status="failed",
+                    recorded_at=utc_now_z(),
+                    error_type=type(exc).__name__,
+                    reason=str(exc)[:2000],
+                )
+            )
             _event(
                 "scj.1994_backfill.item_failed",
                 ordinal=ordinal,
@@ -298,6 +468,26 @@ def main() -> None:
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
+
+    if interruption is not None:
+        summary = {
+            **interruption,
+            "batch_id": batch_id,
+            "ingestion_id": ingestion_id,
+            "shard_index": shard_index,
+            "shard_count": shard_count,
+            "assigned_count": len(candidates),
+            "completed_count": len(completed),
+            "unavailable_count": len(unavailable),
+            "failed_count": len(failures),
+        }
+        _write_json(output_dir / "summary.json", summary)
+        _write_json(output_dir / "failures.json", failures)
+        _write_json(output_dir / "unavailable.json", unavailable)
+        _write_json(output_dir / "completed.json", completed)
+        raise RuntimeError(
+            f"SCJ 1994+ shard {shard_index} interrupted: {interruption['cause']}"
+        )
 
     stored_manifest = manifest.commit(object_store=object_store)
     (output_dir / "run-manifest.json").write_bytes(
