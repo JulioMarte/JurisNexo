@@ -11,6 +11,8 @@ from jurisnexo.acquisition.http_fetcher import (
     HttpFilePayload,
     HttpPayload,
     HttpStatusError,
+    OFFICIAL_SOURCE_HOSTS,
+    SCJ_DECISION_DOCUMENT_HOSTS,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
@@ -211,3 +213,14 @@ def test_streaming_fetcher_rejects_oversized_response(tmp_path: Path) -> None:
             "https://official.example/a.pdf",
             tmp_path / "oversized.pdf",
         )
+
+
+def test_scj_decision_document_hosts_match_live_official_inventory_topology() -> None:
+    assert SCJ_DECISION_DOCUMENT_HOSTS == frozenset(
+        {
+            "transparencia.poderjudicial.gob.do",
+            "consultaglobal.blob.core.windows.net",
+            "sjdeposito.blob.core.windows.net",
+        }
+    )
+    assert SCJ_DECISION_DOCUMENT_HOSTS <= OFFICIAL_SOURCE_HOSTS
