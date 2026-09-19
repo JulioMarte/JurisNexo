@@ -269,3 +269,18 @@ The workflow exposes a manual `s3-smoke` scope so production S3 credentials and 
 The generic S3 runtime is implemented for official-corpus acquisition and verification. It does **not** yet mean that every future product storage concern is finished.
 
 Private tenant uploads, report exports, presigned upload/download URLs, lifecycle policies, multipart thresholds, encryption policy and tenant-specific authorization still require their own product contracts before they are treated as implemented capabilities. Those features should reuse the same provider-neutral S3 infrastructure where appropriate rather than bypassing it with vendor-specific application logic.
+
+
+## Resumable acquisition and infrastructure interruptions
+
+Large corpus acquisitions must assume that object storage, runners and networks can fail mid-shard. A completed object is never discarded merely because the run that created it did not reach its final manifest.
+
+The SCJ 1994+ backfill therefore keeps an append-only local recovery journal during each shard. The journal is flushed and fsynced after every resolved source observation and is uploaded by GitHub Actions with `if: always()`. Stored records contain the source identifier/URL, SHA-256, object key, byte count and detected format. Unavailable and item-failure observations are recorded separately.
+
+A resume operation may restore a prior shard journal. For a stored record, resume performs `HeadObject` before skipping the source download and verifies the recorded byte count plus SHA/content-type metadata when the provider returns those fields. A mismatch is an integrity failure and must not be silently overwritten. A previously unavailable observation is reused; an ordinary failed observation is attempted again.
+
+Infrastructure failures are classified separately from document failures. Capacity/quota exhaustion, invalid credentials, authorization failures and missing/misconfigured buckets are terminal for the shard and activate a circuit breaker. Rate limiting, provider 5xx responses and transport failures are retried within the bounded item budget; if they remain unresolved, the shard is interrupted rather than producing thousands of misleading document failures.
+
+An interrupted shard writes local recovery evidence and exits non-zero with `RUN_INTERRUPTED`, the cause, the interruption point, processed/pending counts and `resumable: true`. It does **not** attempt to commit the final object-storage run manifest when storage itself is the failing dependency. The final immutable run manifest remains a closure record and is committed only after the shard reaches a controlled end.
+
+The production SCJ full backfill workflow is manual-only. Running it requires the explicit `confirm_production=RUN` input. An optional `resume_run_id` restores the matching shard artifacts from a prior workflow run and feeds each `recovery-checkpoint.jsonl` back to the shard. This keeps recovery a normal operation rather than requiring a destructive restart.
