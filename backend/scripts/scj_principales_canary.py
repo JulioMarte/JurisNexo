@@ -53,6 +53,25 @@ class PlaywrightVerifiedFetcher:
         context = self._browser.new_context(ignore_https_errors=False)
         page = context.new_page()
         try:
+            if parsed.path.casefold().endswith(".pdf"):
+                page.set_content('<a id="jurisnexo-download">download</a>')
+                page.locator("#jurisnexo-download").evaluate(
+                    "(element, target) => { element.href = target; element.download = ''; }",
+                    url,
+                )
+                with page.expect_download(timeout=120_000) as download_info:
+                    page.click("#jurisnexo-download")
+                download = download_info.value
+                final_url = download.url
+                final = urlparse(final_url)
+                final_host = (final.hostname or "").casefold()
+                if final.scheme != "https" or final_host not in self.allowed_hosts:
+                    raise ValueError(f"official download escaped allowlist: {final_url}")
+                path = download.path()
+                if path is None:
+                    raise RuntimeError(f"browser download produced no local path: {url}")
+                return Path(path).read_bytes()
+
             response = page.goto(url, wait_until="commit", timeout=120_000)
             if response is None:
                 raise RuntimeError(f"browser navigation returned no response: {url}")
