@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import time
 import traceback
 from datetime import UTC, datetime
@@ -35,6 +36,20 @@ REQUIRED_ENV = (
     "SCJ_BACKFILL_OUTPUT",
 )
 MAX_ATTEMPTS = int(os.environ.get("SCJ_BACKFILL_ITEM_ATTEMPTS", "3"))
+_STOP_SIGNAL: str | None = None
+
+
+def _capture_stop_signal(signum: int, _frame: object) -> None:
+    global _STOP_SIGNAL
+    try:
+        _STOP_SIGNAL = signal.Signals(signum).name
+    except ValueError:
+        _STOP_SIGNAL = str(signum)
+
+
+def _install_signal_handlers() -> None:
+    signal.signal(signal.SIGTERM, _capture_stop_signal)
+    signal.signal(signal.SIGINT, _capture_stop_signal)
 
 
 def _event(name: str, **payload: object) -> None:
@@ -231,7 +246,82 @@ def _verify_recovered_object(*, object_store: Any, record: RecoveryCheckpointRec
         )
 
 
+def _interruption_from_failure(
+    *,
+    failure: object,
+    candidate: OfficialDocumentCandidate | None,
+    processed_count: int,
+    total_count: int,
+    phase: str,
+) -> dict[str, object]:
+    kind = getattr(failure, "kind", "unknown_infrastructure_error")
+    retryable = bool(getattr(failure, "retryable", False))
+    code = str(getattr(failure, "code", ""))
+    http_status = int(getattr(failure, "http_status", 0))
+    detail = str(getattr(failure, "detail", ""))
+    return {
+        "status": "RUN_INTERRUPTED",
+        "cause": kind,
+        "phase": phase,
+        "retryable": retryable,
+        "error_code": code,
+        "http_status": http_status,
+        "detail": detail,
+        "interruption_source_identifier": (
+            candidate.source_identifier if candidate is not None else None
+        ),
+        "interruption_document_url": (
+            candidate.document_url if candidate is not None else None
+        ),
+        "processed_count": processed_count,
+        "pending_count": max(0, total_count - processed_count),
+        "resumable": True,
+    }
+
+
+def _signal_interruption(
+    *,
+    candidate: OfficialDocumentCandidate | None,
+    processed_count: int,
+    total_count: int,
+) -> dict[str, object]:
+    return {
+        "status": "RUN_INTERRUPTED",
+        "cause": "runner_signal",
+        "phase": "acquisition",
+        "retryable": True,
+        "error_code": "",
+        "http_status": 0,
+        "detail": f"received {_STOP_SIGNAL or 'termination signal'}",
+        "interruption_source_identifier": (
+            candidate.source_identifier if candidate is not None else None
+        ),
+        "interruption_document_url": (
+            candidate.document_url if candidate is not None else None
+        ),
+        "processed_count": processed_count,
+        "pending_count": max(0, total_count - processed_count),
+        "resumable": True,
+    }
+
+
+def _persist_partial_evidence(
+    *,
+    output_dir: Path,
+    summary: dict[str, object],
+    completed: list[dict[str, object]],
+    unavailable: list[dict[str, object]],
+    failures: list[dict[str, object]],
+) -> None:
+    _write_json(output_dir / "interruption.json", summary)
+    _write_json(output_dir / "summary.json", summary)
+    _write_json(output_dir / "failures.json", failures)
+    _write_json(output_dir / "unavailable.json", unavailable)
+    _write_json(output_dir / "completed.json", completed)
+
+
 def main() -> None:
+    _install_signal_handlers()
     _require_environment()
     if MAX_ATTEMPTS < 1 or MAX_ATTEMPTS > 5:
         raise ValueError("SCJ_BACKFILL_ITEM_ATTEMPTS must be between 1 and 5")
@@ -284,12 +374,51 @@ def main() -> None:
     failures: list[dict[str, object]] = []
     interruption: dict[str, object] | None = None
     for ordinal, candidate in enumerate(candidates, start=1):
+        if _STOP_SIGNAL is not None:
+            processed_count = len(completed) + len(unavailable) + len(failures)
+            interruption = _signal_interruption(
+                candidate=candidate,
+                processed_count=processed_count,
+                total_count=len(candidates),
+            )
+            _persist_partial_evidence(
+                output_dir=output_dir,
+                summary=interruption,
+                completed=completed,
+                unavailable=unavailable,
+                failures=failures,
+            )
+            _event("scj.1994_backfill.interrupted", **interruption)
+            break
+
         recovered = recovery_journal.get(
             source_identifier=candidate.source_identifier,
             document_url=candidate.document_url,
         )
         if recovered is not None and recovered.status == "stored":
-            _verify_recovered_object(object_store=object_store, record=recovered)
+            try:
+                _verify_recovered_object(object_store=object_store, record=recovered)
+            except Exception as exc:
+                infrastructure_failure = classify_infrastructure_error(exc)
+                if infrastructure_failure is None:
+                    raise
+                processed_count = len(completed) + len(unavailable) + len(failures)
+                interruption = _interruption_from_failure(
+                    failure=infrastructure_failure,
+                    candidate=candidate,
+                    processed_count=processed_count,
+                    total_count=len(candidates),
+                    phase="resume_verification",
+                )
+                _persist_partial_evidence(
+                    output_dir=output_dir,
+                    summary=interruption,
+                    completed=completed,
+                    unavailable=unavailable,
+                    failures=failures,
+                )
+                _event("scj.1994_backfill.interrupted", **interruption)
+                break
             assert recovered.sha256 is not None
             assert recovered.object_key is not None
             manifest.record_existing(
@@ -417,21 +546,21 @@ def main() -> None:
                 reason=exc.reason,
             )
         except GlobalAcquisitionInterruption as exc:
-            interruption = {
-                "status": "RUN_INTERRUPTED",
-                "cause": exc.failure.kind,
-                "retryable": exc.failure.retryable,
-                "error_code": exc.failure.code,
-                "http_status": exc.failure.http_status,
-                "detail": exc.failure.detail,
-                "interruption_source_identifier": candidate.source_identifier,
-                "interruption_document_url": candidate.document_url,
-                "processed_count": len(completed) + len(unavailable) + len(failures),
-                "pending_count": len(candidates)
-                - (len(completed) + len(unavailable) + len(failures)),
-                "resumable": True,
-            }
-            _write_json(output_dir / "interruption.json", interruption)
+            processed_count = len(completed) + len(unavailable) + len(failures)
+            interruption = _interruption_from_failure(
+                failure=exc.failure,
+                candidate=candidate,
+                processed_count=processed_count,
+                total_count=len(candidates),
+                phase="acquisition",
+            )
+            _persist_partial_evidence(
+                output_dir=output_dir,
+                summary=interruption,
+                completed=completed,
+                unavailable=unavailable,
+                failures=failures,
+            )
             _event("scj.1994_backfill.interrupted", **interruption)
             break
         except Exception as exc:
@@ -481,15 +610,54 @@ def main() -> None:
             "unavailable_count": len(unavailable),
             "failed_count": len(failures),
         }
-        _write_json(output_dir / "summary.json", summary)
-        _write_json(output_dir / "failures.json", failures)
-        _write_json(output_dir / "unavailable.json", unavailable)
-        _write_json(output_dir / "completed.json", completed)
+        _persist_partial_evidence(
+            output_dir=output_dir,
+            summary=summary,
+            completed=completed,
+            unavailable=unavailable,
+            failures=failures,
+        )
         raise RuntimeError(
             f"SCJ 1994+ shard {shard_index} interrupted: {interruption['cause']}"
         )
 
-    stored_manifest = manifest.commit(object_store=object_store)
+    try:
+        stored_manifest = manifest.commit(object_store=object_store)
+    except Exception as exc:
+        infrastructure_failure = classify_infrastructure_error(exc)
+        if infrastructure_failure is None:
+            raise
+        processed_count = len(completed) + len(unavailable) + len(failures)
+        interruption = _interruption_from_failure(
+            failure=infrastructure_failure,
+            candidate=None,
+            processed_count=processed_count,
+            total_count=len(candidates),
+            phase="manifest_commit",
+        )
+        summary = {
+            **interruption,
+            "batch_id": batch_id,
+            "ingestion_id": ingestion_id,
+            "shard_index": shard_index,
+            "shard_count": shard_count,
+            "assigned_count": len(candidates),
+            "completed_count": len(completed),
+            "unavailable_count": len(unavailable),
+            "failed_count": len(failures),
+        }
+        _persist_partial_evidence(
+            output_dir=output_dir,
+            summary=summary,
+            completed=completed,
+            unavailable=unavailable,
+            failures=failures,
+        )
+        _event("scj.1994_backfill.interrupted", **summary)
+        raise RuntimeError(
+            f"SCJ 1994+ shard {shard_index} manifest commit interrupted: "
+            f"{infrastructure_failure.kind}"
+        ) from exc
     (output_dir / "run-manifest.json").write_bytes(
         stored_manifest.manifest.canonical_bytes()
     )
