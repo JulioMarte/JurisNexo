@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, build_s3_object_store
 
@@ -68,6 +70,54 @@ def _classify(key: str, payload: dict[str, object]) -> str:
     return "non-canary"
 
 
+def _storage_identity(store: S3ObjectStore) -> dict[str, object]:
+    bucket = store.config.bucket
+    endpoint = store.config.endpoint_url or ""
+    endpoint_host = (urlparse(endpoint).hostname or "").casefold()
+    return {
+        "bucket_length": len(bucket),
+        "bucket_sha256": hashlib.sha256(bucket.encode("utf-8")).hexdigest(),
+        "endpoint_host": endpoint_host,
+        "endpoint_host_sha256": hashlib.sha256(endpoint_host.encode("utf-8")).hexdigest(),
+        "region": store.config.region,
+    }
+
+
+def _count_objects(store: S3ObjectStore, prefix: str) -> dict[str, object]:
+    client = cast(Any, store.client)
+    token: str | None = None
+    count = 0
+    total_size = 0
+    sample_keys: list[str] = []
+    while True:
+        kwargs: dict[str, object] = {
+            "Bucket": store.config.bucket,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
+        if token:
+            kwargs["ContinuationToken"] = token
+        response = client.list_objects_v2(**kwargs)
+        for item in response.get("Contents", []):
+            key = str(item.get("Key") or "")
+            size = int(item.get("Size") or 0)
+            count += 1
+            total_size += size
+            if len(sample_keys) < 10:
+                sample_keys.append(key)
+        if not response.get("IsTruncated"):
+            break
+        token = str(response.get("NextContinuationToken") or "")
+        if not token:
+            raise RuntimeError("S3 object listing truncated without continuation token")
+    return {
+        "prefix": prefix,
+        "count": count,
+        "total_size": total_size,
+        "sample_keys": sample_keys,
+    }
+
+
 def audit(store: S3ObjectStore) -> dict[str, object]:
     records: list[dict[str, object]] = []
     for key in _list_manifest_keys(store):
@@ -104,10 +154,13 @@ def audit(store: S3ObjectStore) -> dict[str, object]:
         counts[classification] = counts.get(classification, 0) + 1
     result = {
         "prefix": PREFIX,
-        "bucket": store.config.bucket,
+        "storage_identity": _storage_identity(store),
         "manifest_count": len(records),
         "classification_counts": dict(sorted(counts.items())),
         "records": records,
+        "principales_objects": _count_objects(
+            store, "jurisdictions/do/scj/principales-sentencias/"
+        ),
     }
     _write_json(OUT / "manifest-audit.json", result)
     return result
