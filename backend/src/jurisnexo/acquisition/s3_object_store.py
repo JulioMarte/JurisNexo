@@ -209,7 +209,6 @@ class S3ObjectStore:
             Metadata=metadata,
         )
 
-
     def put_file(
         self,
         *,
