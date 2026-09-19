@@ -22,8 +22,10 @@ class PlaywrightVerifiedFetcher:
                 "PlaywrightVerifiedFetcher requires the optional playwright package"
             ) from exc
         sync_playwright: Any = sync_api.sync_playwright
-        self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=True)
+        playwright: Any = sync_playwright().start()
+        browser: Any = playwright.chromium.launch(headless=True)
+        self._playwright = playwright
+        self._browser = browser
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
