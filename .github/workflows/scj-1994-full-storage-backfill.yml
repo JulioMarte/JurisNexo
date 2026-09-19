@@ -70,6 +70,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - name: Install backend for artifact policy validation
+        run: python -m pip install -e ./backend
       - uses: actions/download-artifact@v5
         with:
           pattern: scj-year-inventory-*
@@ -119,6 +121,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      - name: Install backend for artifact policy validation
+        run: python -m pip install -e ./backend
       - uses: actions/download-artifact@v5
         with:
           name: scj-1994-certified-inventory
