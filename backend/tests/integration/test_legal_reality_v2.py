@@ -404,7 +404,10 @@ def test_common_entity_identity_and_claim_to_disposition_effect(
         )
         action = _one(cursor)
         cursor.execute(
-            "SELECT id FROM corpus.disposition_argument_role_concepts WHERE code='object'"
+            """
+            SELECT id FROM corpus.legal_concepts
+            WHERE scheme_code='disposition_argument_role' AND code='object'
+            """
         )
         object_role = _one(cursor)
         cursor.execute(
