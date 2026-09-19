@@ -473,7 +473,18 @@ def test_substantive_treatment_requires_issue_context_and_evidence(
         court = _court(cursor)
         source = _decision(cursor, court)
         target = _decision(cursor, court)
-        issue = _proposition(cursor, "issue", "¿Cuál es el plazo aplicable?")
+        cursor.execute(
+            """
+            INSERT INTO corpus.legal_issues(
+                canonical_question, assertion_kind,
+                verification_status, verification_method
+            ) VALUES (
+                '¿Cuál es el plazo aplicable?', 'human_authored',
+                'candidate', 'human_legal_review'
+            ) RETURNING id
+            """
+        )
+        issue = _one(cursor)
         with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
             cursor.execute(
                 """
@@ -490,12 +501,12 @@ def test_substantive_treatment_requires_issue_context_and_evidence(
             """
             INSERT INTO corpus.legal_treatment_assertions (
                 source_case_id, target_case_id, treatment_type,
-                issue_proposition_id, verification_status,
+                legal_issue_id, verification_status,
                 verification_method
             ) VALUES (
                 %s, %s, 'distinguishes', %s, 'candidate',
                 'human_legal_review'
-            ) RETURNING issue_proposition_id
+            ) RETURNING legal_issue_id
             """,
             (source, target, issue),
         )
