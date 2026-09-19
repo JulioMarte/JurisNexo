@@ -7,12 +7,12 @@ from urllib.error import URLError
 import pytest
 
 from jurisnexo.acquisition.http_fetcher import (
+    OFFICIAL_SOURCE_HOSTS,
+    SCJ_DECISION_DOCUMENT_HOSTS,
     BoundedHttpFetcher,
     HttpFilePayload,
     HttpPayload,
     HttpStatusError,
-    OFFICIAL_SOURCE_HOSTS,
-    SCJ_DECISION_DOCUMENT_HOSTS,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.provenance]
@@ -216,11 +216,11 @@ def test_streaming_fetcher_rejects_oversized_response(tmp_path: Path) -> None:
 
 
 def test_scj_decision_document_hosts_match_live_official_inventory_topology() -> None:
-    assert SCJ_DECISION_DOCUMENT_HOSTS == frozenset(
+    assert frozenset(
         {
             "transparencia.poderjudicial.gob.do",
             "consultaglobal.blob.core.windows.net",
             "sjdeposito.blob.core.windows.net",
         }
-    )
+    ) == SCJ_DECISION_DOCUMENT_HOSTS
     assert SCJ_DECISION_DOCUMENT_HOSTS <= OFFICIAL_SOURCE_HOSTS
