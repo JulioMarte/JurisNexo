@@ -8,6 +8,7 @@ from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
     acquire_candidates,
     discover_scj_pdf_candidates_from_html,
+    discover_scj_principales_candidates_from_html,
     discover_tc_detail_pages,
     object_key_for,
     sha256_hex,
@@ -156,3 +157,27 @@ def test_non_pdf_response_fails_closed_before_bucket_write() -> None:
         )
 
     assert store.puts == 0
+
+
+def test_scj_principales_parser_keeps_only_official_labeled_pdfs() -> None:
+    html = """
+    <a href="/wp-content/uploads/2026/05/Principales-enero-abril-2026.pdf">
+      Principales Decisiones de la Suprema Corte de Justicia enero-abril 2026
+    </a>
+    <a href="/wp-content/uploads/2026/05/unrelated.pdf">Otro documento</a>
+    <a href="https://evil.example/principales.pdf">
+      Principales Decisiones de la Suprema Corte de Justicia 2025
+    </a>
+    """
+
+    results = discover_scj_principales_candidates_from_html(html=html)
+
+    assert len(results) == 1
+    candidate = results[0]
+    assert candidate.collection == "principales-sentencias"
+    assert candidate.source == "supreme_court"
+    assert candidate.document_url == (
+        "https://poderjudicial.gob.do/wp-content/uploads/2026/05/"
+        "Principales-enero-abril-2026.pdf"
+    )
+    assert candidate.source_identifier.startswith("principales-url:")
