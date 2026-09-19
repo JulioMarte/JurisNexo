@@ -85,29 +85,16 @@ jobs:
           echo >> "$GITHUB_STEP_SUMMARY"
           if [[ -f "$SCJ_PRINCIPALES_CANARY_OUTPUT/summary.json" ]]; then
             echo 'Result: PASS. See the uploaded artifact for summary, manifest, inventory, observed HTML and raw log.' >> "$GITHUB_STEP_SUMMARY"
-            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-          from pathlib import Path
-          path = Path(os.environ['SCJ_PRINCIPALES_CANARY_OUTPUT']) / 'summary.json'
-          data = json.loads(path.read_text(encoding='utf-8'))
-          print(f"- discovered: {data['discovered_count']}")
-          print(f"- selected: {data['selected_count']}")
-          print(f"- new uploads: {data['new_upload_count']}")
-          print(f"- already present: {data['already_present_count']}")
-          print(f"- manifest: {data['run_manifest_object_key']}")
-          PY
+            echo '### Summary' >> "$GITHUB_STEP_SUMMARY"
+            echo '\`\`\`json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$SCJ_PRINCIPALES_CANARY_OUTPUT/summary.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '\`\`\`' >> "$GITHUB_STEP_SUMMARY"
           elif [[ -f "$SCJ_PRINCIPALES_CANARY_OUTPUT/failure.json" ]]; then
             echo 'Result: FAIL. Full traceback and observed source HTML are in the uploaded artifact.' >> "$GITHUB_STEP_SUMMARY"
-            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-          from pathlib import Path
-          path = Path(os.environ['SCJ_PRINCIPALES_CANARY_OUTPUT']) / 'failure.json'
-          data = json.loads(path.read_text(encoding='utf-8'))
-          print(f"- error_type: {data.get('error_type', 'unknown')}")
-          print(f"- error: {data.get('error', 'unknown')}")
-          PY
+            echo '### Failure' >> "$GITHUB_STEP_SUMMARY"
+            echo '\`\`\`json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$SCJ_PRINCIPALES_CANARY_OUTPUT/failure.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '\`\`\`' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'No structured result was produced; inspect the raw log artifact.' >> "$GITHUB_STEP_SUMMARY"
           fi
