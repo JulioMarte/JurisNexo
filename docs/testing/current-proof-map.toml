@@ -357,3 +357,38 @@ evidence = ["invariant", "integration"]
 guarantee = "INV-CONFIDENCE-SEPARATION-001"
 path = "backend/tests/legal_model/test_v4_semantic_contract.py"
 evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-RUN-MANIFEST-001"
+path = "backend/tests/unit/test_acquisition_manifest.py"
+evidence = ["invariant", "contract"]
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-RUN-MANIFEST-001"
+path = "backend/tests/architecture/test_acquisition_run_manifest_contract.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-SOURCE-BYTES-001"
+path = "backend/tests/unit/test_official_corpus_acquisition.py"
+evidence = ["invariant", "contract"]
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-SOURCE-BYTES-001"
+path = "backend/tests/unit/test_acquisition_http_fetcher.py"
+evidence = ["invariant", "contract"]
+
+[[gaps]]
+guarantee = "INV-ACQUISITION-SOURCE-BYTES-001"
+missing_evidence = ["integration", "fitness"]
+reason = "Unit proof confirms content-addressed storage, byte-preserving format detection (PDF/DOC/DOCX/RTF) and unavailable-response handling, but no end-to-end acquisition integration test or architecture fitness rule yet enforces source-byte and source-format preservation across the supported ingestion path."
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-RECOVERY-001"
+path = "backend/tests/unit/test_acquisition_recovery.py"
+evidence = ["invariant", "contract"]
+
+[[gaps]]
+guarantee = "INV-ACQUISITION-RECOVERY-001"
+missing_evidence = ["integration"]
+reason = "Unit proof covers the durable recovery journal, infrastructure-vs-document error classification and Backblaze capacity-exhaustion resume semantics, but a real shard-level integration proof that resumes against object storage after an interruption is not yet present."
