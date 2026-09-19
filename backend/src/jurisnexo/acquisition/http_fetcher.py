@@ -195,7 +195,6 @@ class BoundedHttpFetcher:
 
         raise RuntimeError("unreachable acquisition retry state")
 
-
     def download_to_file(self, url: str, destination: Path) -> None:
         self._require_allowed_url(url)
         if not isinstance(self.transport, FileHttpTransport):
