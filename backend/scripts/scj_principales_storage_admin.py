@@ -118,6 +118,55 @@ def _count_objects(store: S3ObjectStore, prefix: str) -> dict[str, object]:
     }
 
 
+def _list_object_versions(store: S3ObjectStore, prefix: str) -> dict[str, object]:
+    client = cast(Any, store.client)
+    key_marker: str | None = None
+    version_id_marker: str | None = None
+    versions: list[dict[str, object]] = []
+    delete_markers: list[dict[str, object]] = []
+    while True:
+        kwargs: dict[str, object] = {
+            "Bucket": store.config.bucket,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
+        if key_marker:
+            kwargs["KeyMarker"] = key_marker
+        if version_id_marker:
+            kwargs["VersionIdMarker"] = version_id_marker
+        response = client.list_object_versions(**kwargs)
+        for item in response.get("Versions", []):
+            versions.append(
+                {
+                    "key": str(item.get("Key") or ""),
+                    "version_id": str(item.get("VersionId") or ""),
+                    "is_latest": bool(item.get("IsLatest")),
+                    "size": int(item.get("Size") or 0),
+                }
+            )
+        for item in response.get("DeleteMarkers", []):
+            delete_markers.append(
+                {
+                    "key": str(item.get("Key") or ""),
+                    "version_id": str(item.get("VersionId") or ""),
+                    "is_latest": bool(item.get("IsLatest")),
+                }
+            )
+        if not response.get("IsTruncated"):
+            break
+        key_marker = str(response.get("NextKeyMarker") or "")
+        version_id_marker = str(response.get("NextVersionIdMarker") or "")
+        if not key_marker:
+            raise RuntimeError("S3 version listing truncated without next key marker")
+    return {
+        "prefix": prefix,
+        "version_count": len(versions),
+        "delete_marker_count": len(delete_markers),
+        "versions": versions,
+        "delete_markers": delete_markers,
+    }
+
+
 def audit(store: S3ObjectStore) -> dict[str, object]:
     records: list[dict[str, object]] = []
     for key in _list_manifest_keys(store):
@@ -161,6 +210,7 @@ def audit(store: S3ObjectStore) -> dict[str, object]:
         "principales_objects": _count_objects(
             store, "jurisdictions/do/scj/principales-sentencias/"
         ),
+        "manifest_versions": _list_object_versions(store, PREFIX),
     }
     _write_json(OUT / "manifest-audit.json", result)
     return result
@@ -168,30 +218,62 @@ def audit(store: S3ObjectStore) -> dict[str, object]:
 
 def cleanup_canary_manifests(store: S3ObjectStore) -> dict[str, object]:
     before = audit(store)
-    unsafe = [
+    current_records = before["records"]
+    unsafe_current = [
         record
-        for record in before["records"]
-        if record.get("classification") != "canary"
+        for record in current_records
+        if record.get("classification") not in {"canary", "non-canary"}
     ]
-    if unsafe:
+    if unsafe_current:
         raise RuntimeError(
-            "refusing Principales cleanup because non-canary or unreadable manifests exist"
+            "refusing Principales cleanup because unreadable/unexpected current manifests exist"
         )
 
     client = cast(Any, store.client)
-    deleted: list[str] = []
-    for record in before["records"]:
-        key = str(record["key"])
-        client.delete_object(Bucket=store.config.bucket, Key=key)
-        deleted.append(key)
+    version_state = cast(dict[str, object], before["manifest_versions"])
+    version_items = [
+        *cast(list[dict[str, object]], version_state["versions"]),
+        *cast(list[dict[str, object]], version_state["delete_markers"]),
+    ]
+    canary_version_items = [
+        item for item in version_items if "scj-principales-canary.json" in str(item["key"])
+    ]
+    non_canary_version_items = [
+        item for item in version_items if "scj-principales-canary.json" not in str(item["key"])
+    ]
+
+    purged: list[dict[str, str]] = []
+    for item in canary_version_items:
+        key = str(item["key"])
+        version_id = str(item["version_id"])
+        if not key or not version_id:
+            raise RuntimeError(f"refusing malformed version purge record: {item}")
+        client.delete_object(
+            Bucket=store.config.bucket,
+            Key=key,
+            VersionId=version_id,
+        )
+        purged.append({"key": key, "version_id": version_id})
 
     after = audit(store)
-    if after["manifest_count"] != 0:
-        raise RuntimeError("Principales manifest cleanup did not leave an empty prefix")
+    remaining_versions = cast(dict[str, object], after["manifest_versions"])
+    remaining_canary = [
+        item
+        for item in [
+            *cast(list[dict[str, object]], remaining_versions["versions"]),
+            *cast(list[dict[str, object]], remaining_versions["delete_markers"]),
+        ]
+        if "scj-principales-canary.json" in str(item["key"])
+    ]
+    if remaining_canary:
+        raise RuntimeError(
+            f"canary manifest versions remain after permanent purge: {remaining_canary}"
+        )
 
     result = {
-        "deleted_count": len(deleted),
-        "deleted_keys": deleted,
+        "purged_version_count": len(purged),
+        "purged_versions": purged,
+        "preserved_non_canary_version_count": len(non_canary_version_items),
         "before": before,
         "after": after,
     }
