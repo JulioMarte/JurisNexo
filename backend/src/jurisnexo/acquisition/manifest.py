@@ -135,8 +135,12 @@ class AcquisitionRunItem:
 class AcquisitionRunManifest:
     schema_version: int
     ingestion_id: str
+    batch_id: str
+    partition_index: int
+    partition_count: int
     source: str
     scope: str
+    storage_bucket: str
     started_at: str
     completed_at: str
     status: RunStatus
@@ -177,18 +181,36 @@ class AcquisitionRunManifestBuilder:
         *,
         source: str,
         scope: str,
+        storage_bucket: str,
         ingestion_id: str | None = None,
+        batch_id: str | None = None,
+        partition_index: int = 0,
+        partition_count: int = 1,
         started_at: datetime | None = None,
     ) -> None:
         if not _STORAGE_SEGMENT_RE.fullmatch(source):
             raise ValueError("source must be a lowercase kebab-case storage segment")
         if not _STORAGE_SEGMENT_RE.fullmatch(scope):
             raise ValueError("scope must be a lowercase kebab-case storage segment")
+        if not storage_bucket.strip():
+            raise ValueError("storage_bucket must not be empty")
+        if partition_count < 1:
+            raise ValueError("partition_count must be at least 1")
+        if not 0 <= partition_index < partition_count:
+            raise ValueError("partition_index must be within partition_count")
         self.source = source
         self.scope = scope
+        self.storage_bucket = storage_bucket.strip()
         self.ingestion_id = ingestion_id or str(uuid.uuid4())
-        if "/" in self.ingestion_id or not self.ingestion_id.strip():
-            raise ValueError("ingestion_id must be a non-empty object-key-safe identifier")
+        self.batch_id = batch_id or self.ingestion_id
+        for field_name, value in (
+            ("ingestion_id", self.ingestion_id),
+            ("batch_id", self.batch_id),
+        ):
+            if "/" in value or not value.strip():
+                raise ValueError(f"{field_name} must be a non-empty object-key-safe identifier")
+        self.partition_index = partition_index
+        self.partition_count = partition_count
         self.started_at = _utc(started_at or datetime.now(UTC))
         self._items: dict[tuple[str, str, str], AcquisitionRunItem] = {}
         self._committed = False
@@ -296,8 +318,12 @@ class AcquisitionRunManifestBuilder:
         return AcquisitionRunManifest(
             schema_version=_RUN_SCHEMA_VERSION,
             ingestion_id=self.ingestion_id,
+            batch_id=self.batch_id,
+            partition_index=self.partition_index,
+            partition_count=self.partition_count,
             source=self.source,
             scope=self.scope,
+            storage_bucket=self.storage_bucket,
             started_at=_iso_z(self.started_at),
             completed_at=_iso_z(completed),
             status=status,
@@ -338,6 +364,10 @@ class AcquisitionRunManifestBuilder:
                 "ingestion_id": self.ingestion_id,
                 "source": self.source,
                 "scope": self.scope,
+                "storage_bucket": self.storage_bucket,
+                "batch_id": self.batch_id,
+                "partition_index": str(self.partition_index),
+                "partition_count": str(self.partition_count),
                 "status": manifest.status,
                 "payload_sha256": payload_sha256,
             },
