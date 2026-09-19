@@ -21,6 +21,7 @@ The following existing documents remain authoritative for their domain contracts
 - `10-job-state-machines-and-reproducibility.md` — durable job semantics/reproducibility, including the mandatory Structure/Audit/Extraction/Audit gates;
 - `11-benchmark-annotation-and-evaluation-protocol.md` — benchmark discipline;
 - `12-mvp-user-workflow-and-api-contract.md` — product-facing API/workflow.
+- `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` — canonical corpus/product strategy for two-speed breadth/depth, SCJ Principales seed selection, citation-driven promotion, coverage discipline, benchmark/failure flywheel, and current moat priorities; it refines older narrow-corpus sequencing language in `00`, `06`, `08`, and `16` without changing their trust/provenance requirements.
 
 The following documents define the current runtime/implementation direction and override conflicting assumptions about building a custom agent harness or about the current persisted legal model:
 
@@ -38,7 +39,7 @@ The following documents define the current runtime/implementation direction and 
 - `34-adversarial-legal-reality-v3.md` — V3 refinement introducing explicit proceeding and cross-instance claim graphs, canonical-only legal semantics, disposition action identity, removal of compatibility aliases/mirrors, nullable unclassified adjudicative-act type, and the LAW-OWNED versus SYSTEM-OWNED vocabulary boundary;
 - `35-legal-reality-v4.md` — **current canonical pre-ingestion refinement for persisted legal reality**, separating legal issues and factual propositions from legal propositions, replacing single typed disposition targets with typed action arguments, adding auditable entity-resolution history, and establishing the shared concept foundation for new cross-jurisdiction semantics.
 
-For persisted legal/corpus semantics, read the refinements in order: `02` -> `28` -> `31`/`33` -> `34` -> `35`. The newest document controls only the contracts it explicitly refines. In particular, V3's proceeding graph, claim lineage, judicial stance, canonical-only semantics, bitemporal truth and open-vocabulary rules remain in force; V4 specifically supersedes V3's disposition target representation and the use of `legal_propositions` for issues/material facts/procedural facts.
+For corpus/product sequencing, read `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` before interpreting older narrow-corpus rollout language. For persisted legal/corpus semantics, read the refinements in order: `02` -> `28` -> `31`/`33` -> `34` -> `35`. The newest document controls only the contracts it explicitly refines. In particular, V3's proceeding graph, claim lineage, judicial stance, canonical-only semantics, bitemporal truth and open-vocabulary rules remain in force; V4 specifically supersedes V3's disposition target representation and the use of `legal_propositions` for issues/material facts/procedural facts.
 
 `docs/testing/current-guarantees.toml` is the normative semantic guarantee inventory used by architecture/testing governance. It names durable guarantees and required evidence classes; it intentionally does not freeze exact test filenames.
 

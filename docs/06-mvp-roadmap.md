@@ -2,7 +2,9 @@
 
 ## 1. Roadmap principle
 
-The roadmap should optimize for evidence of product value, not architectural completeness.
+The roadmap should optimize for evidence of product value and compounding corpus intelligence, not architectural completeness.
+
+The current corpus sequence is governed by `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`: acquire broadly and cheaply where trustworthy, deepen selectively where the evidence says the decision is valuable. Do not serialize the roadmap into “deeply normalize one narrow corpus, then discover the rest.”
 
 The MVP should reach a point where real lawyers can submit real research questions, receive a verifiable report, and tell us whether it materially reduced their work.
 
@@ -91,81 +93,78 @@ The selected compilation can be re-ingested without duplicate logical records; i
 
 Volume is not the Phase 1 exit condition.
 
-## 4. Phase 2 — searchable pilot corpus
+## 4. Phase 2 — searchable breadth + SCJ intelligence seed
 
-Goal: establish a strong, measurable retrieval baseline over the verified corpus before building a complex research-agent workflow.
+Goal: establish measurable search/canonical-identity coverage while beginning deep normalization only on high-signal material.
 
-Agent-assisted ingestion is already present in Phase 1. “Before complex agents” here means before broad multi-agent legal research orchestration, not before any LLM is used.
+Run two coordinated tracks.
 
-Initial corpus should remain deliberately constrained. After the early-2025 compilation is validated, expand first to recent 2024 and 2023 SCJ compilations rather than immediately processing the entire historical archive.
+### Track A — SCJ Principales intelligence seed
 
-Recommended early expansion:
+Inventory the official SCJ `principales-sentencias` collection from 2005 to the present, reconcile it against existing storage, and ingest representative publication families through the full audited pipeline.
 
-```text
-2025 Jan-Apr
-2024 Jan-Apr
-2024 May-Aug
-2024 Sep-Dec
-2023 Jan-Apr
-2023 May-Aug
-2023 Sep-Dec
-```
+Deliverables:
+
+- durable Principales source inventory;
+- immutable artifact acquisition and deduplication;
+- decision segmentation/canonical identity;
+- exact page provenance;
+- source-collection membership preserved as editorial provenance;
+- deep normalization for selected Principal decisions;
+- initial Golden Precedent Set.
+
+### Track B — broad SCJ searchable corpus
+
+Inventory/acquire broader official SCJ decision, bulletin and historical surfaces as cheaply as source quality permits.
 
 Deliverables:
 
 - exact decision/reference search;
 - metadata filters;
 - PostgreSQL full-text lexical search;
-- semantic retrieval;
-- RRF fusion baseline;
-- reranker experiment;
+- optional semantic retrieval after text quality is acceptable;
 - stable Search/Corpus API;
-- corpus browser for internal testing;
-- versioned retrieval profiles;
-- initial 10-20 question manually reviewed legal benchmark.
+- measurable coverage/freshness manifest;
+- unresolved identity/source gaps preserved explicitly.
+
+Do not require expensive issues/holdings/treatments before a trustworthy decision can be searchable.
 
 Evaluation:
 
-- Recall@K;
-- nDCG@K;
-- Critical Miss Rate;
-- adverse-authority recall where applicable;
+- segmentation/identity correctness;
+- Recall@K and nDCG@K over reviewed questions;
 - evidence-page correctness;
+- coverage accounting;
 - search latency;
 - common failure analysis.
 
-Compare at minimum:
-
-```text
-lexical only
-semantic only
-lexical + semantic + RRF
-lexical + semantic + RRF + reranker
-```
-
 Exit condition:
 
-Known relevant decisions for the seed benchmark are discoverable with acceptable recall, retrieval regressions can be measured, and the system can prove that retrieved evidence maps back to exact source pages.
+Known relevant decisions for the seed benchmark are discoverable with acceptable recall; Principal decisions are reliably represented with exact provenance; broader SCJ coverage can be measured honestly; and the system can distinguish searchable breadth from deeply normalized intelligence.
 
-## 5. Phase 3 — citation linking and case reader
+## 5. Phase 3 — citation graph, promotion and case reader
 
-Goal: move from search results to evidence-backed case understanding.
+Goal: turn important decisions into a compounding jurisprudential network before building broad research orchestration.
 
 Deliverables:
 
-- citation extraction;
-- citation resolution;
+- raw explicit citation extraction with exact context/provenance;
+- conservative citation resolution with unresolved state;
 - `get_citations`;
 - `get_citing_cases`;
+- backward expansion from Principal decisions to older authorities;
+- forward expansion from important authorities to later citing decisions;
+- normalization-priority policy driven by editorial selection, citation structure, benchmark membership and observed research value;
 - within-case search;
 - bounded Case Analyst agent;
 - structured evidence records;
 - exact page provenance;
-- role-aware case structure where benchmarked useful.
+- role-aware case structure where benchmarked useful;
+- selective treatment classification only for high-value edges.
 
 Exit condition:
 
-Given a known case, JurisNexo can extract a relevant holding/reasoning segment and show the user where it appears in the original source.
+Given a known important case, JurisNexo can show its resolved/unresolved cited authorities, find later citing decisions within measured corpus coverage, extract a relevant holding/reasoning segment with source evidence, and identify which neighboring nodes should be promoted for deeper analysis.
 
 ## 6. Phase 4 — research agent V0
 

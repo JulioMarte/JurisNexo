@@ -23,6 +23,29 @@ The current architecture is undergoing a controlled migration away from a custom
 
 The current custom harness is a temporary benchmark baseline and a source of reusable document-domain capabilities. Do not delete it merely because the new runtime has been selected. Retire generic runtime code only after the replacement demonstrates benchmark parity or improvement and preserves provenance/evidence guarantees.
 
+## Current product/data direction — mandatory discovery
+
+The current corpus/product strategy is **broad cheap discoverability + selective verified depth**. JurisNexo is building a Dominican jurisprudential intelligence layer, not merely a large PDF collection or a generic legal chatbot.
+
+Read `docs/38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` before proposing broad corpus, retrieval, citation, enrichment, research-agent, or legal-analytics work.
+
+Current critical path:
+
+```text
+official source inventory
+    -> canonical identity + exact provenance
+    -> searchable corpus
+    -> explicit citation extraction/resolution
+    -> priority-driven deep normalization
+    -> legal issues/propositions/treatments with evidence
+    -> Precedent & Adverse Authority research
+    -> lawyer corrections -> benchmark/regression corpus
+```
+
+SCJ `principales-sentencias` is the initial high-signal seed for semantic depth. Broader SCJ and later multi-court material should become searchable without requiring full semantic normalization first. Membership in an editorial collection is a scheduling/importance signal, never an automatic legal-authority score.
+
+Do not propose mass deep normalization, a graph database, a custom legal model, or broad legal-analytics statistics merely because the schema can support them. Require measured source coverage and a demonstrated product/benchmark need.
+
 ## Branch workflow — mandatory
 
 `main` is the canonical integration branch.
@@ -51,20 +74,21 @@ Recommended order:
 
 1. `README.md` — product thesis and current architecture direction;
 2. `docs/19-documentation-crosswalk.md` — authority/precedence between old and new documents;
-3. `docs/01-system-architecture.md` — platform boundaries;
-4. `docs/13-agent-runtime-and-multi-agent-orchestration.md` — canonical agent-runtime/orchestration contract;
-5. `docs/15-ingestion-agent-pipeline.md` — Structure -> Audit -> Extraction -> Audit pipeline;
-6. `docs/16-corpus-api-agent-contract.md` — stable agent/data boundary;
-7. `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider/SDK capability constraints;
-8. `docs/21-implementation-governance-and-agent-execution.md` — implementation sequencing and migration discipline;
-9. `docs/22-architecture-fitness-functions.md` and `docs/testing/current-guarantees.toml` — executable architecture policy and normative guarantee inventory;
-10. `docs/02-legal-corpus-and-data-model.md` when changing persisted legal/corpus data;
-11. `docs/03-research-agent-and-report-contract.md` when changing legal research behavior;
-12. `docs/10-job-state-machines-and-reproducibility.md` when changing long-running jobs or durable execution;
-13. `docs/11-benchmark-annotation-and-evaluation-protocol.md` and `docs/17-agent-methodology-and-benchmark-map.md` when changing benchmarks, retrieval, agent behavior, or research methods;
-14. `docs/05-security-privacy-and-trust.md` and `docs/09-tenancy-authentication-and-access-control.md` for trust/tenant-sensitive changes;
-15. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work;
-16. `docs/27-database-bootstrap-and-multi-court-registry.md` for database bootstrap, PostgreSQL configuration, and ephemeral-CI database policy.
+3. `docs/38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` — canonical corpus/product flywheel, SCJ Principales seed strategy, citation-first expansion, and current moat/priority rules;
+4. `docs/01-system-architecture.md` — platform boundaries;
+5. `docs/13-agent-runtime-and-multi-agent-orchestration.md` — canonical agent-runtime/orchestration contract;
+6. `docs/15-ingestion-agent-pipeline.md` — Structure -> Audit -> Extraction -> Audit pipeline;
+7. `docs/16-corpus-api-agent-contract.md` — stable agent/data boundary;
+8. `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider/SDK capability constraints;
+9. `docs/21-implementation-governance-and-agent-execution.md` — implementation sequencing and migration discipline;
+10. `docs/22-architecture-fitness-functions.md` and `docs/testing/current-guarantees.toml` — executable architecture policy and normative guarantee inventory;
+11. `docs/02-legal-corpus-and-data-model.md` when changing persisted legal/corpus data;
+12. `docs/03-research-agent-and-report-contract.md` when changing legal research behavior;
+13. `docs/10-job-state-machines-and-reproducibility.md` when changing long-running jobs or durable execution;
+14. `docs/11-benchmark-annotation-and-evaluation-protocol.md` and `docs/17-agent-methodology-and-benchmark-map.md` when changing benchmarks, retrieval, agent behavior, or research methods;
+15. `docs/05-security-privacy-and-trust.md` and `docs/09-tenancy-authentication-and-access-control.md` for trust/tenant-sensitive changes;
+16. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work;
+17. `docs/27-database-bootstrap-and-multi-court-registry.md` for database bootstrap, PostgreSQL configuration, and ephemeral-CI database policy.
 
 Do not treat historical benchmark behavior or the current implementation as authoritative when it conflicts with accepted current docs. Conversely, do not assume documented architecture has already been implemented: verify the code.
 

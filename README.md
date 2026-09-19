@@ -23,9 +23,14 @@ The system should continue researching until its evidence checklist is satisfied
 
 ## Initial scope
 
-The MVP should prioritize a carefully selected corpus from the Dominican Supreme Court of Justice (SCJ) and Constitutional Court (TC), starting with a tractable legal area rather than attempting the entire Dominican legal system at once.
+The MVP is **multi-court by architecture but selective by ingestion depth**. The first high-signal semantic seed is the SCJ official `principales-sentencias` collection, while broader official SCJ material should be inventoried and made searchable as cheaply as provenance and identity quality allow. TC, TSA, appellate, first-instance and specialized jurisdictions expand through the same source/corpus contracts as source reliability and professional value justify them.
 
-The first commercial unit of value is a **Precedent & Adverse Authority Report**, not chat access.
+JurisNexo follows a two-speed corpus strategy:
+
+- **horizontal source corpus:** broad official discovery, immutable artifacts, canonical identity, page-preserved searchable text, measurable coverage and cheap citation extraction;
+- **intelligence corpus:** selective issues, propositions, material facts, procedural structure and judicial treatments for high-value decisions driven by official editorial selection, citation centrality, benchmarks and real lawyer use.
+
+The first commercial unit of value remains a **Precedent & Adverse Authority Report**, not chat access. The compounding asset beneath it is a verified Dominican jurisprudential intelligence graph with exact primary-source evidence.
 
 ## Design principles
 
@@ -76,6 +81,10 @@ The prompts are execution aids. Accepted repository documentation remains author
 ## Documentation
 
 See [`docs/`](./docs/) for product scope, architecture, research runtime, data model, validation strategy, security, and roadmap.
+
+Key current documents:
+
+- `docs/38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` — canonical corpus/product flywheel, Principales seed strategy, citation-first expansion, selective deep normalization, benchmark/failure flywheel, and explicit non-goals;
 
 Key documents for the current agent architecture:
 

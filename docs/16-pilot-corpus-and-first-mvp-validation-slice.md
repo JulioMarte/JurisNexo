@@ -6,6 +6,8 @@ JurisNexo already has a useful body of Supreme Court source material available i
 
 This document defines the initial pilot corpus, what it is allowed to prove, what it does not prove, and the order in which the corpus should expand.
 
+**Strategic interpretation:** this file defines a **vertical ingestion/retrieval fixture**, not the global corpus-growth policy. The current corpus strategy is `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`: broad trustworthy discoverability may grow in parallel, while deep semantic normalization is concentrated first on SCJ Principales and other high-value decisions selected by citation/benchmark/user signals.
+
 ## 2. Current available source material
 
 As of the initial inventory, Supabase Storage contains approximately:
@@ -146,19 +148,17 @@ If two artifacts contain exactly the same bytes:
 
 Provider ETags may be retained as acquisition metadata, but JurisNexo's own content hash is authoritative for exact-byte deduplication.
 
-## 8. Pilot corpus expansion order
+## 8. Pilot fixture progression versus corpus strategy
 
-Do not ingest all available historical files immediately merely because they exist.
+Do not confuse the order used to validate one ingestion family with the global corpus strategy.
 
-The recommended sequence is:
+### Fixture Stage A — one compilation
 
-### Stage A — one compilation
-
-Ingest only the early-2025 Supreme Court compilation.
+Ingest the early-2025 Supreme Court Principales compilation end to end.
 
 Objectives:
 
-- validate parser quality;
+- validate parser/agent quality;
 - validate page preservation;
 - validate decision-boundary detection;
 - validate canonical case extraction;
@@ -166,36 +166,25 @@ Objectives:
 - validate idempotent re-ingestion;
 - construct the first search/evaluation fixture.
 
-### Stage B — one complete recent year plus adjacent period
+### Fixture Stage B — adjacent known Principales families
 
-After Stage A passes manual quality review, expand to the recent 2024 and 2023 compilations.
+After Stage A passes manual quality review, use adjacent 2023–2025 Principales compilations to test publication/layout variation and regression safety. This is a parser/ingestion proof, not a rule that older/broader official material must wait to be discovered or cheaply indexed.
 
-Recommended target set:
+### Global corpus growth
+
+Global corpus growth follows `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`:
 
 ```text
-2025 Jan-Apr
-2024 Jan-Apr
-2024 May-Aug
-2024 Sep-Dec
-2023 Jan-Apr
-2023 May-Aug
-2023 Sep-Dec
+broad official SCJ inventory/searchability
+        +
+SCJ Principales 2005-present deep seed
+        -> citations
+        -> older/foundational authority promotion
+        -> forward-citing decisions
+        -> selective treatment analysis
 ```
 
-This produces a compact but temporally meaningful recent corpus and is more useful for product experiments than indiscriminately importing twenty years immediately.
-
-### Stage C — controlled historical expansion
-
-Only after ingestion and retrieval metrics are stable should JurisNexo expand systematically into older Supreme Court compilations.
-
-Historical expansion should be driven by:
-
-- benchmark gaps;
-- lawyer research needs;
-- matter/domain coverage;
-- missing precedent chains;
-- corpus freshness/coverage goals;
-- processing quality.
+Historical and non-Principal decisions may be discovered/acquired/searchable before deep Principales enrichment is complete. Expensive semantic normalization remains priority-driven.
 
 ## 9. Two independent MVP proofs
 

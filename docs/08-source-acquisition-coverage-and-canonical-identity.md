@@ -267,7 +267,30 @@ Before automated bulk acquisition from any source, review its public access meth
 
 The MVP should prefer respectful, cache-friendly synchronization and avoid repeatedly downloading unchanged artifacts.
 
-## 15. MVP Definition of Done
+## 15. Corpus breadth versus intelligence depth
+
+Source acquisition must follow the two-speed strategy in `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`.
+
+A source document may become trustworthy/searchable without receiving expensive semantic interpretation. Conversely, high-value decisions may be promoted for deep normalization based on official editorial selection, citation relationships, benchmark membership, real research use, adverse-authority importance or human review.
+
+For the SCJ, `principales-sentencias` is the initial high-signal seed collection. Its membership is preserved as source provenance and may raise normalization priority; it is not an intrinsic `cases.is_principal` property and must not be treated as an automatic legal-authority ranking.
+
+Citation-driven expansion is expected:
+
+```text
+Principal decision
+    -> raw explicit citations
+    -> conservative canonical resolution
+    -> older/foundational authority promotion
+    -> forward-citing decisions
+    -> selective treatment analysis
+```
+
+The broad SCJ inventory exists to support discovery, resolution, traversal, adverse research and measurable coverage. Deep normalization must be selective and reusable.
+
+Historical date ranges advertised by source portals remain source claims until inventory/reconciliation proves what JurisNexo can actually discover, acquire and ingest. Coverage reporting must preserve that distinction.
+
+## 16. MVP Definition of Done
 
 Source acquisition is MVP-ready when:
 
