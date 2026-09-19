@@ -86,3 +86,45 @@ def test_infrastructure_failures_are_classified(
 
 def test_document_error_is_not_misclassified_as_global_infrastructure() -> None:
     assert classify_infrastructure_error(ValueError("official document is not supported")) is None
+
+
+def test_backblaze_capacity_incident_preserves_completed_work_for_resume(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recovery-checkpoint.jsonl"
+    journal = AcquisitionRecoveryJournal(path)
+    first = _stored()
+    second = RecoveryCheckpointRecord(
+        source_identifier="decision-2",
+        document_url="https://official.example/2.pdf",
+        status="stored",
+        recorded_at=utc_now_z(),
+        sha256="b" * 64,
+        object_key="jurisdictions/do/scj/decisions/bb/" + ("b" * 64) + ".pdf",
+        byte_count=456,
+        content_type="application/pdf",
+        file_extension="pdf",
+    )
+    journal.append(first)
+    journal.append(second)
+
+    failure = classify_infrastructure_error(
+        FakeS3Error("QuotaExceeded", 400, "storage quota exceeded")
+    )
+    assert failure is not None
+    assert failure.kind == "storage_capacity_exceeded"
+    assert failure.retryable is False
+
+    restored = AcquisitionRecoveryJournal(path)
+    assert restored.get(
+        source_identifier=first.source_identifier,
+        document_url=first.document_url,
+    ) == first
+    assert restored.get(
+        source_identifier=second.source_identifier,
+        document_url=second.document_url,
+    ) == second
+    assert restored.get(
+        source_identifier="decision-3",
+        document_url="https://official.example/3.pdf",
+    ) is None
