@@ -42,6 +42,38 @@ class PlaywrightVerifiedFetcher:
         if self._playwright is not None:
             self._playwright.stop()
 
+    def download_to_file(self, url: str, destination: Path) -> None:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").casefold()
+        if parsed.scheme != "https" or host not in self.allowed_hosts:
+            raise ValueError(f"refusing non-allowlisted official URL: {url}")
+        if self._browser is None:
+            raise RuntimeError("browser fetcher must be used as a context manager")
+        if not parsed.path.casefold().endswith(".pdf"):
+            destination.write_bytes(self.get_bytes(url))
+            return
+
+        context = self._browser.new_context(ignore_https_errors=False)
+        page = context.new_page()
+        try:
+            page.set_content('<a id="jurisnexo-download">download</a>')
+            page.locator("#jurisnexo-download").evaluate(
+                "(element, target) => { element.href = target; element.download = ''; }",
+                url,
+            )
+            with page.expect_download(timeout=120_000) as download_info:
+                page.click("#jurisnexo-download")
+            download = download_info.value
+            final_url = download.url
+            final = urlparse(final_url)
+            final_host = (final.hostname or "").casefold()
+            if final.scheme != "https" or final_host not in self.allowed_hosts:
+                raise ValueError(f"official download escaped allowlist: {final_url}")
+            download.save_as(destination)
+        finally:
+            page.close()
+            context.close()
+
     def get_bytes(self, url: str) -> bytes:
         parsed = urlparse(url)
         host = (parsed.hostname or "").casefold()
@@ -207,6 +239,7 @@ def _run_canary(*, fetcher: PlaywrightVerifiedFetcher, object_store: S3ObjectSto
                 "storage_bucket": object_store.config.bucket,
                 "storage_locator": locator,
                 "already_present": artifact.already_present,
+                "verification_method": "downloaded_and_hashed",
             }
         )
         _event(
@@ -217,6 +250,7 @@ def _run_canary(*, fetcher: PlaywrightVerifiedFetcher, object_store: S3ObjectSto
             object_key=artifact.object_key,
             storage_bucket=object_store.config.bucket,
             already_present=artifact.already_present,
+            verification_method="downloaded_and_hashed",
         )
 
     stored_manifest = run_manifest.commit(object_store=object_store)
