@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
@@ -137,7 +138,7 @@ class S3RecoveryCheckpointMirror:
 
     def persist(self, journal: AcquisitionRecoveryJournal) -> None:
         payload = journal.compact_bytes()
-        digest = __import__("hashlib").sha256(payload).hexdigest()
+        digest = hashlib.sha256(payload).hexdigest()
         self.object_store.client.put_object(
             Bucket=self.object_store.config.bucket,
             Key=self.object_key,
