@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import urljoin, urlparse
 from jurisnexo.observability import acquisition_span, span_event
 
 SourceName = Literal["supreme_court", "constitutional_court"]
+SourceDocumentFormat = Literal["pdf", "doc", "docx", "rtf"]
 
 TC_SENTENCES_URL = (
     "https://www.tribunalconstitucional.gob.do/consultas/secretar%C3%ADa/"
@@ -45,6 +47,24 @@ class StoredOfficialArtifact:
     byte_count: int
     object_key: str
     already_present: bool
+    content_type: str = "application/pdf"
+    file_extension: str = "pdf"
+
+
+@dataclass(frozen=True, slots=True)
+class OfficialDocumentFormat:
+    name: SourceDocumentFormat
+    file_extension: str
+    content_type: str
+
+
+class UnsupportedOfficialDocumentResponse(ValueError):
+    """Official locator returned bytes that are not a supported source document."""
+
+    def __init__(self, *, url: str, reason: str) -> None:
+        self.url = url
+        self.reason = reason
+        super().__init__(f"unsupported official document response ({reason}): {url}")
 
 
 class HttpFetcher(Protocol):
