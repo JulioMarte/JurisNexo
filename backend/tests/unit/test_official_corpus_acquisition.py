@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
@@ -36,6 +38,22 @@ class FakeFetcher:
 
 
 @dataclass(slots=True)
+class StreamingFakeFetcher:
+    payloads: dict[str, bytes]
+    download_calls: list[str] = field(default_factory=_empty_calls)
+
+    def get_bytes(self, url: str) -> bytes:
+        raise AssertionError(f"streaming acquisition should not call get_bytes for {url}")
+
+    def download_to_file(self, url: str, destination: Path) -> None:
+        self.download_calls.append(url)
+        payload = self.payloads[url]
+        with destination.open("wb") as stream:
+            for offset in range(0, len(payload), 5):
+                stream.write(payload[offset : offset + 5])
+
+
+@dataclass(slots=True)
 class MemoryObjectStore:
     objects: dict[str, bytes] = field(default_factory=_empty_objects)
     puts: int = 0
@@ -47,13 +65,14 @@ class MemoryObjectStore:
         self,
         *,
         key: str,
-        content: bytes,
+        content: bytes | BinaryIO,
         content_type: str,
         metadata: dict[str, str],
     ) -> None:
         assert content_type == "application/pdf"
-        assert metadata["sha256"] == sha256_hex(content)
-        self.objects[key] = content
+        payload = content if isinstance(content, bytes) else content.read()
+        assert metadata["sha256"] == sha256_hex(payload)
+        self.objects[key] = payload
         self.puts += 1
 
 
@@ -181,3 +200,28 @@ def test_scj_principales_parser_keeps_only_official_labeled_pdfs() -> None:
         "Principales-enero-abril-2026.pdf"
     )
     assert candidate.source_identifier.startswith("principales-url:")
+
+
+def test_streaming_fetcher_hashes_staged_file_and_uploads_same_bytes() -> None:
+    url = "https://official.example/streamed.pdf"
+    candidate = OfficialDocumentCandidate(
+        source="supreme_court",
+        source_identifier="streamed",
+        discovery_url="https://official.example/list",
+        document_url=url,
+        collection="principales-sentencias",
+    )
+    pdf = b"%PDF-1.7\n" + (b"0123456789" * 4096)
+    fetcher = StreamingFakeFetcher(payloads={url: pdf})
+    store = MemoryObjectStore()
+
+    artifact = acquire_candidates(
+        candidates=(candidate,),
+        fetcher=fetcher,
+        object_store=store,
+    )[0]
+
+    assert fetcher.download_calls == [url]
+    assert artifact.sha256 == sha256_hex(pdf)
+    assert artifact.byte_count == len(pdf)
+    assert store.objects[artifact.object_key] == pdf
