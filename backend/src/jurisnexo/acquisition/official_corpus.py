@@ -16,6 +16,10 @@ TC_SENTENCES_URL = (
     "sentencias?order=RelativeTo_desc&searchCriteria=&searchString=&size=999999"
 )
 SCJ_MEGAQUERY_URL = "https://transparencia.poderjudicial.gob.do/consultasSCJ/megaconsulta"
+SCJ_PRINCIPALES_URL = (
+    "https://poderjudicial.gob.do/suprema-corte-de-justicia/"
+    "secretaria-general/principales-sentencias/"
+)
 _SOURCE_STORAGE_CODES: dict[SourceName, str] = {
     "supreme_court": "scj",
     "constitutional_court": "tc",
@@ -139,6 +143,49 @@ def discover_pdf_link(*, html: str, page_url: str, allowed_host: str) -> str:
     if len(unique) != 1:
         raise ValueError(f"expected exactly one official PDF link, found {len(unique)}")
     return unique[0]
+
+
+
+def discover_scj_principales_candidates_from_html(
+    *, html: str, page_url: str = SCJ_PRINCIPALES_URL
+) -> tuple[OfficialDocumentCandidate, ...]:
+    """Extract official SCJ Principales compilation PDFs in publisher page order.
+
+    Identity is deliberately conservative: the publisher PDF URL is hashed rather than inferring
+    a case/year identity from editorial labels that may change over time.
+    """
+
+    allowed_hosts = {"poderjudicial.gob.do", "www.poderjudicial.gob.do"}
+    candidates: list[OfficialDocumentCandidate] = []
+    seen_urls: set[str] = set()
+    for anchor in _anchors(html):
+        label = " ".join(anchor.text.split())
+        folded_label = label.casefold()
+        if "principales" not in folded_label or not (
+            "sentenc" in folded_label or "decision" in folded_label
+        ):
+            continue
+
+        absolute = urljoin(page_url, anchor.href)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").casefold() not in allowed_hosts:
+            continue
+        if not parsed.path.casefold().endswith(".pdf"):
+            continue
+        if absolute in seen_urls:
+            continue
+        seen_urls.add(absolute)
+        identifier = "principales-url:" + hashlib.sha256(absolute.encode("utf-8")).hexdigest()
+        candidates.append(
+            OfficialDocumentCandidate(
+                source="supreme_court",
+                source_identifier=identifier,
+                discovery_url=page_url,
+                document_url=absolute,
+                collection="principales-sentencias",
+            )
+        )
+    return tuple(candidates)
 
 
 def discover_scj_pdf_candidates_from_html(
