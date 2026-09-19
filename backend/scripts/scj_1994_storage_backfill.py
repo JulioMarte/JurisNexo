@@ -239,6 +239,8 @@ def main() -> None:
                 "byte_count": artifact.byte_count,
                 "object_key": artifact.object_key,
                 "already_present": artifact.already_present,
+                "content_type": artifact.content_type,
+                "file_extension": artifact.file_extension,
                 "verification_method": "downloaded_and_hashed",
             }
             completed.append(record)
