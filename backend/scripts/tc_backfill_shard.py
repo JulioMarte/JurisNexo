@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
 from jurisnexo.acquisition.http_fetcher import BoundedHttpFetcher, OFFICIAL_SOURCE_HOSTS
+from jurisnexo.acquisition.manifest import AcquisitionRunManifestBuilder
 from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
     acquire_candidates,
@@ -39,6 +40,17 @@ def _env_flag(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().casefold() not in {"", "0", "false", "no", "off"}
+
+
+def _ingestion_id(*, source: str, shard_index: int) -> str | None:
+    explicit = os.environ.get("ACQUISITION_INGESTION_ID", "").strip()
+    if explicit:
+        return explicit
+    run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "").strip()
+    if run_id and run_attempt:
+        return f"github-{run_id}-{run_attempt}-{source}-{shard_index}"
+    return None
 
 
 def require_environment() -> None:
@@ -107,6 +119,11 @@ def main() -> None:
         shard_index=shard_index,
         shard_count=shard_count,
     )
+    run_manifest = AcquisitionRunManifestBuilder(
+        source="tc",
+        scope=os.environ.get("ACQUISITION_MANIFEST_SCOPE", "decisions").strip(),
+        ingestion_id=_ingestion_id(source="tc", shard_index=shard_index),
+    )
 
     acquired = 0
     skipped_verified = 0
@@ -133,6 +150,7 @@ def main() -> None:
             for index, record in enumerate(records):
                 sentence_id = record["source_identifier"]
                 detail_url = record["detail_url"]
+                document_url: str | None = None
                 try:
                     with tracer.start_as_current_span("tc.backfill.item") as span:
                         span.set_attribute("tc.shard.item_index", index)
@@ -194,6 +212,11 @@ def main() -> None:
                                 sha256=existing_digest,
                             )
                             if object_store.exists(key):
+                                run_manifest.record_existing(
+                                    candidate=candidate,
+                                    sha256=existing_digest,
+                                    object_key=key,
+                                )
                                 source_inventory.link_artifact_sha256(
                                     source_document_id=source_document_id,
                                     sha256=existing_digest,
@@ -215,6 +238,7 @@ def main() -> None:
                                 "TC backfill item did not produce exactly one artifact"
                             )
                         artifact = artifacts[0]
+                        run_manifest.record_artifact(artifact)
                         source_inventory.link_artifact_sha256(
                             source_document_id=source_document_id,
                             sha256=artifact.sha256,
@@ -224,6 +248,13 @@ def main() -> None:
                         bytes_acquired += artifact.byte_count
                         span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
                 except Exception as exc:
+                    run_manifest.record_failure(
+                        collection="decisions",
+                        source_identifier=sentence_id,
+                        discovery_url=detail_url,
+                        document_url=document_url,
+                        error=exc,
+                    )
                     failure = {
                         "source_identifier": sentence_id,
                         "detail_url": detail_url,
@@ -257,6 +288,10 @@ def main() -> None:
                         flush=True,
                     )
 
+        stored_manifest = run_manifest.commit(object_store=object_store)
+        (output_dir / f"backfill-{shard_index:02d}-run-manifest.json").write_bytes(
+            stored_manifest.manifest.canonical_bytes()
+        )
         summary = {
             "status": "PASS" if not failures else "INCOMPLETE",
             "shard_index": shard_index,
@@ -267,6 +302,8 @@ def main() -> None:
             "storage_repair_count": repaired_storage,
             "failure_count": len(failures),
             "bytes_acquired": bytes_acquired,
+            "run_manifest_object_key": stored_manifest.object_key,
+            "run_manifest_sha256": stored_manifest.payload_sha256,
         }
         (output_dir / f"backfill-{shard_index:02d}-summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
@@ -280,6 +317,7 @@ def main() -> None:
         root.set_attribute("tc.shard.skipped_verified_count", skipped_verified)
         root.set_attribute("tc.shard.failure_count", len(failures))
         root.set_attribute("tc.shard.bytes_acquired", bytes_acquired)
+        root.set_attribute("acquisition.run_manifest_key", stored_manifest.object_key)
 
     provider = trace.get_tracer_provider()
     if hasattr(provider, "force_flush"):

@@ -421,3 +421,12 @@ severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "integration"]
 risk = ["legal_quality", "provenance"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-RUN-MANIFEST-001"
+statement = "Every canonical production document uploader closes each completed acquisition run with an immutable object-storage manifest that records observed source identities, stored artifact identities/checksums, run outcome and deterministic set digests without requiring database persistence."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "fitness", "contract"]
+risk = ["provenance", "operations", "architecture"]

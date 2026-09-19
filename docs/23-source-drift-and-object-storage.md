@@ -133,6 +133,59 @@ The SHA-256 digest, source URL, source identifier, byte count, acquisition manif
 
 Bucket versioning is not assumed. JurisNexo detects changed content by digest and preserves new bytes under a new content-addressed key rather than overwriting canonical historical evidence.
 
+## Durable acquisition run manifests
+
+Every production document-acquisition run that writes official artifacts to object storage must also
+close with one durable **run manifest** in the same bucket. The manifest is the handoff contract
+between acquisition/storage and later consumers such as PostgreSQL ingestion. Acquisition does not
+need database access in order to produce this record.
+
+Run manifests use an append-only namespace:
+
+```text
+_manifests/<source>/<scope>/<YYYY>/<MM>/<DD>/<ingestion-id>.json
+```
+
+Examples:
+
+```text
+_manifests/scj/principales-sentencias/2026/09/19/<ingestion-id>.json
+_manifests/tc/decisions/2026/09/19/<ingestion-id>.json
+```
+
+The manifest is written **after** the run has finished processing its assigned source observations.
+Its existence means the run was closed and is ready to be inspected by a consumer; it does not
+mean every document succeeded. The manifest carries an explicit run status plus counts for
+`uploaded`, `already_present`, `unavailable` and `failed` items. A run with item failures is
+therefore still observable without pretending that coverage is complete.
+
+Each item preserves the source collection, source identifier, discovery URL, document URL when
+known, object key and SHA-256 when stored, byte count when known, and bounded failure information
+when acquisition failed. The manifest additionally contains:
+
+- a deterministic `source_inventory_sha256` over the observed source identities/URLs;
+- a deterministic `artifact_set_sha256` over the successfully stored/verified artifact set;
+- UTC start/completion timestamps;
+- a schema version and stable ingestion identifier.
+
+The manifest payload itself is canonical JSON and its SHA-256 is stored as S3 object metadata.
+The writer performs a `HeadObject` check and refuses to overwrite an existing manifest key. Run
+identifiers should still be unique per execution; the current object-store contract does not claim
+a cross-provider atomic compare-and-swap primitive.
+
+This run manifest is distinct from `FileAcquisitionManifest`. The file manifest is a local,
+append-only resume checkpoint for deterministic downloading. It is not the durable inter-system
+handoff contract and consumers must not treat it as one.
+
+A future database consumer should list only the relevant `_manifests/<source>/<scope>/` prefix,
+validate schema and payload integrity, process unseen `ingestion_id` values idempotently, and
+persist its own consumer checkpoint. It should not use `LastModified` timestamps or a mutable
+`latest.json` as correctness cursors.
+
+Run manifests do not replace periodic reconciliation. Reconciliation remains the independent check
+that objects claimed by manifests actually exist in storage and that storage has not accumulated
+unreferenced/orphaned artifacts.
+
 ## Production connectivity smoke
 
 The full official-corpus workflow validates the configured object store before database validation, inventory work or mass acquisition. The smoke probe exercises only the S3 operations required by the current corpus storage path:
