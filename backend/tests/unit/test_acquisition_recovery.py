@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from jurisnexo.acquisition.recovery import (
     AcquisitionRecoveryJournal,
     RecoveryCheckpointRecord,
+    S3RecoveryCheckpointMirror,
     classify_infrastructure_error,
     utc_now_z,
 )
@@ -71,6 +73,11 @@ def test_journal_is_durable_and_latest_record_wins(tmp_path: Path) -> None:
             "storage_capacity_exceeded",
             False,
         ),
+        (
+            FakeS3Error("StorageCapExceeded", 403, "storage cap exceeded for account"),
+            "storage_capacity_exceeded",
+            False,
+        ),
         (FakeS3Error("AccessDenied", 403, "no"), "authorization_error", False),
         (FakeS3Error("NoSuchBucket", 404, "missing"), "bucket_configuration_error", False),
         (FakeS3Error("SlowDown", 429, "slow down"), "rate_limited", True),
@@ -132,3 +139,65 @@ def test_backblaze_capacity_incident_preserves_completed_work_for_resume(
         source_identifier="decision-3",
         document_url="https://official.example/3.pdf",
     ) is None
+
+
+
+class FakeCheckpointClient:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: object) -> None:
+        assert Bucket == "checkpoint-bucket"
+        self.objects[Key] = Body
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        assert Bucket == "checkpoint-bucket"
+        if Key not in self.objects:
+            error = FakeS3Error("NoSuchKey", 404, "missing")
+            raise error
+        return {"Body": BytesIO(self.objects[Key])}
+
+
+class FakeCheckpointConfig:
+    bucket = "checkpoint-bucket"
+
+
+class FakeCheckpointStore:
+    def __init__(self) -> None:
+        self.client = FakeCheckpointClient()
+        self.config = FakeCheckpointConfig()
+
+    @staticmethod
+    def is_not_found(exc: Exception) -> bool:
+        response = getattr(exc, "response", {})
+        return response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404
+
+
+def test_remote_checkpoint_mirror_survives_loss_of_runner_disk(tmp_path: Path) -> None:
+    store = FakeCheckpointStore()
+    first_path = tmp_path / "runner-a.jsonl"
+    first = AcquisitionRecoveryJournal(first_path)
+    first.append(_stored())
+    mirror = S3RecoveryCheckpointMirror(
+        object_store=store,
+        object_key="_checkpoints/scj/decisions/shard-000.jsonl",
+    )
+    mirror.persist(first)
+
+    first_path.unlink()
+    restored = AcquisitionRecoveryJournal(tmp_path / "runner-b.jsonl")
+    assert mirror.load_if_present(restored) is True
+    assert restored.get(
+        source_identifier="decision-1",
+        document_url="https://official.example/1.pdf",
+    ) == _stored()
+
+
+def test_remote_checkpoint_missing_is_not_an_error(tmp_path: Path) -> None:
+    store = FakeCheckpointStore()
+    mirror = S3RecoveryCheckpointMirror(
+        object_store=store,
+        object_key="_checkpoints/scj/decisions/shard-001.jsonl",
+    )
+    journal = AcquisitionRecoveryJournal(tmp_path / "checkpoint.jsonl")
+    assert mirror.load_if_present(journal) is False
