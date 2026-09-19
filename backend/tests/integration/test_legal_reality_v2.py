@@ -390,8 +390,7 @@ def test_common_entity_identity_and_claim_to_disposition_effect(
         )
         disposition = _one(cursor)
         cursor.execute(
-            "SELECT id FROM corpus.disposition_effect_concepts "
-            "WHERE target_type='claim' AND code='denied'"
+            "SELECT id FROM corpus.disposition_effect_concepts WHERE code='denied'"
         )
         effect = _one(cursor)
         cursor.execute(
@@ -405,13 +404,17 @@ def test_common_entity_identity_and_claim_to_disposition_effect(
         )
         action = _one(cursor)
         cursor.execute(
+            "SELECT id FROM corpus.disposition_argument_role_concepts WHERE code='object'"
+        )
+        object_role = _one(cursor)
+        cursor.execute(
             """
-            INSERT INTO corpus.disposition_targets(
-                disposition_id,action_id,target_type,target_claim_id,
-                verification_status,verification_method
-            ) VALUES (%s,%s,'claim',%s,'verified','human_review')
+            INSERT INTO corpus.judicial_disposition_action_arguments(
+                disposition_id,action_id,role_concept_id,object_type,target_claim_id,
+                ordinal,verification_status,verification_method
+            ) VALUES (%s,%s,%s,'claim',%s,1,'verified','human_review')
             """,
-            (disposition, action, claim),
+            (disposition, action, object_role, claim),
         )
 
 
