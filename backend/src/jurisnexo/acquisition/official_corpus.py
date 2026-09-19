@@ -385,7 +385,7 @@ def acquire_candidates(
     object_store: ObjectStore,
     artifact_catalog: ArtifactCatalog | None = None,
 ) -> tuple[StoredOfficialArtifact, ...]:
-    """Download to disk, hash exact bytes, content-address, deduplicate, and persist PDFs."""
+    """Preserve supported official source documents exactly as published."""
 
     seen_urls: set[str] = set()
     results: list[StoredOfficialArtifact] = []
@@ -410,18 +410,17 @@ def acquire_candidates(
                 ) as artifact_span,
                 TemporaryDirectory(prefix="jurisnexo-acquisition-") as temp_dir,
             ):
-                document_path = Path(temp_dir) / "document.pdf"
+                document_path = Path(temp_dir) / "source-document"
                 with acquisition_span("acquisition.download"):
                     _materialize_document(
                         fetcher=fetcher,
                         url=candidate.document_url,
                         destination=document_path,
                     )
-                with document_path.open("rb") as stream:
-                    if stream.read(4) != b"%PDF":
-                        raise ValueError(
-                            f"official document is not a PDF: {candidate.document_url}"
-                        )
+                document_format = _detect_document_format(
+                    path=document_path,
+                    source_url=candidate.document_url,
+                )
 
                 with acquisition_span("acquisition.hash") as hash_span:
                     digest, byte_count = _sha256_file(document_path)
@@ -432,6 +431,7 @@ def acquire_candidates(
                     source=candidate.source,
                     collection=candidate.collection,
                     sha256=digest,
+                    file_extension=document_format.file_extension,
                 )
                 with acquisition_span("acquisition.object_store.head", object_key=key):
                     already_present = object_store.exists(key)
@@ -442,6 +442,8 @@ def acquire_candidates(
                         "source_identifier": candidate.source_identifier,
                         "source_url": candidate.document_url,
                         "sha256": digest,
+                        "source_format": document_format.name,
+                        "content_type": document_format.content_type,
                     }
                     with acquisition_span(
                         "acquisition.object_store.put",
@@ -452,14 +454,14 @@ def acquire_candidates(
                             object_store.put_file(
                                 key=key,
                                 path=document_path,
-                                content_type="application/pdf",
+                                content_type=document_format.content_type,
                                 metadata=metadata,
                             )
                         else:
                             object_store.put(
                                 key=key,
                                 content=document_path.read_bytes(),
-                                content_type="application/pdf",
+                                content_type=document_format.content_type,
                                 metadata=metadata,
                             )
 
@@ -469,6 +471,8 @@ def acquire_candidates(
                     byte_count=byte_count,
                     object_key=key,
                     already_present=already_present,
+                    content_type=document_format.content_type,
+                    file_extension=document_format.file_extension,
                 )
                 if artifact_catalog is not None:
                     with acquisition_span("acquisition.catalog.register"):
@@ -476,6 +480,7 @@ def acquire_candidates(
                 artifact_span.set_attribute("artifact.byte_count", byte_count)
                 artifact_span.set_attribute("artifact.sha256_prefix", digest[:12])
                 artifact_span.set_attribute("artifact.already_present", already_present)
+                artifact_span.set_attribute("artifact.source_format", document_format.name)
                 results.append(artifact)
 
         batch_span.set_attribute("acquisition.completed_count", len(results))
