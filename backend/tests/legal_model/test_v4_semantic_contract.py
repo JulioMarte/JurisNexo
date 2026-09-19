@@ -153,13 +153,19 @@ def test_shared_concepts_are_jurisdiction_aware_and_hierarchy_rejects_cycles(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        jurisdiction = f"jur_{uuid4().hex[:10]}"
+        cursor.execute(
+            "INSERT INTO corpus.jurisdictions(code,name) VALUES (%s,%s)",
+            (jurisdiction, jurisdiction),
+        )
         cursor.execute(
             """
             INSERT INTO corpus.legal_concepts(
                 scheme_code,jurisdiction_code,code,name
-            ) VALUES ('factual_proposition_kind','DO','allegation','Alegacion dominicana')
+            ) VALUES ('factual_proposition_kind',%s,'allegation','Alegacion jurisdiccional')
             RETURNING id
-            """
+            """,
+            (jurisdiction,),
         )
         assert _one(cursor) is not None
 
