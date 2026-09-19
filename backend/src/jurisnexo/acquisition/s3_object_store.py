@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, BinaryIO, Protocol, cast
 from urllib.parse import urlparse
 
 from pydantic import SecretStr, model_validator
@@ -20,7 +20,7 @@ class S3Client(Protocol):
         *,
         Bucket: str,
         Key: str,
-        Body: bytes,
+        Body: bytes | BinaryIO,
         ContentType: str,
         Metadata: dict[str, str],
     ) -> object: ...
@@ -196,7 +196,7 @@ class S3ObjectStore:
         self,
         *,
         key: str,
-        content: bytes,
+        content: bytes | BinaryIO,
         content_type: str,
         metadata: dict[str, str],
     ) -> None:
