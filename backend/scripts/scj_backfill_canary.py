@@ -211,10 +211,13 @@ def main() -> None:
         candidates = candidates_from_live_portal(limit=limit)
         object_store = build_object_store()
         fetcher = BoundedHttpFetcher(allowed_hosts=OFFICIAL_SOURCE_HOSTS)
+        ingestion_id = _ingestion_id()
         run_manifest = AcquisitionRunManifestBuilder(
             source="scj",
             scope="canary",
-            ingestion_id=_ingestion_id(),
+            storage_bucket=object_store.config.bucket,
+            ingestion_id=ingestion_id,
+            batch_id=ingestion_id,
         )
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
             catalog = PostgresOfficialArtifactCatalog(
