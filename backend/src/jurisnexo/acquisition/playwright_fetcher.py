@@ -21,7 +21,7 @@ class PlaywrightVerifiedFetcher:
             raise RuntimeError(
                 "PlaywrightVerifiedFetcher requires the optional playwright package"
             ) from exc
-        sync_playwright: Any = getattr(sync_api, "sync_playwright")
+        sync_playwright: Any = sync_api.sync_playwright
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=True)
         return self
