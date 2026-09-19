@@ -22,6 +22,7 @@ from jurisnexo.acquisition.official_corpus import (
 _RUN_SCHEMA_VERSION = 1
 _STORAGE_SEGMENT_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RunItemStatus = Literal["uploaded", "already_present", "failed", "unavailable"]
+VerificationMethod = Literal["downloaded_and_hashed", "prior_manifest_and_head"]
 RunStatus = Literal["succeeded", "partial", "failed"]
 
 
@@ -107,6 +108,7 @@ class AcquisitionRunItem:
     sha256: str | None = None
     byte_count: int | None = None
     object_key: str | None = None
+    verification_method: VerificationMethod | None = None
     error_type: str | None = None
     error: str | None = None
 
@@ -127,7 +129,13 @@ class AcquisitionRunItem:
                 raise ValueError("stored run items require a SHA-256 digest")
             if self.object_key is None:
                 raise ValueError("stored run items require object_key")
-        elif self.sha256 is not None or self.object_key is not None:
+            if self.verification_method is None:
+                raise ValueError("stored run items require verification_method")
+        elif (
+            self.sha256 is not None
+            or self.object_key is not None
+            or self.verification_method is not None
+        ):
             raise ValueError("failed/unavailable run items cannot claim a stored artifact")
 
 
@@ -226,6 +234,7 @@ class AcquisitionRunManifestBuilder:
                 sha256=artifact.sha256,
                 byte_count=artifact.byte_count,
                 object_key=artifact.object_key,
+                verification_method="downloaded_and_hashed",
             )
         )
 
@@ -247,6 +256,7 @@ class AcquisitionRunManifestBuilder:
                 sha256=sha256,
                 byte_count=byte_count,
                 object_key=object_key,
+                verification_method="prior_manifest_and_head",
             )
         )
 
