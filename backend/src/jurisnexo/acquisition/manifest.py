@@ -19,7 +19,7 @@ from jurisnexo.acquisition.official_corpus import (
     acquire_candidates,
 )
 
-_RUN_SCHEMA_VERSION = 1
+_RUN_SCHEMA_VERSION = 2
 _STORAGE_SEGMENT_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RunItemStatus = Literal["uploaded", "already_present", "failed", "unavailable"]
 VerificationMethod = Literal["downloaded_and_hashed", "prior_manifest_and_head"]
@@ -35,6 +35,8 @@ class AcquisitionManifestRecord:
     sha256: str
     byte_count: int
     object_key: str
+    content_type: str = "application/pdf"
+    file_extension: str = "pdf"
 
     def to_artifact(self, candidate: OfficialDocumentCandidate) -> StoredOfficialArtifact:
         return StoredOfficialArtifact(
@@ -43,6 +45,8 @@ class AcquisitionManifestRecord:
             byte_count=self.byte_count,
             object_key=self.object_key,
             already_present=True,
+            content_type=self.content_type,
+            file_extension=self.file_extension,
         )
 
 
@@ -86,6 +90,8 @@ class FileAcquisitionManifest:
             sha256=artifact.sha256,
             byte_count=artifact.byte_count,
             object_key=artifact.object_key,
+            content_type=artifact.content_type,
+            file_extension=artifact.file_extension,
         )
         key = self._key(record.source, record.document_url)
         existing = self._records.get(key)
@@ -108,6 +114,8 @@ class AcquisitionRunItem:
     sha256: str | None = None
     byte_count: int | None = None
     object_key: str | None = None
+    content_type: str | None = None
+    file_extension: str | None = None
     verification_method: VerificationMethod | None = None
     error_type: str | None = None
     error: str | None = None
@@ -129,11 +137,17 @@ class AcquisitionRunItem:
                 raise ValueError("stored run items require a SHA-256 digest")
             if self.object_key is None:
                 raise ValueError("stored run items require object_key")
+            if self.content_type is None or not self.content_type.strip():
+                raise ValueError("stored run items require content_type")
+            if self.file_extension not in {"pdf", "doc", "docx", "rtf"}:
+                raise ValueError("stored run items require a supported file_extension")
             if self.verification_method is None:
                 raise ValueError("stored run items require verification_method")
         elif (
             self.sha256 is not None
             or self.object_key is not None
+            or self.content_type is not None
+            or self.file_extension is not None
             or self.verification_method is not None
         ):
             raise ValueError("failed/unavailable run items cannot claim a stored artifact")
@@ -234,6 +248,8 @@ class AcquisitionRunManifestBuilder:
                 sha256=artifact.sha256,
                 byte_count=artifact.byte_count,
                 object_key=artifact.object_key,
+                content_type=artifact.content_type,
+                file_extension=artifact.file_extension,
                 verification_method="downloaded_and_hashed",
             )
         )
@@ -245,6 +261,8 @@ class AcquisitionRunManifestBuilder:
         sha256: str,
         object_key: str,
         byte_count: int | None = None,
+        content_type: str = "application/pdf",
+        file_extension: str = "pdf",
     ) -> None:
         self._record(
             AcquisitionRunItem(
@@ -256,6 +274,8 @@ class AcquisitionRunManifestBuilder:
                 sha256=sha256,
                 byte_count=byte_count,
                 object_key=object_key,
+                content_type=content_type,
+                file_extension=file_extension,
                 verification_method="prior_manifest_and_head",
             )
         )
@@ -494,6 +514,8 @@ def _artifact_set_digest(items: tuple[AcquisitionRunItem, ...]) -> str:
             "source_identifier": item.source_identifier,
             "sha256": item.sha256,
             "object_key": item.object_key,
+            "content_type": item.content_type,
+            "file_extension": item.file_extension,
         }
         for item in items
         if item.status in {"uploaded", "already_present"}
