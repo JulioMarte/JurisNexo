@@ -14,6 +14,9 @@ dependencies = [
     "uvicorn[standard]>=0.35,<1",
 ]
 
+[project.scripts]
+jurisnexo-db-bootstrap = "jurisnexo.entrypoints.cli.database_bootstrap:main"
+
 [dependency-groups]
 dev = [
     "pyright>=1.1.400,<2",
@@ -43,6 +46,11 @@ max-complexity = 10
 # Long SQL literals are more readable and auditable when they preserve their SQL shape.
 "migrations/versions/*.py" = ["E501"]
 "tests/integration/test_initial_schema_contract.py" = ["E501"]
+"tests/integration/test_judicial_proceeding_and_analysis_schema.py" = ["E501", "SIM117"]
+"tests/integration/test_adversarial_legal_reality_v3.py" = ["E501"]
+"tests/integration/test_extensible_judicial_semantics.py" = ["E501"]
+"tests/integration/test_legal_reality_v3_schema_contract.py" = ["E501"]
+"tests/legal_model/*.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]

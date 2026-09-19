@@ -83,7 +83,7 @@ def _create_minimal_ingestion_graph(cursor: psycopg.Cursor[Any], *, suffix: str)
 
     cursor.execute(
         """
-        insert into corpus.cases (court_id)
+        insert into corpus.judicial_decisions (court_id)
         values (%s)
         returning id
         """,

@@ -16,7 +16,7 @@ risk = ["provenance", "legal_quality"]
 
 [[guarantees]]
 id = "INV-EVIDENCE-TRACE-001"
-statement = "Material extracted or researched legal claims remain traceable to typed evidence that identifies the source artifact and observed page/passage; source-reference evidence and observed-content evidence remain distinguishable."
+statement = "Material extracted or researched legal claims remain traceable to typed evidence that identifies the source artifact and observed page/passage; source-reference evidence and observed-content evidence remain distinguishishable."
 severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "contract", "adversarial"]
@@ -29,6 +29,182 @@ severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "adversarial"]
 risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-LEGAL-IDENTITY-001"
+statement = "The corpus keeps litigation controversy, court-specific proceeding, procedural event and judicial decision as distinct legal identities; grouping one into another requires explicit persisted relations rather than inferred table-name semantics."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-JUDICIAL-DECISION-PHYSICAL-001"
+statement = "The canonical physical identity for one judicial decision is corpus.judicial_decisions; the historical compatibility alias corpus.cases is absent from the canonical schema and must not be reintroduced as a persistence or compatibility surface."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "fitness"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-PROPOSITION-EPISTEMICS-001"
+statement = "Legal propositions retain whether they are explicit source text, derived structure, synthesized interpretation or human-authored analysis, and verification never silently converts interpretation into primary-source fact."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-PROPOSITION-SUBJECT-001"
+statement = "A proposition used in a judicial treatment is explicitly bound to its actual legal subject; source and target propositions cannot be borrowed from unrelated decisions merely because they share a corpus scope."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-PROVISION-HIERARCHY-001"
+statement = "Provision identity respects hierarchical source structure: repeated child labels under different parents are valid, while duplicate normalized sibling labels within the same document/parent are rejected."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-LEGAL-TEMPORAL-IDENTITY-001"
+statement = "Normative legal instruments, their temporal versions, stable provisions, provision versions, source documents and amending instruments remain distinct identities; historical text changes never overwrite source history or collapse an amending law into the law it changes."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-BITEMPORAL-KNOWLEDGE-001"
+statement = "Legal validity time and JurisNexo knowledge/system time remain independently queryable; later corrections append non-overlapping knowledge history and cannot rewrite what the system knew at an earlier time."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-BITEMPORAL-ASSERTIONS-001"
+statement = "Mutable legal conclusions such as norms, structural relation assertions, judicial treatments, precedent authority and decision legal-status assertions carry system-knowledge time in addition to their legal-valid/event time; immutable proposition text is corrected by superseding claims rather than destructive mutation."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-LEGAL-NORM-EPISTEMICS-001"
+statement = "A synthesized legal requirement is persisted as an evidenced norm assertion over a proposition, not as fictitious promulgated canonical text; verified norm assertions require verified legal-source support."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality"]
+
+[[guarantees]]
+id = "INV-LEGAL-RELATION-HISTORY-001"
+statement = "Structural legal relations separate stable source/type/target identity from time-bounded, knowledge-bounded verified assertions and assertion-specific evidence."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-LEGAL-TAXONOMY-DAG-001"
+statement = "Matter and procedure classifications support multiple broader concepts while hierarchical cycles are rejected; canonical classification is a DAG rather than a single-parent tree."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-ROLE-DISPOSITION-001"
+statement = "Canonical procedural roles and judicial disposition meanings use extensible concept identities rather than closed persisted text enums; a disposition clause contains canonical actions, each action owns one effect concept, typed semantic arguments reference that action, and exact source wording remains separate provenance."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-PARTY-ROLE-REPRESENTATION-001"
+statement = "Party identity, procedural role and legal representation are distinct persisted identities; raw source role wording cannot substitute for canonical party-role or representative relationships."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-JUDICIAL-STANCE-001"
+statement = "Judicial officer identity, temporal court position, panel membership, vote and authored/joined opinion remain distinct; dissent or concurrence is never encoded merely as panel membership."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-JUDICIAL-OPINION-PANEL-001"
+statement = "An officer may author or join a judicial opinion only when that officer belongs to the panel for the same judicial decision."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-DECISION-LEGAL-STATUS-001"
+statement = "A judicial decision's legal status and finality are temporal legal facts independent from corpus extraction, verification or review quality."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-COURT-COMPETENCE-001"
+statement = "Court territorial, subject-matter and functional/instance competence are independent persisted legal dimensions and are not collapsed into one overloaded jurisdiction string."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-CONTEXTUAL-AUTHORITY-001"
+statement = "Binding or persuasive authority is represented as a contextual, evidenced assertion over jurisdiction, court, subject and time; the corpus never assigns a global authority score or timeless binding label to a decision."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality"]
+
+[[guarantees]]
+id = "INV-CONTEXTUAL-TREATMENT-001"
+statement = "Substantive judicial treatments such as follows, distinguishes, applies, overrules or conflicts_with require issue/proposition context and cannot be promoted as timeless global document relations."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-TREATMENT-EVIDENCE-001"
+statement = "Verified substantive judicial treatment requires source-decision evidence; treatment evidence and any source/target proposition references must be consistent with the judicial decisions named by the assertion."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-AMENDMENT-RECONSTRUCTION-001"
+statement = "Provision renumbering, continuation, split/merge lineage and character-level amendment operations remain explicit and traceable to a specific target provision version rather than being inferred by destructive text replacement."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-LEGAL-AUTHORITY-IDENTITY-001"
+statement = "Issuing, promulgating, publishing and administering institutions have normalized authority identities and typed roles while preserving source-native wording separately."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "provenance"]
 
 [[guarantees]]
 id = "INV-INGESTION-GATES-001"
@@ -125,3 +301,139 @@ severity = "high"
 classification = "CONTROLLED"
 required_evidence = ["fitness"]
 risk = ["architecture"]
+
+[[guarantees]]
+id = "INV-PROPOSITION-SUBJECT-CARDINALITY-001"
+statement = "One legal proposition may bind to multiple legal subjects of the same type; subject cardinality must not collapse multi-provision, multi-decision, multi-document or multi-proceeding legal claims into a false singularity."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-JUDICIAL-PARTIAL-STANCE-001"
+statement = "A judicial officer may hold multiple scoped positions within one decision, including concurrence on one issue and dissent on another; every stance must belong to that same officer and decision and a coarse vote summary is not canonical truth."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-NORM-CLAIM-CONTEXT-001"
+statement = "Legal norm identity is contextual rather than proposition-text-only: jurisdiction, norm kind, legal matter and validity interval may distinguish claims sharing the same proposition, while bitemporal knowledge overlap is rejected per norm claim identity."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-CLAIM-DISPOSITION-MEMBERSHIP-001"
+statement = "A judicial dispositive action cannot canonically resolve a claim or use a procedural party role from a proceeding unrelated to that judicial decision; claim/party action arguments require explicit proceeding membership."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-COMMON-LEGAL-ENTITY-001"
+statement = "A real person or institution may have multiple legal-role specializations that share one scope-consistent legal entity identity; normalized-name similarity alone never proves entity identity."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-DECISION-STATE-EVENT-001"
+statement = "Point-in-time judicial lifecycle events and durative legal states are distinct persisted facts; durative states retain legal-validity time and non-overlapping system-knowledge history."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance", "architecture"]
+
+[[guarantees]]
+id = "INV-CANONICAL-ONLY-LEGAL-SEMANTICS-001"
+statement = "Where the canonical legal model has a richer relation or concept identity, removed scalar/text compatibility mirrors, alias views and synchronization triggers must not be recreated; callers write the canonical representation directly and unknown classifications remain unknown rather than being fabricated by defaults."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial", "fitness"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-CLAIM-PROCEEDING-CONTEXT-001"
+statement = "A legal claim, its parent claim and its asserting procedural party role belong to the same proceeding; same-scope identity alone is insufficient to establish procedural membership."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-OPINION-001"
+statement = "Canonical judicial opinion type uses only an extensible concept identity rather than a closed common-law text enum or compatibility mirror."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-STANCE-001"
+statement = "Canonical judicial stance meaning uses an extensible concept identity rather than a closed persisted text enum or compatibility mirror, while stance scope remains independently bound to the same judicial decision."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-EXTENSIBLE-JUDICIAL-AUTHORITY-001"
+statement = "Judicial authority is a contextual assertion whose canonical effect is an extensible concept; common-law labels such as binding and persuasive are seed concepts, not the universal ontology or a compatibility table identity."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-LEGAL-ISSUE-IDENTITY-001"
+statement = "A legal question/issue is a first-class evidenced identity distinct from a procedural claim, topic tag or legal proposition; decisions, claims and propositions relate to the issue through explicit typed relations rather than text coincidence."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-FACTUAL-EPISTEMICS-001"
+statement = "A party allegation, denial, admission, stipulation or judicial factual finding is persisted as a factual proposition with explicit kind, subject and evidence; identical wording never collapses an allegation into a judicial finding or into a legal proposition."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance"]
+
+[[guarantees]]
+id = "INV-DISPOSITION-ACTION-ARGUMENT-001"
+statement = "A judicial dispositive clause may contain multiple canonical actions; each action owns one extensible effect concept and may have multiple typed semantic arguments such as object, obligor, beneficiary, destination, claim, legal provision, amount, scope or condition. Arguments preserve same-proceeding/same-decision context and typed literal values without restoring the V3 disposition_targets or effect target_type surfaces."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "architecture", "provenance"]
+
+[[guarantees]]
+id = "INV-ENTITY-RESOLUTION-HISTORY-001"
+statement = "Entity identity resolution preserves both observed and canonical legal-entity identities, requires evidence for verified identity assertions, records a bitemporal resolution history, and never treats normalized-name similarity as proof or performs an untraceable destructive merge."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["legal_quality", "provenance", "architecture"]
+
+[[guarantees]]
+id = "INV-SHARED-CONCEPT-JURISDICTION-001"
+statement = "New cross-domain legal vocabularies may share the concept_schemes/legal_concepts substrate, but concept identity remains scheme- and jurisdiction-aware; similar labels across jurisdictions do not imply identity and hierarchical concept relations remain acyclic."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-CONFIDENCE-SEPARATION-001"
+statement = "Where confidence is persisted for interpretive extraction, extraction confidence and semantic/legal classification confidence are distinct dimensions; neither confidence score is equivalent to verification or evidence."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["legal_quality", "provenance"]

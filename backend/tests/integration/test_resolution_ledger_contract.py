@@ -62,7 +62,10 @@ def _graph(cursor: psycopg.Cursor[Any], suffix: str) -> dict[str, Any]:
         (f"RES-COURT-{suffix}", f"Resolution court {suffix}"),
     )
     court_id = _scalar(cursor)
-    cursor.execute("insert into corpus.cases (court_id) values (%s) returning id", (court_id,))
+    cursor.execute(
+        "insert into corpus.judicial_decisions (court_id) values (%s) returning id",
+        (court_id,),
+    )
     case_id = _scalar(cursor)
     cursor.execute(
         """
