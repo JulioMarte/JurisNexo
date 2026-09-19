@@ -171,16 +171,62 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install -e ./backend 'boto3==1.43.93'
-      - name: Fingerprint bucket and inspect decisions prefix
+      - uses: actions/download-artifact@v5
+        with:
+          name: scj-1994-certified-inventory
+          path: ${{ runner.temp }}/scj-certified
+      - name: Fingerprint bucket, persist certified snapshot and inspect decisions prefix
+        env:
+          CERTIFIED: ${{ runner.temp }}/scj-certified
         run: |
           python - <<'PY'
           import hashlib, json, os
+          from pathlib import Path
           from jurisnexo.acquisition.s3_object_store import build_s3_object_store
           store=build_s3_object_store()
           actual=hashlib.sha256(store.config.bucket.encode()).hexdigest()
           expected=os.environ['EXPECTED_BUCKET_SHA256']
           assert actual==expected, f'bucket fingerprint mismatch: {actual}'
           client=store.client
+
+          certified=Path(os.environ['CERTIFIED'])
+          summary=json.loads((certified/'summary.json').read_text(encoding='utf-8'))
+          inventory_sha=summary['acquisition_inventory_sha256']
+          prefix=f'_inventories/scj/sentencias-1994-actualidad/{inventory_sha}'
+          persisted=[]
+          for name in (
+              'summary.json',
+              'scj-1994-source.inventory.jsonl',
+              'scj-1994-acquisition.inventory.jsonl',
+              'duplicate-document-urls.json',
+          ):
+              path=certified/name
+              payload=path.read_bytes()
+              digest=hashlib.sha256(payload).hexdigest()
+              key=f'{prefix}/{name}'
+              try:
+                  head=client.head_object(Bucket=store.config.bucket,Key=key)
+              except Exception as exc:
+                  if not store.is_not_found(exc):
+                      raise
+                  client.put_object(
+                      Bucket=store.config.bucket,
+                      Key=key,
+                      Body=payload,
+                      ContentType='application/json' if name.endswith('.json') else 'application/x-ndjson',
+                      Metadata={'sha256':digest,'inventory_sha256':inventory_sha},
+                  )
+                  persisted.append({'key':key,'status':'uploaded','bytes':len(payload)})
+              else:
+                  metadata=head.get('Metadata') or {}
+                  if int(head.get('ContentLength') or -1)!=len(payload):
+                      raise RuntimeError(f'inventory snapshot size mismatch: {key}')
+                  stored_sha=str(metadata.get('sha256') or '')
+                  if stored_sha and stored_sha!=digest:
+                      raise RuntimeError(f'inventory snapshot sha mismatch: {key}')
+                  persisted.append({'key':key,'status':'already_present','bytes':len(payload)})
+          print(json.dumps({'inventory_sha256':inventory_sha,'snapshot_prefix':prefix,'snapshot_objects':persisted},sort_keys=True))
+
           count=0; size=0; token=None
           while True:
               kw={'Bucket':store.config.bucket,'Prefix':'jurisdictions/do/scj/decisions/','MaxKeys':1000}
