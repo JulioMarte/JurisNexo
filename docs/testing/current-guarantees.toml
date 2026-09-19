@@ -439,3 +439,12 @@ severity = "critical"
 classification = "HARD"
 required_evidence = ["invariant", "contract", "integration", "fitness"]
 risk = ["provenance", "legal_quality", "architecture", "operations"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-RECOVERY-001"
+statement = "Large official-corpus acquisition shards persist incremental recovery evidence outside the primary object store, distinguish global infrastructure interruptions from document-level outcomes, and may resume stored observations only after verifying the referenced content-addressed object still matches recorded integrity metadata."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "contract", "integration"]
+risk = ["provenance", "operations", "data_loss"]
