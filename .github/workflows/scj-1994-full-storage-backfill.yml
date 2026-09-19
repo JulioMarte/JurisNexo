@@ -213,6 +213,8 @@ jobs:
       ACQUISITION_BATCH_ID: github-${{ github.run_id }}-${{ github.run_attempt }}-scj-sentencias-1994-actualidad
       SCJ_BACKFILL_SHARD_COUNT: '64'
       SCJ_BACKFILL_ITEM_ATTEMPTS: '3'
+      SCJ_BACKFILL_RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -227,7 +229,21 @@ jobs:
         env:
           SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
         run: python backend/scripts/validate_scj_1994_certified_artifact.py
-      - name: Acquire assigned immutable PDF artifacts
+      - name: Restore prior shard recovery checkpoint
+        if: env.SCJ_BACKFILL_RESUME_RUN_ID != ''
+        env:
+          RESUME_DIR: ${{ runner.temp }}/scj-resume
+        run: |
+          set -euo pipefail
+          mkdir -p "${RESUME_DIR}"
+          gh run download "${SCJ_BACKFILL_RESUME_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "scj-1994-backfill-${{ matrix.shard }}" \
+            --dir "${RESUME_DIR}"
+          checkpoint="$(find "${RESUME_DIR}" -name recovery-checkpoint.jsonl -type f -print -quit)"
+          test -n "${checkpoint}"
+          echo "SCJ_BACKFILL_RESUME_CHECKPOINT=${checkpoint}" >> "${GITHUB_ENV}"
+      - name: Acquire assigned immutable source artifacts
         env:
           SCJ_1994_INVENTORY_FILE: ${{ runner.temp }}/scj-certified/scj-1994-acquisition.inventory.jsonl
           SCJ_BACKFILL_SHARD_INDEX: ${{ matrix.shard }}
