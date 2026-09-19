@@ -3,7 +3,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -21,6 +22,13 @@ class HttpPayload:
     status: int
 
 
+@dataclass(frozen=True, slots=True)
+class HttpFilePayload:
+    final_url: str
+    status: int
+    byte_count: int
+
+
 class HttpStatusError(RuntimeError):
     def __init__(self, *, url: str, status: int) -> None:
         super().__init__(f"HTTP {status} from {url}")
@@ -30,6 +38,19 @@ class HttpStatusError(RuntimeError):
 
 class HttpTransport(Protocol):
     def fetch(self, *, url: str, timeout_seconds: float, user_agent: str) -> HttpPayload: ...
+
+
+@runtime_checkable
+class FileHttpTransport(Protocol):
+    def fetch_to_file(
+        self,
+        *,
+        url: str,
+        destination: Path,
+        timeout_seconds: float,
+        user_agent: str,
+        max_bytes: int,
+    ) -> HttpFilePayload: ...
 
 
 @dataclass(slots=True)
@@ -49,6 +70,42 @@ class UrllibHttpTransport:
             final_url = response.geturl()
             content = response.read()
         return HttpPayload(content=content, final_url=final_url, status=status)
+
+    def fetch_to_file(
+        self,
+        *,
+        url: str,
+        destination: Path,
+        timeout_seconds: float,
+        user_agent: str,
+        max_bytes: int,
+    ) -> HttpFilePayload:
+        request = Request(
+            url,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "application/pdf,text/html;q=0.9,*/*;q=0.1",
+            },
+        )
+        byte_count = 0
+        with (
+            urlopen(request, timeout=timeout_seconds) as response,  # noqa: S310
+            destination.open("wb") as output,
+        ):
+            status = int(response.status)
+            final_url = response.geturl()
+            while chunk := response.read(1024 * 1024):
+                byte_count += len(chunk)
+                if byte_count > max_bytes:
+                    raise ValueError(
+                        f"official-source response exceeds max_bytes={max_bytes}"
+                    )
+                output.write(chunk)
+        return HttpFilePayload(
+            final_url=final_url,
+            status=status,
+            byte_count=byte_count,
+        )
 
 
 def _sleep(seconds: float) -> None:
@@ -119,6 +176,59 @@ class BoundedHttpFetcher:
                             f"official-source response exceeds max_bytes={self.max_bytes}"
                         )
                     return payload.content
+                except HTTPError as exc:
+                    span_event("http.error", attempt=attempt, status=exc.code)
+                    if exc.code not in self.retryable_status or attempt >= self.max_attempts:
+                        raise
+                except HttpStatusError as exc:
+                    span_event("http.error", attempt=attempt, status=exc.status)
+                    if exc.status not in self.retryable_status or attempt >= self.max_attempts:
+                        raise
+                except URLError as exc:
+                    span_event("http.error", attempt=attempt, error=str(exc.reason))
+                    if attempt >= self.max_attempts:
+                        raise
+
+                delay = self.retry_base_delay_seconds * (2 ** (attempt - 1))
+                span_event("http.retry", attempt=attempt, delay_seconds=delay)
+                self.sleep(delay)
+
+        raise RuntimeError("unreachable acquisition retry state")
+
+
+    def download_to_file(self, url: str, destination: Path) -> None:
+        self._require_allowed_url(url)
+        if not isinstance(self.transport, FileHttpTransport):
+            destination.write_bytes(self.get_bytes(url))
+            return
+
+        host = urlparse(url).hostname or ""
+        with acquisition_span(
+            "acquisition.http.download",
+            **{
+                "server.address": host,
+                "url.full": url,
+                "jurisnexo.http.max_attempts": self.max_attempts,
+            },
+        ) as span:
+            for attempt in range(1, self.max_attempts + 1):
+                span_event("http.attempt", attempt=attempt)
+                destination.unlink(missing_ok=True)
+                try:
+                    payload = self.transport.fetch_to_file(
+                        url=url,
+                        destination=destination,
+                        timeout_seconds=self.timeout_seconds,
+                        user_agent=self.user_agent,
+                        max_bytes=self.max_bytes,
+                    )
+                    self._require_allowed_url(payload.final_url)
+                    span.set_attribute("http.response.status_code", payload.status)
+                    span.set_attribute("http.response.body.size", payload.byte_count)
+                    span.set_attribute("url.final", payload.final_url)
+                    if payload.status >= 400:
+                        raise HttpStatusError(url=payload.final_url, status=payload.status)
+                    return
                 except HTTPError as exc:
                     span_event("http.error", attempt=attempt, status=exc.code)
                     if exc.code not in self.retryable_status or attempt >= self.max_attempts:
