@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 CheckpointStatus = Literal["stored", "unavailable", "failed"]
 InfrastructureFailureKind = Literal[
@@ -51,7 +51,12 @@ class RecoveryCheckpointRecord:
 
 
 class AcquisitionRecoveryJournal:
-    """Append-only local journal that survives a shard interruption."""
+    """Append-only local journal that survives a shard interruption.
+
+    The local journal is fsynced after every observation. A caller may also
+    mirror the compact latest-state view to object storage after each append,
+    which makes recovery independent of GitHub's end-of-job artifact upload.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -88,6 +93,58 @@ class AcquisitionRecoveryJournal:
             stream.flush()
             os.fsync(stream.fileno())
         self._latest[self._key(record.source_identifier, record.document_url)] = record
+
+    def compact_bytes(self) -> bytes:
+        records = sorted(
+            self._latest.values(),
+            key=lambda item: (item.source_identifier, item.document_url),
+        )
+        return (
+            "".join(
+                json.dumps(asdict(record), ensure_ascii=False, sort_keys=True) + "\n"
+                for record in records
+            )
+        ).encode("utf-8")
+
+    def restore_bytes(self, payload: bytes) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_bytes(payload)
+        self._latest.clear()
+        self._load()
+
+
+class S3RecoveryCheckpointMirror:
+    """Durable compact checkpoint outside the final run-manifest namespace."""
+
+    def __init__(self, *, object_store: Any, object_key: str) -> None:
+        if not object_key.startswith("_checkpoints/"):
+            raise ValueError("recovery checkpoint key must use _checkpoints/")
+        self.object_store = object_store
+        self.object_key = object_key
+
+    def load_if_present(self, journal: AcquisitionRecoveryJournal) -> bool:
+        try:
+            response = self.object_store.client.get_object(
+                Bucket=self.object_store.config.bucket,
+                Key=self.object_key,
+            )
+        except Exception as exc:
+            if self.object_store.is_not_found(exc):
+                return False
+            raise
+        journal.restore_bytes(response["Body"].read())
+        return True
+
+    def persist(self, journal: AcquisitionRecoveryJournal) -> None:
+        payload = journal.compact_bytes()
+        digest = __import__("hashlib").sha256(payload).hexdigest()
+        self.object_store.client.put_object(
+            Bucket=self.object_store.config.bucket,
+            Key=self.object_key,
+            Body=payload,
+            ContentType="application/x-ndjson",
+            Metadata={"sha256": digest, "checkpoint_kind": "recovery-latest-state"},
+        )
 
 
 @dataclass(frozen=True, slots=True)
