@@ -84,7 +84,11 @@ class UrllibHttpTransport:
             url,
             headers={
                 "User-Agent": user_agent,
-                "Accept": "application/pdf,text/html;q=0.9,*/*;q=0.1",
+                "Accept": (
+                    "application/pdf,application/msword,"
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+                    "application/rtf,text/html;q=0.5,*/*;q=0.1"
+                ),
             },
         )
         byte_count = 0
