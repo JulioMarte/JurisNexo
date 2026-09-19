@@ -11,7 +11,7 @@ INPUT_DIR = Path(os.environ["SCJ_YEAR_INVENTORY_INPUT"])
 OUTPUT_DIR = Path(os.environ["SCJ_YEAR_INVENTORY_OUTPUT"])
 YEAR_MIN = int(os.environ.get("SCJ_YEAR_MIN", "1994"))
 YEAR_MAX = int(os.environ.get("SCJ_YEAR_MAX", "2026"))
-SURFACES = ("decisions", "historical")
+SURFACES = ("decisions",)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -26,21 +26,14 @@ def source_identifier(record: dict[str, Any]) -> tuple[str, str]:
     row = record["row"]
     if not isinstance(row, dict):
         raise TypeError("SCJ year inventory record lacks row object")
-    if surface == "decisions":
-        expediente_id = str(row.get("idExpediente") or "").strip()
-        guid = str(row.get("guidBlob") or "").strip()
-        if not expediente_id:
-            raise ValueError("decision inventory record lacks idExpediente")
-        identifier = f"expediente:{expediente_id}"
-        if guid:
-            identifier += f":{guid}"
-        return identifier, "decisions"
-
-    url = str(record.get("_document_url") or "").strip()
-    if not url.startswith("https://"):
-        raise ValueError("historical inventory record lacks HTTPS URL")
-    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    return f"historical-url-sha256:{digest}", "historical-decisions"
+    expediente_id = str(row.get("idExpediente") or "").strip()
+    guid = str(row.get("guidBlob") or "").strip()
+    if not expediente_id:
+        raise ValueError("decision inventory record lacks idExpediente")
+    identifier = f"expediente:{expediente_id}"
+    if guid:
+        identifier += f":{guid}"
+    return identifier, "decisions"
 
 
 def main() -> None:
@@ -163,11 +156,7 @@ def main() -> None:
 
     acquisition_records: list[dict[str, Any]] = []
     for url, items in sorted(url_sources.items()):
-        # One network acquisition per official locator. If the same locator appears in both
-        # surfaces, prefer the modern decisions collection while retaining every source record
-        # in the canonical inventory and duplicate-url report.
-        ordered = sorted(items, key=lambda item: 0 if item["surface"] == "decisions" else 1)
-        acquisition_records.append(dict(ordered[0]))
+        acquisition_records.append(dict(items[0]))
 
     canonical_records.sort(
         key=lambda item: (int(item["year"]), str(item["surface"]), str(item["source_identifier"]))
