@@ -352,7 +352,7 @@ def test_cross_scope_proposition_relation_is_rejected(
             """
             INSERT INTO corpus.legal_propositions (
                 proposition_type, canonical_text, assertion_kind
-            ) VALUES ('issue', 'Cuestión pública', 'human_authored')
+            ) VALUES ('holding', 'Proposición pública', 'human_authored')
             RETURNING id
             """
         )
