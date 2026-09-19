@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
 from jurisnexo.acquisition.http_fetcher import BoundedHttpFetcher, OFFICIAL_SOURCE_HOSTS
+from jurisnexo.acquisition.manifest import AcquisitionRunManifestBuilder
 from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
     acquire_candidates,
@@ -37,6 +38,21 @@ def _env_flag(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().casefold() not in {"", "0", "false", "no", "off"}
+
+
+def _batch_id(*, source: str) -> str:
+    explicit = os.environ.get("ACQUISITION_BATCH_ID", "").strip()
+    if explicit:
+        return explicit
+    run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "").strip()
+    if run_id and run_attempt:
+        return f"github-{run_id}-{run_attempt}-{source}"
+    return f"local-{source}"
+
+
+def _ingestion_id(*, batch_id: str, shard_index: int) -> str:
+    return f"{batch_id}-part-{shard_index:03d}"
 
 
 def require_environment() -> None:
@@ -152,6 +168,16 @@ def main() -> None:
         shard_index=shard_index,
         shard_count=shard_count,
     )
+    batch_id = _batch_id(source="scj")
+    run_manifest = AcquisitionRunManifestBuilder(
+        source="scj",
+        scope=os.environ.get("ACQUISITION_MANIFEST_SCOPE", "official-corpus").strip(),
+        storage_bucket=object_store.config.bucket,
+        ingestion_id=_ingestion_id(batch_id=batch_id, shard_index=shard_index),
+        batch_id=batch_id,
+        partition_index=shard_index,
+        partition_count=shard_count,
+    )
 
     acquired = 0
     skipped_verified = 0
@@ -175,7 +201,9 @@ def main() -> None:
                 (item.source_identifier, item.document_url): item.sha256 for item in registered
             }
             for index, candidate in enumerate(candidates):
-                collection_counts[candidate.collection] = collection_counts.get(candidate.collection, 0) + 1
+                collection_counts[candidate.collection] = (
+                    collection_counts.get(candidate.collection, 0) + 1
+                )
                 try:
                     with tracer.start_as_current_span("scj.backfill.item") as span:
                         span.set_attribute("scj.shard.item_index", index)
@@ -191,6 +219,11 @@ def main() -> None:
                                 sha256=existing_digest,
                             )
                             if object_store.exists(key):
+                                run_manifest.record_existing(
+                                    candidate=candidate,
+                                    sha256=existing_digest,
+                                    object_key=key,
+                                )
                                 skipped_verified += 1
                                 span.set_attribute("artifact.already_verified", True)
                                 continue
@@ -204,13 +237,25 @@ def main() -> None:
                             artifact_catalog=catalog,
                         )
                         if len(artifacts) != 1:
-                            raise RuntimeError("SCJ backfill item did not produce exactly one artifact")
+                            raise RuntimeError(
+                                "SCJ backfill item did not produce exactly one artifact"
+                            )
                         artifact = artifacts[0]
-                        current[(candidate.source_identifier, candidate.document_url)] = artifact.sha256
+                        run_manifest.record_artifact(artifact)
+                        current[(candidate.source_identifier, candidate.document_url)] = (
+                            artifact.sha256
+                        )
                         acquired += 1
                         bytes_acquired += artifact.byte_count
                         span.set_attribute("artifact.sha256_prefix", artifact.sha256[:12])
                 except Exception as exc:
+                    run_manifest.record_failure(
+                        collection=candidate.collection,
+                        source_identifier=candidate.source_identifier,
+                        discovery_url=candidate.discovery_url,
+                        document_url=candidate.document_url,
+                        error=exc,
+                    )
                     failure = {
                         "source_identifier": candidate.source_identifier,
                         "collection": candidate.collection,
@@ -220,7 +265,10 @@ def main() -> None:
                     }
                     failures.append(failure)
                     print(
-                        json.dumps({"event": "scj_backfill_item_failed", **failure}, ensure_ascii=False),
+                        json.dumps(
+                            {"event": "scj_backfill_item_failed", **failure},
+                            ensure_ascii=False,
+                        ),
                         flush=True,
                     )
 
@@ -242,6 +290,10 @@ def main() -> None:
                         flush=True,
                     )
 
+        stored_manifest = run_manifest.commit(object_store=object_store)
+        (output_dir / f"backfill-{shard_index:02d}-run-manifest.json").write_bytes(
+            stored_manifest.manifest.canonical_bytes()
+        )
         summary = {
             "status": "PASS" if not failures else "INCOMPLETE",
             "shard_index": shard_index,
@@ -253,6 +305,8 @@ def main() -> None:
             "storage_repair_count": repaired_storage,
             "failure_count": len(failures),
             "bytes_acquired": bytes_acquired,
+            "run_manifest_object_key": stored_manifest.object_key,
+            "run_manifest_sha256": stored_manifest.payload_sha256,
         }
         (output_dir / f"backfill-{shard_index:02d}-summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
@@ -266,12 +320,15 @@ def main() -> None:
         root.set_attribute("scj.shard.skipped_verified_count", skipped_verified)
         root.set_attribute("scj.shard.failure_count", len(failures))
         root.set_attribute("scj.shard.bytes_acquired", bytes_acquired)
+        root.set_attribute("acquisition.run_manifest_key", stored_manifest.object_key)
 
     provider = trace.get_tracer_provider()
     if hasattr(provider, "force_flush"):
         provider.force_flush()  # type: ignore[attr-defined]
     if failures:
-        raise RuntimeError(f"SCJ shard {shard_index} completed with {len(failures)} failed documents")
+        raise RuntimeError(
+            f"SCJ shard {shard_index} completed with {len(failures)} failed documents"
+        )
 
 
 if __name__ == "__main__":

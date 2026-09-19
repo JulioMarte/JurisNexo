@@ -421,3 +421,30 @@ severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "integration"]
 risk = ["legal_quality", "provenance"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-RUN-MANIFEST-001"
+statement = "Every canonical production document uploader closes each completed acquisition run with an immutable object-storage manifest that records observed source identities, stored artifact identities/checksums, run outcome and deterministic set digests without requiring database persistence."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "fitness", "contract"]
+risk = ["provenance", "operations", "architecture"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-SOURCE-BYTES-001"
+statement = "Canonical official-source acquisition preserves the exact source bytes and their detected source format (PDF, DOC, DOCX or RTF) under a content-addressed key; format conversion or normalization happens only as a derived artifact with provenance back to the immutable source, while HTML/error/unknown responses are accounted for as unavailable rather than stored as legal documents."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "contract", "integration", "fitness"]
+risk = ["provenance", "legal_quality", "architecture", "operations"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-RECOVERY-001"
+statement = "Large official-corpus acquisition shards persist incremental recovery evidence outside the primary object store, distinguish global infrastructure interruptions from document-level outcomes, and may resume stored observations only after verifying the referenced content-addressed object still matches recorded integrity metadata."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "contract", "integration"]
+risk = ["provenance", "operations"]

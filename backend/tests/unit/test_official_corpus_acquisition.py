@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import zipfile
 from dataclasses import dataclass, field
+from io import BytesIO
+from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
 from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
+    UnsupportedOfficialDocumentResponse,
     acquire_candidates,
     discover_scj_pdf_candidates_from_html,
+    discover_scj_principales_candidates_from_html,
     discover_tc_detail_pages,
     object_key_for,
     sha256_hex,
@@ -35,6 +41,22 @@ class FakeFetcher:
 
 
 @dataclass(slots=True)
+class StreamingFakeFetcher:
+    payloads: dict[str, bytes]
+    download_calls: list[str] = field(default_factory=_empty_calls)
+
+    def get_bytes(self, url: str) -> bytes:
+        raise AssertionError(f"streaming acquisition should not call get_bytes for {url}")
+
+    def download_to_file(self, url: str, destination: Path) -> None:
+        self.download_calls.append(url)
+        payload = self.payloads[url]
+        with destination.open("wb") as stream:
+            for offset in range(0, len(payload), 5):
+                stream.write(payload[offset : offset + 5])
+
+
+@dataclass(slots=True)
 class MemoryObjectStore:
     objects: dict[str, bytes] = field(default_factory=_empty_objects)
     puts: int = 0
@@ -46,13 +68,20 @@ class MemoryObjectStore:
         self,
         *,
         key: str,
-        content: bytes,
+        content: bytes | BinaryIO,
         content_type: str,
         metadata: dict[str, str],
     ) -> None:
-        assert content_type == "application/pdf"
-        assert metadata["sha256"] == sha256_hex(content)
-        self.objects[key] = content
+        assert content_type in {
+            "application/pdf",
+            "application/msword",
+            "application/rtf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
+        payload = content if isinstance(content, bytes) else content.read()
+        assert metadata["sha256"] == sha256_hex(payload)
+        assert metadata["content_type"] == content_type
+        self.objects[key] = payload
         self.puts += 1
 
 
@@ -138,7 +167,7 @@ def test_duplicate_document_urls_are_downloaded_once_per_loop() -> None:
     assert fetcher.calls == [url]
 
 
-def test_non_pdf_response_fails_closed_before_bucket_write() -> None:
+def test_non_document_response_fails_closed_before_bucket_write() -> None:
     url = "https://official.example/document.pdf"
     candidate = OfficialDocumentCandidate(
         source="supreme_court",
@@ -148,7 +177,10 @@ def test_non_pdf_response_fails_closed_before_bucket_write() -> None:
     )
     store = MemoryObjectStore()
 
-    with pytest.raises(ValueError, match="not a PDF"):
+    with pytest.raises(
+        UnsupportedOfficialDocumentResponse,
+        match="html_or_xml_response",
+    ):
         acquire_candidates(
             candidates=(candidate,),
             fetcher=FakeFetcher(payloads={url: b"<html>error</html>"}),
@@ -156,3 +188,110 @@ def test_non_pdf_response_fails_closed_before_bucket_write() -> None:
         )
 
     assert store.puts == 0
+
+
+def test_scj_principales_parser_keeps_only_official_labeled_pdfs() -> None:
+    html = """
+    <a href="/wp-content/uploads/2026/05/Principales-enero-abril-2026.pdf">
+      Principales Decisiones de la Suprema Corte de Justicia enero-abril 2026
+    </a>
+    <a href="/wp-content/uploads/2026/05/unrelated.pdf">Otro documento</a>
+    <a href="https://evil.example/principales.pdf">
+      Principales Decisiones de la Suprema Corte de Justicia 2025
+    </a>
+    """
+
+    results = discover_scj_principales_candidates_from_html(html=html)
+
+    assert len(results) == 1
+    candidate = results[0]
+    assert candidate.collection == "principales-sentencias"
+    assert candidate.source == "supreme_court"
+    assert candidate.document_url == (
+        "https://poderjudicial.gob.do/wp-content/uploads/2026/05/"
+        "Principales-enero-abril-2026.pdf"
+    )
+    assert candidate.source_identifier.startswith("principales-url:")
+
+
+def test_streaming_fetcher_hashes_staged_file_and_uploads_same_bytes() -> None:
+    url = "https://official.example/streamed.pdf"
+    candidate = OfficialDocumentCandidate(
+        source="supreme_court",
+        source_identifier="streamed",
+        discovery_url="https://official.example/list",
+        document_url=url,
+        collection="principales-sentencias",
+    )
+    pdf = b"%PDF-1.7\n" + (b"0123456789" * 4096)
+    fetcher = StreamingFakeFetcher(payloads={url: pdf})
+    store = MemoryObjectStore()
+
+    artifact = acquire_candidates(
+        candidates=(candidate,),
+        fetcher=fetcher,
+        object_store=store,
+    )[0]
+
+    assert fetcher.download_calls == [url]
+    assert artifact.sha256 == sha256_hex(pdf)
+    assert artifact.byte_count == len(pdf)
+    assert store.objects[artifact.object_key] == pdf
+
+
+def _docx_fixture() -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types />")
+        archive.writestr("word/document.xml", "<w:document />")
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("url", "payload", "expected_extension", "expected_content_type"),
+    [
+        (
+            "https://official.example/source.pdf",
+            b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1legacy-word",
+            "doc",
+            "application/msword",
+        ),
+        (
+            "https://official.example/source.docx",
+            _docx_fixture(),
+            "docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        (
+            "https://official.example/source.doc",
+            b"{\\rtf1\\ansi official text}",
+            "rtf",
+            "application/rtf",
+        ),
+    ],
+)
+def test_acquisition_preserves_source_format_by_bytes_not_url_suffix(
+    url: str,
+    payload: bytes,
+    expected_extension: str,
+    expected_content_type: str,
+) -> None:
+    candidate = OfficialDocumentCandidate(
+        source="supreme_court",
+        source_identifier="source-format",
+        discovery_url="https://official.example/list",
+        document_url=url,
+        collection="decisions",
+    )
+    store = MemoryObjectStore()
+
+    artifact = acquire_candidates(
+        candidates=(candidate,),
+        fetcher=FakeFetcher(payloads={url: payload}),
+        object_store=store,
+    )[0]
+
+    assert artifact.file_extension == expected_extension
+    assert artifact.content_type == expected_content_type
+    assert artifact.object_key.endswith(f".{expected_extension}")
+    assert store.objects[artifact.object_key] == payload

@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from playwright.sync_api import sync_playwright
 
 from jurisnexo.acquisition.http_fetcher import BoundedHttpFetcher, OFFICIAL_SOURCE_HOSTS
+from jurisnexo.acquisition.manifest import AcquisitionRunManifestBuilder
 from jurisnexo.acquisition.official_corpus import OfficialDocumentCandidate, acquire_candidates
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, S3ObjectStoreConfig
 from jurisnexo.corpus.artifact_catalog import PostgresOfficialArtifactCatalog
@@ -57,6 +58,17 @@ def configure_telemetry() -> None:
 
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(provider)
+
+
+def _ingestion_id() -> str | None:
+    explicit = os.environ.get("ACQUISITION_INGESTION_ID", "").strip()
+    if explicit:
+        return explicit
+    run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "").strip()
+    if run_id and run_attempt:
+        return f"github-{run_id}-{run_attempt}-scj-canary"
+    return None
 
 
 def datatables_form(*, start: int, length: int) -> dict[str, str]:
@@ -199,6 +211,14 @@ def main() -> None:
         candidates = candidates_from_live_portal(limit=limit)
         object_store = build_object_store()
         fetcher = BoundedHttpFetcher(allowed_hosts=OFFICIAL_SOURCE_HOSTS)
+        ingestion_id = _ingestion_id()
+        run_manifest = AcquisitionRunManifestBuilder(
+            source="scj",
+            scope="canary",
+            storage_bucket=object_store.config.bucket,
+            ingestion_id=ingestion_id,
+            batch_id=ingestion_id,
+        )
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
             catalog = PostgresOfficialArtifactCatalog(
                 connection=connection,
@@ -210,6 +230,9 @@ def main() -> None:
                 object_store=object_store,
                 artifact_catalog=catalog,
             )
+            for artifact in artifacts:
+                run_manifest.record_artifact(artifact)
+
             inventory = PostgresRegisteredArtifactInventory(connection=connection)
             observations = inventory.observations_for("supreme_court")
             current = {
@@ -237,6 +260,10 @@ def main() -> None:
                     f"wrong_prefix={wrong_prefix}"
                 )
 
+        stored_manifest = run_manifest.commit(object_store=object_store)
+        (OUT / "run-manifest.json").write_bytes(
+            stored_manifest.manifest.canonical_bytes()
+        )
         summary = {
             "status": "PASS",
             "candidate_count": len(candidates),
@@ -245,6 +272,8 @@ def main() -> None:
             "verified_catalog_count": len(candidates) - len(missing_catalog),
             "verified_storage_count": len(artifacts) - len(missing_objects),
             "object_prefix": "jurisdictions/do/scj/decisions/",
+            "run_manifest_object_key": stored_manifest.object_key,
+            "run_manifest_sha256": stored_manifest.payload_sha256,
         }
         (OUT / "summary.json").write_text(
             json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -252,6 +281,7 @@ def main() -> None:
         root.set_attribute("scj.canary.candidate_count", len(candidates))
         root.set_attribute("scj.canary.acquired_count", len(artifacts))
         root.set_attribute("scj.canary.already_present_count", summary["already_present_count"])
+        root.set_attribute("acquisition.run_manifest_key", stored_manifest.object_key)
 
     provider = trace.get_tracer_provider()
     if hasattr(provider, "force_flush"):

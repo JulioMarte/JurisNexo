@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import re
+import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Literal, Protocol
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Literal, Protocol, runtime_checkable
 from urllib.parse import urljoin, urlparse
 
 from jurisnexo.observability import acquisition_span, span_event
 
 SourceName = Literal["supreme_court", "constitutional_court"]
+SourceDocumentFormat = Literal["pdf", "doc", "docx", "rtf"]
 
 TC_SENTENCES_URL = (
     "https://www.tribunalconstitucional.gob.do/consultas/secretar%C3%ADa/"
     "sentencias?order=RelativeTo_desc&searchCriteria=&searchString=&size=999999"
 )
 SCJ_MEGAQUERY_URL = "https://transparencia.poderjudicial.gob.do/consultasSCJ/megaconsulta"
+SCJ_PRINCIPALES_URL = (
+    "https://poderjudicial.gob.do/suprema-corte-de-justicia/"
+    "secretaria-general/principales-sentencias/"
+)
 _SOURCE_STORAGE_CODES: dict[SourceName, str] = {
     "supreme_court": "scj",
     "constitutional_court": "tc",
@@ -39,10 +47,33 @@ class StoredOfficialArtifact:
     byte_count: int
     object_key: str
     already_present: bool
+    content_type: str = "application/pdf"
+    file_extension: str = "pdf"
+
+
+@dataclass(frozen=True, slots=True)
+class OfficialDocumentFormat:
+    name: SourceDocumentFormat
+    file_extension: str
+    content_type: str
+
+
+class UnsupportedOfficialDocumentResponse(ValueError):
+    """Official locator returned bytes that are not a supported source document."""
+
+    def __init__(self, *, url: str, reason: str) -> None:
+        self.url = url
+        self.reason = reason
+        super().__init__(f"unsupported official document response ({reason}): {url}")
 
 
 class HttpFetcher(Protocol):
     def get_bytes(self, url: str) -> bytes: ...
+
+
+@runtime_checkable
+class FileDownloadingFetcher(Protocol):
+    def download_to_file(self, url: str, destination: Path) -> None: ...
 
 
 class ObjectStore(Protocol):
@@ -53,6 +84,18 @@ class ObjectStore(Protocol):
         *,
         key: str,
         content: bytes,
+        content_type: str,
+        metadata: dict[str, str],
+    ) -> None: ...
+
+
+@runtime_checkable
+class FileObjectStore(Protocol):
+    def put_file(
+        self,
+        *,
+        key: str,
+        path: Path,
         content_type: str,
         metadata: dict[str, str],
     ) -> None: ...
@@ -141,6 +184,49 @@ def discover_pdf_link(*, html: str, page_url: str, allowed_host: str) -> str:
     return unique[0]
 
 
+
+def discover_scj_principales_candidates_from_html(
+    *, html: str, page_url: str = SCJ_PRINCIPALES_URL
+) -> tuple[OfficialDocumentCandidate, ...]:
+    """Extract official SCJ Principales compilation PDFs in publisher page order.
+
+    Identity is deliberately conservative: the publisher PDF URL is hashed rather than inferring
+    a case/year identity from editorial labels that may change over time.
+    """
+
+    allowed_hosts = {"poderjudicial.gob.do", "www.poderjudicial.gob.do"}
+    candidates: list[OfficialDocumentCandidate] = []
+    seen_urls: set[str] = set()
+    for anchor in _anchors(html):
+        label = " ".join(anchor.text.split())
+        folded_label = label.casefold()
+        if "principales" not in folded_label or not (
+            "sentenc" in folded_label or "decision" in folded_label
+        ):
+            continue
+
+        absolute = urljoin(page_url, anchor.href)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").casefold() not in allowed_hosts:
+            continue
+        if not parsed.path.casefold().endswith(".pdf"):
+            continue
+        if absolute in seen_urls:
+            continue
+        seen_urls.add(absolute)
+        identifier = "principales-url:" + hashlib.sha256(absolute.encode("utf-8")).hexdigest()
+        candidates.append(
+            OfficialDocumentCandidate(
+                source="supreme_court",
+                source_identifier=identifier,
+                discovery_url=page_url,
+                document_url=absolute,
+                collection="principales-sentencias",
+            )
+        )
+    return tuple(candidates)
+
+
 def discover_scj_pdf_candidates_from_html(
     *, html: str, page_url: str
 ) -> tuple[OfficialDocumentCandidate, ...]:
@@ -195,15 +281,101 @@ def sha256_hex(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def object_key_for(*, source: SourceName, sha256: str, collection: str = "decisions") -> str:
+def object_key_for(
+    *,
+    source: SourceName,
+    sha256: str,
+    collection: str = "decisions",
+    file_extension: str = "pdf",
+) -> str:
     """Return the stable jurisdiction/source/collection content-addressed object key."""
 
     if len(sha256) != 64 or any(ch not in "0123456789abcdef" for ch in sha256):
         raise ValueError("sha256 must be a lowercase 64-character hexadecimal digest")
     if not _COLLECTION_RE.fullmatch(collection):
         raise ValueError("collection must be a lowercase kebab-case storage segment")
+    if file_extension not in {"pdf", "doc", "docx", "rtf"}:
+        raise ValueError(f"unsupported source document extension: {file_extension}")
     source_code = _SOURCE_STORAGE_CODES[source]
-    return f"jurisdictions/do/{source_code}/{collection}/{sha256[:2]}/{sha256}.pdf"
+    return (
+        f"jurisdictions/do/{source_code}/{collection}/"
+        f"{sha256[:2]}/{sha256}.{file_extension}"
+    )
+
+
+def _materialize_document(
+    *,
+    fetcher: HttpFetcher,
+    url: str,
+    destination: Path,
+) -> None:
+    if isinstance(fetcher, FileDownloadingFetcher):
+        fetcher.download_to_file(url, destination)
+        return
+    destination.write_bytes(fetcher.get_bytes(url))
+
+
+def _detect_document_format(*, path: Path, source_url: str) -> OfficialDocumentFormat:
+    with path.open("rb") as stream:
+        head = stream.read(8192)
+
+    if head.startswith(b"%PDF"):
+        return OfficialDocumentFormat(
+            name="pdf",
+            file_extension="pdf",
+            content_type="application/pdf",
+        )
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return OfficialDocumentFormat(
+            name="doc",
+            file_extension="doc",
+            content_type="application/msword",
+        )
+    if head.lstrip().startswith(b"{\\rtf"):
+        return OfficialDocumentFormat(
+            name="rtf",
+            file_extension="rtf",
+            content_type="application/rtf",
+        )
+    if head.startswith(b"PK") and zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+        if "word/document.xml" in names:
+            return OfficialDocumentFormat(
+                name="docx",
+                file_extension="docx",
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            )
+        raise UnsupportedOfficialDocumentResponse(
+            url=source_url,
+            reason="zip_not_word_document",
+        )
+
+    stripped = head.lstrip().lower()
+    if stripped.startswith((b"<!doctype html", b"<html", b"<?xml")):
+        reason = "html_or_xml_response"
+    elif stripped.startswith((b"{", b"[")):
+        reason = "json_or_text_response"
+    elif not head:
+        reason = "empty_response"
+    else:
+        reason = "unknown_binary_format"
+    raise UnsupportedOfficialDocumentResponse(url=source_url, reason=reason)
+
+
+def _sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> tuple[str, int]:
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be positive")
+    digest = hashlib.sha256()
+    byte_count = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(chunk_size):
+            digest.update(chunk)
+            byte_count += len(chunk)
+    return digest.hexdigest(), byte_count
 
 
 def acquire_candidates(
@@ -213,7 +385,7 @@ def acquire_candidates(
     object_store: ObjectStore,
     artifact_catalog: ArtifactCatalog | None = None,
 ) -> tuple[StoredOfficialArtifact, ...]:
-    """Download, content-address, deduplicate, register, and trace official PDFs."""
+    """Preserve supported official source documents exactly as published."""
 
     seen_urls: set[str] = set()
     results: list[StoredOfficialArtifact] = []
@@ -228,61 +400,87 @@ def acquire_candidates(
                 continue
             seen_urls.add(candidate.document_url)
             host = urlparse(candidate.document_url).hostname or ""
-            with acquisition_span(
-                "acquisition.artifact",
-                source=candidate.source,
-                source_identifier=candidate.source_identifier,
-                collection=candidate.collection,
-                **{"server.address": host},
-            ) as artifact_span:
+            with (
+                acquisition_span(
+                    "acquisition.artifact",
+                    source=candidate.source,
+                    source_identifier=candidate.source_identifier,
+                    collection=candidate.collection,
+                    **{"server.address": host},
+                ) as artifact_span,
+                TemporaryDirectory(prefix="jurisnexo-acquisition-") as temp_dir,
+            ):
+                document_path = Path(temp_dir) / "source-document"
                 with acquisition_span("acquisition.download"):
-                    content = fetcher.get_bytes(candidate.document_url)
-                if not content.startswith(b"%PDF"):
-                    raise ValueError(f"official document is not a PDF: {candidate.document_url}")
+                    _materialize_document(
+                        fetcher=fetcher,
+                        url=candidate.document_url,
+                        destination=document_path,
+                    )
+                document_format = _detect_document_format(
+                    path=document_path,
+                    source_url=candidate.document_url,
+                )
 
-                with acquisition_span("acquisition.hash", byte_count=len(content)) as hash_span:
-                    digest = sha256_hex(content)
+                with acquisition_span("acquisition.hash") as hash_span:
+                    digest, byte_count = _sha256_file(document_path)
+                    hash_span.set_attribute("artifact.byte_count", byte_count)
                     hash_span.set_attribute("artifact.sha256_prefix", digest[:12])
 
                 key = object_key_for(
                     source=candidate.source,
                     collection=candidate.collection,
                     sha256=digest,
+                    file_extension=document_format.file_extension,
                 )
                 with acquisition_span("acquisition.object_store.head", object_key=key):
                     already_present = object_store.exists(key)
                 if not already_present:
+                    metadata = {
+                        "source": candidate.source,
+                        "collection": candidate.collection,
+                        "source_identifier": candidate.source_identifier,
+                        "source_url": candidate.document_url,
+                        "sha256": digest,
+                        "source_format": document_format.name,
+                        "content_type": document_format.content_type,
+                    }
                     with acquisition_span(
                         "acquisition.object_store.put",
                         object_key=key,
-                        byte_count=len(content),
+                        byte_count=byte_count,
                     ):
-                        object_store.put(
-                            key=key,
-                            content=content,
-                            content_type="application/pdf",
-                            metadata={
-                                "source": candidate.source,
-                                "collection": candidate.collection,
-                                "source_identifier": candidate.source_identifier,
-                                "source_url": candidate.document_url,
-                                "sha256": digest,
-                            },
-                        )
+                        if isinstance(object_store, FileObjectStore):
+                            object_store.put_file(
+                                key=key,
+                                path=document_path,
+                                content_type=document_format.content_type,
+                                metadata=metadata,
+                            )
+                        else:
+                            object_store.put(
+                                key=key,
+                                content=document_path.read_bytes(),
+                                content_type=document_format.content_type,
+                                metadata=metadata,
+                            )
 
                 artifact = StoredOfficialArtifact(
                     candidate=candidate,
                     sha256=digest,
-                    byte_count=len(content),
+                    byte_count=byte_count,
                     object_key=key,
                     already_present=already_present,
+                    content_type=document_format.content_type,
+                    file_extension=document_format.file_extension,
                 )
                 if artifact_catalog is not None:
                     with acquisition_span("acquisition.catalog.register"):
                         artifact_catalog.register(artifact)
-                artifact_span.set_attribute("artifact.byte_count", len(content))
+                artifact_span.set_attribute("artifact.byte_count", byte_count)
                 artifact_span.set_attribute("artifact.sha256_prefix", digest[:12])
                 artifact_span.set_attribute("artifact.already_present", already_present)
+                artifact_span.set_attribute("artifact.source_format", document_format.name)
                 results.append(artifact)
 
         batch_span.set_attribute("acquisition.completed_count", len(results))

@@ -57,6 +57,14 @@ jobs:
           -e GITHUB_BASE_REF
           -e GITHUB_HEAD_REF
           test pytest tests/architecture
+      - name: Acquisition unit contracts
+        run: >-
+          docker compose --profile test run --rm --no-deps
+          test pytest
+          tests/unit/test_acquisition_http_fetcher.py
+          tests/unit/test_official_corpus_acquisition.py
+          tests/unit/test_acquisition_manifest.py
+          tests/unit/test_acquisition_recovery.py
       - name: Ruff ingestion benchmark runners
         run: >-
           docker compose --profile test run --rm --no-deps
