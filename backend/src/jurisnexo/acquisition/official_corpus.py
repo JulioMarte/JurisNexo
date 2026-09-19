@@ -306,71 +306,77 @@ def acquire_candidates(
                 continue
             seen_urls.add(candidate.document_url)
             host = urlparse(candidate.document_url).hostname or ""
-            with acquisition_span(
-                "acquisition.artifact",
-                source=candidate.source,
-                source_identifier=candidate.source_identifier,
-                collection=candidate.collection,
-                **{"server.address": host},
-            ) as artifact_span, TemporaryDirectory(prefix="jurisnexo-acquisition-") as temp_dir:
+            with (
+                acquisition_span(
+                    "acquisition.artifact",
+                    source=candidate.source,
+                    source_identifier=candidate.source_identifier,
+                    collection=candidate.collection,
+                    **{"server.address": host},
+                ) as artifact_span,
+                TemporaryDirectory(prefix="jurisnexo-acquisition-") as temp_dir,
+            ):
                 document_path = Path(temp_dir) / "document.pdf"
-                    with acquisition_span("acquisition.download"):
-                        _materialize_document(
-                            fetcher=fetcher,
-                            url=candidate.document_url,
-                            destination=document_path,
-                        )
-                    with document_path.open("rb") as stream:
-                        if stream.read(4) != b"%PDF":
-                            raise ValueError(
-                                f"official document is not a PDF: {candidate.document_url}"
-                            )
-
-                    with acquisition_span("acquisition.hash") as hash_span:
-                        digest, byte_count = _sha256_file(document_path)
-                        hash_span.set_attribute("artifact.byte_count", byte_count)
-                        hash_span.set_attribute("artifact.sha256_prefix", digest[:12])
-
-                    key = object_key_for(
-                        source=candidate.source,
-                        collection=candidate.collection,
-                        sha256=digest,
+                with acquisition_span("acquisition.download"):
+                    _materialize_document(
+                        fetcher=fetcher,
+                        url=candidate.document_url,
+                        destination=document_path,
                     )
-                    with acquisition_span("acquisition.object_store.head", object_key=key):
-                        already_present = object_store.exists(key)
-                    if not already_present:
-                        with acquisition_span(
+                with document_path.open("rb") as stream:
+                    if stream.read(4) != b"%PDF":
+                        raise ValueError(
+                            f"official document is not a PDF: {candidate.document_url}"
+                        )
+
+                with acquisition_span("acquisition.hash") as hash_span:
+                    digest, byte_count = _sha256_file(document_path)
+                    hash_span.set_attribute("artifact.byte_count", byte_count)
+                    hash_span.set_attribute("artifact.sha256_prefix", digest[:12])
+
+                key = object_key_for(
+                    source=candidate.source,
+                    collection=candidate.collection,
+                    sha256=digest,
+                )
+                with acquisition_span("acquisition.object_store.head", object_key=key):
+                    already_present = object_store.exists(key)
+                if not already_present:
+                    with (
+                        acquisition_span(
                             "acquisition.object_store.put",
                             object_key=key,
                             byte_count=byte_count,
-                        ), document_path.open("rb") as content:
-                            object_store.put(
-                                    key=key,
-                                    content=content,
-                                    content_type="application/pdf",
-                                    metadata={
-                                        "source": candidate.source,
-                                        "collection": candidate.collection,
-                                        "source_identifier": candidate.source_identifier,
-                                        "source_url": candidate.document_url,
-                                        "sha256": digest,
-                                    },
-                                )
+                        ),
+                        document_path.open("rb") as content,
+                    ):
+                        object_store.put(
+                            key=key,
+                            content=content,
+                            content_type="application/pdf",
+                            metadata={
+                                "source": candidate.source,
+                                "collection": candidate.collection,
+                                "source_identifier": candidate.source_identifier,
+                                "source_url": candidate.document_url,
+                                "sha256": digest,
+                            },
+                        )
 
-                    artifact = StoredOfficialArtifact(
-                        candidate=candidate,
-                        sha256=digest,
-                        byte_count=byte_count,
-                        object_key=key,
-                        already_present=already_present,
-                    )
-                    if artifact_catalog is not None:
-                        with acquisition_span("acquisition.catalog.register"):
-                            artifact_catalog.register(artifact)
-                    artifact_span.set_attribute("artifact.byte_count", byte_count)
-                    artifact_span.set_attribute("artifact.sha256_prefix", digest[:12])
-                    artifact_span.set_attribute("artifact.already_present", already_present)
-                    results.append(artifact)
+                artifact = StoredOfficialArtifact(
+                    candidate=candidate,
+                    sha256=digest,
+                    byte_count=byte_count,
+                    object_key=key,
+                    already_present=already_present,
+                )
+                if artifact_catalog is not None:
+                    with acquisition_span("acquisition.catalog.register"):
+                        artifact_catalog.register(artifact)
+                artifact_span.set_attribute("artifact.byte_count", byte_count)
+                artifact_span.set_attribute("artifact.sha256_prefix", digest[:12])
+                artifact_span.set_attribute("artifact.already_present", already_present)
+                results.append(artifact)
 
         batch_span.set_attribute("acquisition.completed_count", len(results))
     return tuple(results)
