@@ -12,7 +12,7 @@ from typing import Any, Literal
 from playwright.sync_api import APIRequestContext, sync_playwright
 
 TARGET = "https://consultasentenciascj.poderjudicial.gob.do/"
-PAGE_SIZE = 10
+PAGE_SIZE = int(os.environ.get("SCJ_PAGE_SIZE", "200"))
 Surface = Literal["decisions", "historical"]
 
 
@@ -138,6 +138,8 @@ def main() -> None:
     year_max = int(os.environ.get("SCJ_YEAR_MAX", "2026"))
     if year_min > year_max:
         raise ValueError("SCJ_YEAR_MIN must be <= SCJ_YEAR_MAX")
+    if PAGE_SIZE < 1 or PAGE_SIZE > 1000:
+        raise ValueError("SCJ_PAGE_SIZE must be between 1 and 1000")
     if shard_count < 1 or not 0 <= shard_index < shard_count:
         raise ValueError("invalid shard coordinates")
 
