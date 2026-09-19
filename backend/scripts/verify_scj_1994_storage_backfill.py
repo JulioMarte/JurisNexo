@@ -118,7 +118,10 @@ def main() -> None:
     sha256s: set[str] = set()
     uploaded_count = 0
     already_present_count = 0
+    unavailable_count = 0
     failed_count = 0
+    unavailable_reasons: dict[str, int] = {}
+    stored_formats: dict[str, int] = {}
     total_items = 0
     manifest_statuses: dict[str, str] = {}
 
@@ -130,6 +133,7 @@ def main() -> None:
         failed_count += int(payload.get("failed_count") or 0)
         uploaded_count += int(payload.get("uploaded_count") or 0)
         already_present_count += int(payload.get("already_present_count") or 0)
+        unavailable_count += int(payload.get("unavailable_count") or 0)
         items = payload.get("items")
         if not isinstance(items, list):
             raise TypeError(f"manifest {key} lacks items array")
@@ -138,22 +142,39 @@ def main() -> None:
                 raise TypeError(f"manifest {key} contains non-object item")
             total_items += 1
             item_status = str(item.get("status") or "")
-            if item_status not in {"uploaded", "already_present"}:
+            if item_status not in {"uploaded", "already_present", "unavailable"}:
                 raise RuntimeError(
                     f"manifest {key} contains unresolved item status={item_status}"
                 )
             source_identifier = str(item.get("source_identifier") or "").strip()
-            object_key = str(item.get("object_key") or "").strip()
-            digest = str(item.get("sha256") or "").strip()
-            if not source_identifier or not object_key or len(digest) != 64:
-                raise RuntimeError(f"manifest {key} contains incomplete stored item")
+            if not source_identifier:
+                raise RuntimeError(f"manifest {key} contains item without source_identifier")
             if source_identifier in observed_ids:
                 raise RuntimeError(
                     f"source_identifier appears in multiple manifest items: {source_identifier}"
                 )
             observed_ids.add(source_identifier)
+
+            if item_status == "unavailable":
+                unavailable_count += 1
+                reason = str(item.get("error") or item.get("error_type") or "unspecified")
+                unavailable_reasons[reason] = unavailable_reasons.get(reason, 0) + 1
+                continue
+
+            object_key = str(item.get("object_key") or "").strip()
+            digest = str(item.get("sha256") or "").strip()
+            file_extension = str(item.get("file_extension") or "").strip()
+            content_type = str(item.get("content_type") or "").strip()
+            if (
+                not object_key
+                or len(digest) != 64
+                or file_extension not in {"pdf", "doc", "docx", "rtf"}
+                or not content_type
+            ):
+                raise RuntimeError(f"manifest {key} contains incomplete stored item")
             object_keys.add(object_key)
             sha256s.add(digest)
+            stored_formats[file_extension] = stored_formats.get(file_extension, 0) + 1
 
     if failed_count:
         raise RuntimeError(f"batch reports failed_count={failed_count}")
@@ -179,7 +200,7 @@ def main() -> None:
         )
 
     summary = {
-        "status": "COMPLETE",
+        "status": "COMPLETE_WITH_UNAVAILABLE" if unavailable_count else "COMPLETE",
         "batch_id": batch_id,
         "storage_identity": {
             "bucket_sha256": bucket_sha256,
@@ -191,6 +212,9 @@ def main() -> None:
         "manifest_item_count": total_items,
         "uploaded_count": uploaded_count,
         "already_present_count": already_present_count,
+        "unavailable_count": unavailable_count,
+        "unavailable_reasons": dict(sorted(unavailable_reasons.items())),
+        "stored_formats": dict(sorted(stored_formats.items())),
         "failed_count": failed_count,
         "unique_object_key_count": len(object_keys),
         "unique_sha256_count": len(sha256s),
