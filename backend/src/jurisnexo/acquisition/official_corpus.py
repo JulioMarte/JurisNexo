@@ -281,15 +281,26 @@ def sha256_hex(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def object_key_for(*, source: SourceName, sha256: str, collection: str = "decisions") -> str:
+def object_key_for(
+    *,
+    source: SourceName,
+    sha256: str,
+    collection: str = "decisions",
+    file_extension: str = "pdf",
+) -> str:
     """Return the stable jurisdiction/source/collection content-addressed object key."""
 
     if len(sha256) != 64 or any(ch not in "0123456789abcdef" for ch in sha256):
         raise ValueError("sha256 must be a lowercase 64-character hexadecimal digest")
     if not _COLLECTION_RE.fullmatch(collection):
         raise ValueError("collection must be a lowercase kebab-case storage segment")
+    if file_extension not in {"pdf", "doc", "docx", "rtf"}:
+        raise ValueError(f"unsupported source document extension: {file_extension}")
     source_code = _SOURCE_STORAGE_CODES[source]
-    return f"jurisdictions/do/{source_code}/{collection}/{sha256[:2]}/{sha256}.pdf"
+    return (
+        f"jurisdictions/do/{source_code}/{collection}/"
+        f"{sha256[:2]}/{sha256}.{file_extension}"
+    )
 
 
 def _materialize_document(
@@ -302,6 +313,57 @@ def _materialize_document(
         fetcher.download_to_file(url, destination)
         return
     destination.write_bytes(fetcher.get_bytes(url))
+
+
+def _detect_document_format(*, path: Path, source_url: str) -> OfficialDocumentFormat:
+    with path.open("rb") as stream:
+        head = stream.read(8192)
+
+    if head.startswith(b"%PDF"):
+        return OfficialDocumentFormat(
+            name="pdf",
+            file_extension="pdf",
+            content_type="application/pdf",
+        )
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return OfficialDocumentFormat(
+            name="doc",
+            file_extension="doc",
+            content_type="application/msword",
+        )
+    if head.lstrip().startswith(b"{\\rtf"):
+        return OfficialDocumentFormat(
+            name="rtf",
+            file_extension="rtf",
+            content_type="application/rtf",
+        )
+    if head.startswith(b"PK") and zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+        if "word/document.xml" in names:
+            return OfficialDocumentFormat(
+                name="docx",
+                file_extension="docx",
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            )
+        raise UnsupportedOfficialDocumentResponse(
+            url=source_url,
+            reason="zip_not_word_document",
+        )
+
+    stripped = head.lstrip().lower()
+    if stripped.startswith((b"<!doctype html", b"<html", b"<?xml")):
+        reason = "html_or_xml_response"
+    elif stripped.startswith((b"{", b"[")):
+        reason = "json_or_text_response"
+    elif not head:
+        reason = "empty_response"
+    else:
+        reason = "unknown_binary_format"
+    raise UnsupportedOfficialDocumentResponse(url=source_url, reason=reason)
 
 
 def _sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> tuple[str, int]:
