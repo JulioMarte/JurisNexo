@@ -113,17 +113,49 @@ def audit(store: S3ObjectStore) -> dict[str, object]:
     return result
 
 
+def cleanup_canary_manifests(store: S3ObjectStore) -> dict[str, object]:
+    before = audit(store)
+    unsafe = [
+        record
+        for record in before["records"]
+        if record.get("classification") != "canary"
+    ]
+    if unsafe:
+        raise RuntimeError(
+            "refusing Principales cleanup because non-canary or unreadable manifests exist"
+        )
+
+    client = cast(Any, store.client)
+    deleted: list[str] = []
+    for record in before["records"]:
+        key = str(record["key"])
+        client.delete_object(Bucket=store.config.bucket, Key=key)
+        deleted.append(key)
+
+    after = audit(store)
+    if after["manifest_count"] != 0:
+        raise RuntimeError("Principales manifest cleanup did not leave an empty prefix")
+
+    result = {
+        "deleted_count": len(deleted),
+        "deleted_keys": deleted,
+        "before": before,
+        "after": after,
+    }
+    _write_json(OUT / "manifest-cleanup.json", result)
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--audit-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--audit-only", action="store_true")
+    mode.add_argument("--cleanup-canaries", action="store_true")
     args = parser.parse_args()
 
     store = build_s3_object_store()
-    result = audit(store)
+    result = cleanup_canary_manifests(store) if args.cleanup_canaries else audit(store)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
-
-    if not args.audit_only:
-        raise RuntimeError("only --audit-only is implemented in this safety stage")
 
 
 if __name__ == "__main__":
