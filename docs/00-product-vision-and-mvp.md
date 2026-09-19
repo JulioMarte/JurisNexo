@@ -87,25 +87,25 @@ The report should distinguish clearly between:
 
 ## 6. MVP corpus
 
-The first corpus should be deliberately constrained.
+The product is multi-court by design, but corpus **breadth and semantic depth are separate concerns**.
 
-Recommended initial priority:
+The canonical strategy is defined in `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`:
 
-- Supreme Court of Justice (SCJ);
-- Constitutional Court (TC).
+```text
+broad official source corpus
+    -> cheap provenance-preserving searchability
+    -> citation graph
+    -> priority signals
+    -> selective deep legal normalization
+```
 
-A narrower legal domain should be selected for the earliest evaluation set if full-corpus ingestion becomes an obstacle. Breadth must not come at the expense of provenance and retrieval quality.
+The initial high-signal seed for deep normalization is the official SCJ `principales-sentencias` collection. Broader SCJ material is acquired/inventoried to support canonical resolution, citation traversal, retrieval, adverse-authority search and coverage measurement without requiring expensive semantic enrichment of every decision.
 
-Future sources may include:
+TC, TSA, Courts of Appeal, Courts of First Instance, labor, criminal, land/inmobiliaria, constitutional and other Dominican sources are **not schema-level post-MVP concepts**. The current legal/court model is designed to represent them. Their ingestion priority is governed by professional value, official-source availability, acquisition reliability, provenance quality and integration cost.
 
-- Courts of Appeal;
-- Courts of First Instance;
-- Superior Administrative Court;
-- legislation and regulations;
-- administrative resolutions;
-- doctrine and secondary sources.
+No date-range or institutional-completeness claim is accepted merely because an official portal advertises it. JurisNexo must measure discovered, acquired, canonicalized, searchable and known-missing material before making coverage claims.
 
-These are explicitly post-MVP unless required by the first validated use case.
+The MVP therefore optimizes for a complete vertical research loop on real questions while allowing cheap corpus breadth to grow in parallel.
 
 ## 7. What the MVP is not
 
