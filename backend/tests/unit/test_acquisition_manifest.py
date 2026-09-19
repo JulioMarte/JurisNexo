@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
@@ -56,18 +57,19 @@ class MemoryObjectStore:
         self,
         *,
         key: str,
-        content: bytes,
+        content: bytes | BinaryIO,
         content_type: str,
         metadata: dict[str, str],
     ) -> None:
+        payload = content if isinstance(content, bytes) else content.read()
         if content_type == "application/pdf":
-            assert metadata["sha256"] == sha256_hex(content)
+            assert metadata["sha256"] == sha256_hex(payload)
         elif content_type == "application/json":
-            assert metadata["payload_sha256"] == hashlib.sha256(content).hexdigest()
-            json.loads(content)
+            assert metadata["payload_sha256"] == hashlib.sha256(payload).hexdigest()
+            json.loads(payload)
         else:
             raise AssertionError(f"unexpected content type: {content_type}")
-        self.objects[key] = content
+        self.objects[key] = payload
 
 
 @dataclass(slots=True)
@@ -288,6 +290,11 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
     assert payload["partition_count"] == 4
     assert payload["storage_bucket"] == "official-corpus"
     stored_item = next(item for item in payload["items"] if item["status"] == "uploaded")
+    existing_item = next(
+        item for item in payload["items"] if item["status"] == "already_present"
+    )
+    assert stored_item["verification_method"] == "downloaded_and_hashed"
+    assert existing_item["verification_method"] == "prior_manifest_and_head"
     assert (
         f"s3://{payload['storage_bucket']}/{stored_item['object_key']}"
         == f"s3://official-corpus/{stored_item['object_key']}"
@@ -430,4 +437,19 @@ def test_run_manifest_rejects_invalid_partition_coordinates() -> None:
             ingestion_id="bad-partition",
             partition_index=4,
             partition_count=4,
+        )
+
+
+def test_stored_run_items_require_verification_method() -> None:
+    from jurisnexo.acquisition.manifest import AcquisitionRunItem
+
+    with pytest.raises(ValueError, match="verification_method"):
+        AcquisitionRunItem(
+            collection="decisions",
+            source_identifier="x",
+            discovery_url="https://official.example/list",
+            document_url="https://official.example/x.pdf",
+            status="already_present",
+            sha256="a" * 64,
+            object_key="jurisdictions/do/scj/decisions/aa/" + ("a" * 64) + ".pdf",
         )
