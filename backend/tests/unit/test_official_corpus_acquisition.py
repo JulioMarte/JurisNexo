@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import zipfile
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
-import zipfile
 
 import pytest
 
