@@ -78,13 +78,14 @@ jobs:
       - name: Merge, certify and deduplicate official source rows
         env:
           SCJ_YEAR_INVENTORY_INPUT: ${{ runner.temp }}/scj-year-shards
-          SCJ_YEAR_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-certified
+          SCJ_YEAR_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-certified-build
         run: |
-          set -o pipefail
-          python backend/scripts/merge_scj_1994_inventory.py 2>&1 | tee scj-1994-certify.log
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/scj-certified-build"
+          python backend/scripts/merge_scj_1994_inventory.py 2>&1 | tee "${RUNNER_TEMP}/scj-certified-build/scj-1994-certify.log"
       - name: Assert source reality before mutation
         env:
-          CERTIFIED: ${{ runner.temp }}/scj-certified
+          CERTIFIED: ${{ runner.temp }}/scj-certified-build
         run: |
           python - <<'PY'
           import json, os
@@ -97,18 +98,52 @@ jobs:
           assert summary['acquisition_year_counts'].get('2026',0)==0, summary['acquisition_year_counts']
           print(json.dumps(summary, indent=2, sort_keys=True))
           PY
+      - name: Validate packaged artifact before upload
+        env:
+          SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified-build
+        run: python backend/scripts/validate_scj_1994_certified_artifact.py
       - uses: actions/upload-artifact@v4
         with:
           name: scj-1994-certified-inventory
           retention-days: 30
           if-no-files-found: error
-          path: |
-            ${{ runner.temp }}/scj-certified/**
-            scj-1994-certify.log
+          path: ${{ runner.temp }}/scj-certified-build/
+
+  artifact-preflight:
+    name: Verify certified artifact handoff
+    needs: certify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v5
+        with:
+          name: scj-1994-certified-inventory
+          path: ${{ runner.temp }}/scj-certified
+      - name: Log restored artifact tree
+        run: |
+          echo "Restored certified artifact tree:"
+          find "${RUNNER_TEMP}/scj-certified" -maxdepth 2 -type f -printf '%P\t%s bytes\n' | sort
+      - name: Validate restored artifact contract
+        env:
+          SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
+        run: |
+          set -o pipefail
+          python backend/scripts/validate_scj_1994_certified_artifact.py 2>&1 | tee scj-1994-artifact-preflight.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-1994-artifact-preflight
+          retention-days: 30
+          if-no-files-found: warn
+          path: scj-1994-artifact-preflight.log
 
   storage-preflight:
     name: Verify production bucket before mutation
-    needs: certify
+    needs: [certify, artifact-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -148,7 +183,7 @@ jobs:
 
   backfill:
     name: Backfill decisions shard ${{ matrix.shard }}/64
-    needs: [certify, storage-preflight]
+    needs: [certify, artifact-preflight, storage-preflight]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
@@ -176,6 +211,10 @@ jobs:
         with:
           name: scj-1994-certified-inventory
           path: ${{ runner.temp }}/scj-certified
+      - name: Validate certified artifact before shard work
+        env:
+          SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
+        run: python backend/scripts/validate_scj_1994_certified_artifact.py
       - name: Acquire assigned immutable PDF artifacts
         env:
           SCJ_1994_INVENTORY_FILE: ${{ runner.temp }}/scj-certified/scj-1994-acquisition.inventory.jsonl
@@ -218,6 +257,10 @@ jobs:
         with:
           name: scj-1994-certified-inventory
           path: ${{ runner.temp }}/scj-certified
+      - name: Validate certified artifact before final reconciliation
+        env:
+          SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
+        run: python backend/scripts/validate_scj_1994_certified_artifact.py
       - name: Reconcile inventory, manifests and live S3 listing
         env:
           SCJ_1994_INVENTORY_FILE: ${{ runner.temp }}/scj-certified/scj-1994-acquisition.inventory.jsonl
