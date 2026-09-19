@@ -13,7 +13,11 @@ from jurisnexo.acquisition.http_fetcher import (
     SCJ_DECISION_DOCUMENT_HOSTS,
 )
 from jurisnexo.acquisition.manifest import AcquisitionRunManifestBuilder
-from jurisnexo.acquisition.official_corpus import OfficialDocumentCandidate, acquire_candidates
+from jurisnexo.acquisition.official_corpus import (
+    OfficialDocumentCandidate,
+    UnsupportedOfficialDocumentResponse,
+    acquire_candidates,
+)
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 
 REQUIRED_ENV = (
@@ -216,6 +220,7 @@ def main() -> None:
     )
 
     completed: list[dict[str, object]] = []
+    unavailable: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
     for ordinal, candidate in enumerate(candidates, start=1):
         try:
@@ -242,6 +247,30 @@ def main() -> None:
                 ordinal=ordinal,
                 total=len(candidates),
                 **record,
+            )
+        except UnsupportedOfficialDocumentResponse as exc:
+            manifest.record_unavailable(
+                collection=candidate.collection,
+                source_identifier=candidate.source_identifier,
+                discovery_url=candidate.discovery_url,
+                document_url=candidate.document_url,
+                error_type=type(exc).__name__,
+                reason=str(exc),
+            )
+            unavailable_record = {
+                "source_identifier": candidate.source_identifier,
+                "document_url": candidate.document_url,
+                "reason": exc.reason,
+                "error_type": type(exc).__name__,
+            }
+            unavailable.append(unavailable_record)
+            _event(
+                "scj.1994_backfill.item_unavailable",
+                ordinal=ordinal,
+                total=len(candidates),
+                source_identifier=candidate.source_identifier,
+                document_url=candidate.document_url,
+                reason=exc.reason,
             )
         except Exception as exc:
             manifest.record_failure(
@@ -279,6 +308,7 @@ def main() -> None:
         "shard_count": shard_count,
         "assigned_count": len(candidates),
         "completed_count": len(completed),
+        "unavailable_count": len(unavailable),
         "failed_count": len(failures),
         "uploaded_count": stored_manifest.manifest.uploaded_count,
         "already_present_count": stored_manifest.manifest.already_present_count,
@@ -290,6 +320,7 @@ def main() -> None:
     }
     _write_json(output_dir / "summary.json", summary)
     _write_json(output_dir / "failures.json", failures)
+    _write_json(output_dir / "unavailable.json", unavailable)
     _write_json(output_dir / "completed.json", completed)
     _event("scj.1994_backfill.completed", **summary)
 
