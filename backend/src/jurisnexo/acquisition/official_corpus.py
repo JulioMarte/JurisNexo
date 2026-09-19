@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import BinaryIO, Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 from urllib.parse import urljoin, urlparse
 
 from jurisnexo.observability import acquisition_span, span_event
@@ -63,7 +63,19 @@ class ObjectStore(Protocol):
         self,
         *,
         key: str,
-        content: bytes | BinaryIO,
+        content: bytes,
+        content_type: str,
+        metadata: dict[str, str],
+    ) -> None: ...
+
+
+@runtime_checkable
+class FileObjectStore(Protocol):
+    def put_file(
+        self,
+        *,
+        key: str,
+        path: Path,
         content_type: str,
         metadata: dict[str, str],
     ) -> None: ...
@@ -342,26 +354,32 @@ def acquire_candidates(
                 with acquisition_span("acquisition.object_store.head", object_key=key):
                     already_present = object_store.exists(key)
                 if not already_present:
-                    with (
-                        acquisition_span(
-                            "acquisition.object_store.put",
-                            object_key=key,
-                            byte_count=byte_count,
-                        ),
-                        document_path.open("rb") as content,
+                    metadata = {
+                        "source": candidate.source,
+                        "collection": candidate.collection,
+                        "source_identifier": candidate.source_identifier,
+                        "source_url": candidate.document_url,
+                        "sha256": digest,
+                    }
+                    with acquisition_span(
+                        "acquisition.object_store.put",
+                        object_key=key,
+                        byte_count=byte_count,
                     ):
-                        object_store.put(
-                            key=key,
-                            content=content,
-                            content_type="application/pdf",
-                            metadata={
-                                "source": candidate.source,
-                                "collection": candidate.collection,
-                                "source_identifier": candidate.source_identifier,
-                                "source_url": candidate.document_url,
-                                "sha256": digest,
-                            },
-                        )
+                        if isinstance(object_store, FileObjectStore):
+                            object_store.put_file(
+                                key=key,
+                                path=document_path,
+                                content_type="application/pdf",
+                                metadata=metadata,
+                            )
+                        else:
+                            object_store.put(
+                                key=key,
+                                content=document_path.read_bytes(),
+                                content_type="application/pdf",
+                                metadata=metadata,
+                            )
 
                 artifact = StoredOfficialArtifact(
                     candidate=candidate,
