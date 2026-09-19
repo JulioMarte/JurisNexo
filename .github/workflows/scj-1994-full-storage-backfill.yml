@@ -241,7 +241,56 @@ jobs:
             --name "scj-1994-backfill-${{ matrix.shard }}" \
             --dir "${RESUME_DIR}"
           checkpoint="$(find "${RESUME_DIR}" -name recovery-checkpoint.jsonl -type f -print -quit)"
-          test -n "${checkpoint}"
+          if [ -z "${checkpoint}" ]; then
+            checkpoint="${RESUME_DIR}/recovery-checkpoint.jsonl"
+            python - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          root = Path(os.environ["RESUME_DIR"])
+          output = root / "recovery-checkpoint.jsonl"
+          recorded_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+          records = []
+          for path in root.rglob("completed.json"):
+              for item in json.loads(path.read_text(encoding="utf-8")):
+                  records.append({
+                      "source_identifier": item["source_identifier"],
+                      "document_url": item["document_url"],
+                      "status": "stored",
+                      "recorded_at": recorded_at,
+                      "sha256": item["sha256"],
+                      "object_key": item["object_key"],
+                      "byte_count": item["byte_count"],
+                      "content_type": item.get("content_type") or "application/pdf",
+                      "file_extension": item.get("file_extension") or "pdf",
+                      "error_type": None,
+                      "reason": None,
+                  })
+          for path in root.rglob("unavailable.json"):
+              for item in json.loads(path.read_text(encoding="utf-8")):
+                  records.append({
+                      "source_identifier": item["source_identifier"],
+                      "document_url": item["document_url"],
+                      "status": "unavailable",
+                      "recorded_at": recorded_at,
+                      "sha256": None,
+                      "object_key": None,
+                      "byte_count": None,
+                      "content_type": None,
+                      "file_extension": None,
+                      "error_type": item.get("error_type"),
+                      "reason": item.get("reason"),
+                  })
+          with output.open("w", encoding="utf-8") as stream:
+              for record in records:
+                  stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+          if not records:
+              raise SystemExit("prior shard artifact contains no reusable checkpoint evidence")
+          print(f"synthesized {len(records)} recovery records from legacy shard evidence")
+          PY
+          fi
           echo "SCJ_BACKFILL_RESUME_CHECKPOINT=${checkpoint}" >> "${GITHUB_ENV}"
       - name: Acquire assigned immutable source artifacts
         env:
