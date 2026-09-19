@@ -248,6 +248,15 @@ class BoundedHttpFetcher:
         raise RuntimeError("unreachable acquisition retry state")
 
 
+SCJ_DECISION_DOCUMENT_HOSTS = frozenset(
+    {
+        "transparencia.poderjudicial.gob.do",
+        "consultaglobal.blob.core.windows.net",
+        "sjdeposito.blob.core.windows.net",
+    }
+)
+
+
 OFFICIAL_SOURCE_HOSTS = frozenset(
     {
         "www.tribunalconstitucional.gob.do",
@@ -255,6 +264,7 @@ OFFICIAL_SOURCE_HOSTS = frozenset(
         "transparencia.poderjudicial.gob.do",
         "consultasentenciascj.poderjudicial.gob.do",
         "consultaglobal.blob.core.windows.net",
+        "sjdeposito.blob.core.windows.net",
         "poderjudicial.gob.do",
         "www.poderjudicial.gob.do",
     }
