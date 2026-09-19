@@ -30,7 +30,7 @@ The documents are intentionally ordered from product intent to implementation, o
 22. [`21-google-gemini-model-selection-and-ci.md`](./21-google-gemini-model-selection-and-ci.md) — current Gemini model/cost evaluation, provider choice, bounded paid-model CI policy, GitHub Environment secret contract, and model-selection rules.
 23. [`22-document-environment-v1-and-agentic-baseline.md`](./22-document-environment-v1-and-agentic-baseline.md) — first live Gemini baseline, read-only Document Environment v1, bounded agentic tool loop, runtime correction, and one-shot-vs-agentic benchmark contract.
 
-## Current MVP definition
+## Research library\n\n- [`research/README.md`](./research/README.md) — repository-owned bibliography and architecture mapping for RLM, DocETL, LOTUS, KELLER, LegalSearchLM, legal-element retrieval, CaseGNN, CaseLink, RAPTOR, and LegalGraphRAG. The accompanying manifest/downloader keeps the scientific references reproducible without making live-paper downloads part of routine CI.\n\n## Current MVP definition
 
 JurisNexo is a multi-tenant experimental legal research product initially validated under QuisqueyaTech.
 
