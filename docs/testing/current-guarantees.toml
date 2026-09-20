@@ -459,8 +459,17 @@ risk = ["provenance", "legal_quality", "architecture", "operations"]
 
 [[guarantees]]
 id = "INV-ACQUISITION-RECOVERY-001"
-statement = "Large official-corpus acquisition shards persist incremental recovery evidence outside the primary object store, distinguish global infrastructure interruptions from document-level outcomes, and may resume stored observations only after verifying the referenced content-addressed object still matches recorded integrity metadata."
+statement = "Large official-corpus acquisition shards persist incremental recovery evidence outside ephemeral runner state and separately from the final immutable run-manifest namespace, distinguish global infrastructure interruptions from document-level outcomes, and may resume stored observations only after verifying the referenced content-addressed object still matches recorded integrity metadata."
 severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "contract", "integration"]
 risk = ["provenance", "operations"]
+
+
+[[guarantees]]
+id = "INV-ACQUISITION-RECONCILIATION-001"
+statement = "Certified mass-acquisition manifests are bound to the exact certified inventory snapshot that drove the run; reconciliation revalidates that durable snapshot, requires complete manifest partition coverage, verifies every referenced object exists, and fails closed when legal-document objects under the reconciled source prefix are not referenced by durable acquisition manifests."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "fitness"]
+risk = ["provenance", "operations", "architecture"]
