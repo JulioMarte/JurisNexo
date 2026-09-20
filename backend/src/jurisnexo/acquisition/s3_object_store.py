@@ -145,6 +145,12 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
         read_timeout=settings.read_timeout_seconds,
         max_pool_connections=settings.max_pool_connections,
         retries={"mode": "standard", "max_attempts": settings.max_attempts},
+        # S3-compatible providers such as Backblaze B2 do not require the
+        # optional SDK checksum negotiation that newer botocore versions
+        # enable for PutObject. Keeping checksums to operations that require
+        # them avoids aws-chunked/trailer handshakes while JurisNexo still
+        # verifies corpus bytes with its own SHA-256 provenance contract.
+        request_checksum_calculation="when_required",
         s3={"addressing_style": "path" if settings.force_path_style else "virtual"},
     )
     return boto3.client("s3", config=sdk_config, **boto3_client_kwargs(settings))
