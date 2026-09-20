@@ -1,0 +1,61 @@
+name: SCJ verify existing production snapshot
+
+on:
+  push:
+    branches:
+      - ops/scj-verify-run
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: '1'
+      EXPECTED_BUCKET_SHA256: '02ab33707c72f445f70f400f18e089c00328ff19bbd5c306a93eeee1ffe2101f'
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: 'true'
+      ACQUISITION_BATCH_ID: github-35518045841-2-scj-sentencias-1994-actualidad
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install backend runtime
+        run: python -m pip install -e ./backend
+      - name: Download certified inventory from completed acquisition run
+        uses: actions/download-artifact@v5
+        with:
+          name: scj-1994-certified-inventory
+          path: ${{ runner.temp }}/scj-certified
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: '35518045841'
+      - name: Validate certified inventory artifact
+        env:
+          SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
+        run: python backend/scripts/validate_scj_1994_certified_artifact.py
+      - name: Reconcile existing inventory, manifests and live S3
+        env:
+          SCJ_1994_INVENTORY_FILE: ${{ runner.temp }}/scj-certified/scj-1994-acquisition.inventory.jsonl
+          SCJ_CERTIFIED_SUMMARY_FILE: ${{ runner.temp }}/scj-certified/summary.json
+          SCJ_VERIFY_OUTPUT: ${{ runner.temp }}/scj-verify
+        run: |
+          set -o pipefail
+          python backend/scripts/verify_scj_1994_storage_backfill.py 2>&1 | tee scj-verify-existing.log
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-existing-snapshot-verification
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/scj-verify/**
+            scj-verify-existing.log
