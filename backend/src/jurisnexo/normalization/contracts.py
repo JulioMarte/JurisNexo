@@ -39,7 +39,7 @@ class TextQualityJudge(Protocol):
 
 
 class VisualTextVerifier(Protocol):
-    def verify(self, image: bytes, candidate_text: str, *, context: dict[str, Any]) -> dict[str, Any]: ...
+    def verify(\n        self, image: bytes, candidate_text: str, *, context: dict[str, Any]\n    ) -> dict[str, Any]: ...
 
 
 class NormalizedRepresentationResolver(Protocol):
