@@ -1,6 +1,6 @@
 """Add derived-artifact provenance and normalization execution ledgers.
 
-Revision ID: 0048_document_normalization_artifacts
+Revision ID: 0048_doc_normalization
 Revises: 0047_treatment_legal_issues
 Create Date: 2026-09-19
 
@@ -11,7 +11,7 @@ derived artifacts whose lineage is explicit and reproducible.
 
 from alembic import op
 
-revision = "0048_document_normalization_artifacts"
+revision = "0048_doc_normalization"
 down_revision = "0047_treatment_legal_issues"
 branch_labels = None
 depends_on = None
