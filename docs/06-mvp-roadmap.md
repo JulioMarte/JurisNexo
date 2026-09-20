@@ -2,9 +2,19 @@
 
 ## 1. Roadmap principle
 
-The roadmap should optimize for evidence of product value, not architectural completeness.
+The roadmap should optimize for evidence of product value, not architectural completeness or raw document count.
 
 The MVP should reach a point where real lawyers can submit real research questions, receive a verifiable report, and tell us whether it materially reduced their work.
+
+Corpus growth follows the canonical two-speed strategy in `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`:
+
+```text
+broad official-source discoverability/searchability
+        +
+selective evidence-backed semantic depth
+```
+
+These tracks run in parallel. A source document does not need expensive legal-semantic normalization before it can contribute to coverage measurement, canonical resolution, retrieval, citation traversal or adverse-authority search. Conversely, broad acquisition must not be mistaken for trustworthy deep legal understanding.
 
 The selected agent runtime is infrastructure. Roadmap milestones are defined by domain capabilities and measurable quality, not by framework adoption alone.
 
@@ -24,19 +34,20 @@ Deliverables:
 - explicit open decisions;
 - technology stack and deployment contract;
 - CI/testing contract;
-- pilot-corpus contract.
+- pilot-corpus contract;
+- two-speed corpus and jurisprudential-intelligence strategy.
 
 Exit condition:
 
-The team can explain what the MVP is, what it is not, how it will be built, what source material will be used first, and how success will be measured without relying on unwritten assumptions.
+The team can explain what the MVP is, what it is not, how it will be built, what source material will be used first, how broad and deep corpus work differ, and how success will be measured without relying on unwritten assumptions.
 
-## 3. Phase 1 — corpus ingestion proof
+## 3. Phase 1 — trusted ingestion proof and source inventory
 
-Goal: prove that real Supreme Court source material can be turned into reliable searchable judicial records while preserving page-level provenance.
+Goal: prove that real Supreme Court source material can be turned into reliable searchable judicial records while preserving page-level provenance, while also establishing a reproducible inventory of the official source universe.
 
-### Initial source
+### Canonical deep-ingestion fixture
 
-The first canonical ingestion fixture is the existing Supabase Storage artifact:
+The first canonical ingestion fixture remains:
 
 ```text
 Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
@@ -44,9 +55,9 @@ Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
 
 This is a compilation and must not be modeled as one judicial case merely because it is one PDF.
 
-The primary Phase 1 risk is therefore not bulk downloading. It is correctly transforming a compilation into individually identifiable, page-traceable decisions despite messy OCR/layout and uncertain document boundaries.
+The primary deep-ingestion risk is correctly transforming a compilation into individually identifiable, page-traceable decisions despite messy OCR/layout and uncertain document boundaries.
 
-The default Phase 1 pipeline is:
+The default deep-ingestion pipeline is:
 
 ```text
 source artifact
@@ -58,11 +69,33 @@ source artifact
     -> Corpus API commit
 ```
 
-OpenAI Agents SDK is the default runtime for the agent stages. JurisNexo application/worker code owns the mandatory stage order, state transitions, provenance, evidence, and commit gates.
+OpenAI Agents SDK is the default runtime for the agent stages. JurisNexo application/worker code owns mandatory stage order, state transitions, provenance, evidence, and commit gates.
+
+### Parallel breadth track
+
+Phase 1 must not interpret "one artifact correct" as "discover only one artifact." In parallel, JurisNexo should inventory approved official SCJ source surfaces and record what is actually discoverable and downloadable.
+
+Breadth work may register source documents/artifacts, checksums, source observations, reliable metadata, page-preserved text/OCR and cheap search representations without requiring deep issue/holding/treatment extraction.
+
+The coverage manifest should distinguish at least:
+
+```text
+source claims
+discovered records
+downloadable artifacts
+acquired artifacts
+segmented decisions
+canonical decisions
+searchable decisions
+deeply normalized decisions
+known gaps
+last reconciliation
+```
 
 Deliverables:
 
-- artifact registration from existing Storage;
+- official-source inventory and reconciliation baseline;
+- artifact registration from existing Storage and official sources;
 - cryptographic content hashing;
 - immutable artifact provenance;
 - Document Workspace with page/text/image capabilities;
@@ -87,42 +120,49 @@ Manual validation must inspect a representative sample of segmented and extracte
 
 Exit condition:
 
-The selected compilation can be re-ingested without duplicate logical records; individual decisions are separated with acceptable benchmarked accuracy; extracted content is traceable to original source pages; mandatory structure/extraction audits cannot be bypassed; uncertain boundaries/identities remain explicit; and duplicate source artifacts do not become duplicate canonical cases.
+The selected compilation can be re-ingested without duplicate logical records; individual decisions are separated with acceptable benchmarked accuracy; extracted content is traceable to original source pages; mandatory structure/extraction audits cannot be bypassed; uncertain boundaries/identities remain explicit; duplicate source artifacts do not become duplicate canonical cases; and official-source coverage can be measured without claiming completeness that has not been observed.
 
-Volume is not the Phase 1 exit condition.
+Neither raw volume nor complete deep normalization of the discovered corpus is a Phase 1 exit condition.
 
-## 4. Phase 2 — searchable pilot corpus
+## 4. Phase 2 — searchable corpus and high-signal intelligence seed
 
-Goal: establish a strong, measurable retrieval baseline over the verified corpus before building a complex research-agent workflow.
+Goal: establish a strong, measurable retrieval baseline while expanding cheap trustworthy breadth and concentrating expensive semantic work on high-signal decisions.
 
 Agent-assisted ingestion is already present in Phase 1. “Before complex agents” here means before broad multi-agent legal research orchestration, not before any LLM is used.
 
-Initial corpus should remain deliberately constrained. After the early-2025 compilation is validated, expand first to recent 2024 and 2023 SCJ compilations rather than immediately processing the entire historical archive.
+### Depth track
 
-Recommended early expansion:
+Deep normalization starts with the official SCJ `principales-sentencias` collection, using the validated early-2025 artifact as the first fixture and then expanding across the collection. Membership in Principales is an editorial priority signal, not a statement of precedential authority.
 
-```text
-2025 Jan-Apr
-2024 Jan-Apr
-2024 May-Aug
-2024 Sep-Dec
-2023 Jan-Apr
-2023 May-Aug
-2023 Sep-Dec
-```
+Recent 2024/2023 compilations remain useful early regression and retrieval fixtures, but they are not an artificial ceiling on corpus acquisition.
+
+### Breadth track
+
+In parallel, broader SCJ material should become cheaply discoverable/searchable as acquisition reliability permits. Its purpose includes:
+
+- canonical identity resolution;
+- exact/reference search;
+- adverse-authority discovery;
+- backward and forward citation traversal;
+- coverage measurement;
+- candidate promotion into deep normalization.
+
+A broad record may therefore be useful before issues, holdings, factual propositions or contextual treatment have been deeply normalized.
 
 Deliverables:
 
 - exact decision/reference search;
 - metadata filters;
 - PostgreSQL full-text lexical search;
-- semantic retrieval;
+- semantic retrieval where text quality justifies it;
 - RRF fusion baseline;
 - reranker experiment;
 - stable Search/Corpus API;
 - corpus browser for internal testing;
 - versioned retrieval profiles;
-- initial 10-20 question manually reviewed legal benchmark.
+- initial 10-20 question manually reviewed legal benchmark;
+- coverage-manifest reporting;
+- source/editorial membership signals without intrinsic `is_principal` case truth.
 
 Evaluation:
 
@@ -132,7 +172,8 @@ Evaluation:
 - adverse-authority recall where applicable;
 - evidence-page correctness;
 - search latency;
-- common failure analysis.
+- common failure analysis;
+- discovered/acquired/searchable/deep-normalized coverage counts.
 
 Compare at minimum:
 
@@ -145,27 +186,32 @@ lexical + semantic + RRF + reranker
 
 Exit condition:
 
-Known relevant decisions for the seed benchmark are discoverable with acceptable recall, retrieval regressions can be measured, and the system can prove that retrieved evidence maps back to exact source pages.
+Known relevant decisions for the seed benchmark are discoverable with acceptable recall, retrieval regressions can be measured, retrieved evidence maps back to exact source pages, and broad searchable coverage can grow without forcing deep semantic analysis of every document.
 
-## 5. Phase 3 — citation linking and case reader
+## 5. Phase 3 — citation graph and case reader
 
-Goal: move from search results to evidence-backed case understanding.
+Goal: move from isolated search results toward evidence-backed jurisprudential navigation.
+
+After reliable segmentation and canonical identity, citation extraction/resolution is a high-leverage corpus capability because it drives both research and selective normalization.
 
 Deliverables:
 
-- citation extraction;
-- citation resolution;
+- raw citation preservation with exact provenance;
+- conservative citation resolution;
 - `get_citations`;
 - `get_citing_cases`;
+- backward/forward citation traversal;
+- promotion signals for important cited/citing authorities;
 - within-case search;
 - bounded Case Analyst agent;
 - structured evidence records;
 - exact page provenance;
-- role-aware case structure where benchmarked useful.
+- role-aware case structure where benchmarked useful;
+- selective treatment classification only where valuable and adequately evidenced.
 
 Exit condition:
 
-Given a known case, JurisNexo can extract a relevant holding/reasoning segment and show the user where it appears in the original source.
+Given a known case, JurisNexo can extract a relevant holding/reasoning segment, show where it appears in the original source, traverse important resolved citations, and preserve ambiguity instead of inventing citation or treatment certainty.
 
 ## 6. Phase 4 — research agent V0
 
@@ -197,11 +243,12 @@ Required behavior:
 - follow important citations;
 - check later treatment when possible;
 - build structured evidence;
+- distinguish searched corpus from unknown/unavailable material;
 - stop against the completion contract.
 
 Exit condition:
 
-The system can complete end-to-end research on a narrow class of questions and produce reproducible evidence records.
+The system can complete end-to-end research on a narrow class of questions and produce reproducible evidence records without converting corpus gaps into false claims that contrary authority does not exist.
 
 ## 7. Phase 5 — evidence auditor and report
 
@@ -215,13 +262,14 @@ Deliverables:
 - adverse authority section;
 - material distinctions section;
 - limitations/confidence section;
+- searched-corpus/coverage disclosure;
 - source links/page references;
 - HTML report;
 - optional PDF export after HTML is stable.
 
 Exit condition:
 
-A legal reviewer can move from every material report claim to its source with minimal friction.
+A legal reviewer can move from every material report claim to its source with minimal friction and can understand material corpus/freshness limitations of the research run.
 
 ## 8. Phase 6 — multi-tenant QuisqueyaTech demo
 
@@ -270,7 +318,10 @@ Measure:
 - amount of additional research required;
 - report usefulness;
 - repeated usage;
-- cost/job.
+- cost/job;
+- corpus failures exposed by real research.
+
+High-value failures should become durable regression cases and may promote source material for deeper normalization.
 
 Exit condition:
 
@@ -374,21 +425,24 @@ The selected runtime remains replaceable. Consider alternatives only when benchm
 
 Do not prioritize:
 
-- ingesting every currently available historical PDF merely because it exists;
-- national full-corpus perfection;
+- deeply normalizing every acquired historical decision merely because it exists;
+- treating document count as a product-quality metric;
+- claiming national or institutional completeness before it is measured;
 - autonomous legal drafting;
 - outcome prediction;
 - CRM/practice management;
-- every Dominican court at once;
+- deep semantic integration of every Dominican court at once;
 - custom model training without labels;
 - elaborate graph infrastructure without proven need;
 - mobile apps;
 - international expansion;
 - building another general-purpose agent harness inside JurisNexo.
 
+Broad, cheap official-source inventory/acquisition is not a non-goal: it is useful when it improves provenance, coverage measurement, canonical resolution, retrieval and citation traversal without forcing expensive semantic enrichment.
+
 ## 14. First build slice
 
-The smallest credible vertical slice is now:
+The smallest credible deep vertical slice remains:
 
 ```text
 SCJ Jan-Apr 2025 compilation
@@ -409,9 +463,9 @@ SCJ Jan-Apr 2025 compilation
         -> generate one auditable report
 ```
 
-The February 1980 historical bulletin remains an important adversarial/regression fixture for messy structure and discrepancy handling, but it must not become the architecture or the only ingestion benchmark.
+In parallel, source discovery/reconciliation may cover substantially more material. That breadth track must not delay proving this deep slice, and the deep slice must not artificially prevent cheap breadth work.
 
-This slice should be completed before aggressively expanding corpus volume or product features.
+The February 1980 historical bulletin remains an important adversarial/regression fixture for messy structure and discrepancy handling, but it must not become the architecture or the only ingestion benchmark.
 
 ## 15. Definition of MVP done
 
@@ -427,6 +481,7 @@ It is done when:
 - supporting and adverse research occur;
 - important report claims are verified;
 - sources are auditable by page/evidence ID;
+- searched-corpus boundaries and known gaps can be disclosed;
 - quotas/costs are controlled;
 - private data is tenant isolated;
 - benchmark and product metrics are captured;
@@ -434,15 +489,29 @@ It is done when:
 
 ## 16. Corpus expansion principle
 
-The existing Supreme Court collection is a head start, not a reason to optimize prematurely for volume.
+Do not confuse **validation order** with **corpus acquisition order**.
 
-The correct order is:
+For deep semantic processing, the order remains:
 
 ```text
 one artifact correct
-    -> one recent corpus measurable
+    -> one high-signal set measurable
     -> one research workflow trustworthy
-    -> then expand coverage
+    -> selectively deepen what evidence says matters
 ```
 
-If one compilation cannot be transformed reliably into canonical, page-traceable legal evidence, processing many compilations only creates a larger unreliable corpus.
+For cheap breadth, the parallel order is:
+
+```text
+official-source discovery
+    -> immutable acquisition/provenance
+    -> measurable coverage
+    -> page-preserved searchable text
+    -> citation/canonical-resolution support
+```
+
+The governing rule is therefore:
+
+> validate depth narrowly, expand trustworthy breadth cheaply, and spend expensive semantic work selectively.
+
+If one compilation cannot be transformed reliably into canonical, page-traceable legal evidence, processing many compilations deeply only creates a larger unreliable intelligence corpus. That does not justify ignoring inexpensive official-source discovery, acquisition, provenance and searchability that can improve coverage and future research.
