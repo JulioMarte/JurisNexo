@@ -91,4 +91,9 @@ Key documents for the current agent architecture:
 - `docs/18-migration-plan-custom-harness-to-agents-sdk.md` — comparative migration and retirement criteria;
 - `docs/19-documentation-crosswalk.md` — precedence rules between existing architecture documents and the new runtime decision;
 - `docs/20-agents-sdk-provider-and-guardrail-compatibility.md` — provider capability, guardrail, tracing, and SDK-upgrade constraints;
-- `docs/21-implementation-governance-and-agent-execution.md` — workstream sequencing, parity requirements, and implementation definition-of-done rules.\n\nKey documents for post-acquisition normalization:\n\n- `docs/39-document-normalization-and-derived-artifacts.md` — source/derived-artifact provenance and normalization persistence contract;\n- `docs/40-document-normalization-pipeline-v2-handoff.md` — detailed implementation sequence for Principales-first Docling/OCR normalization, JEV shadow quality routing, VLM verification, reconciliation, and promotion gates.
+- `docs/21-implementation-governance-and-agent-execution.md` — workstream sequencing, parity requirements, and implementation definition-of-done rules.
+
+Key documents for post-acquisition normalization:
+
+- `docs/39-document-normalization-and-derived-artifacts.md` — source/derived-artifact provenance and normalization persistence contract;
+- `docs/40-document-normalization-pipeline-v2-handoff.md` — detailed implementation sequence for Principales-first Docling/OCR normalization, JEV shadow quality routing, VLM verification, reconciliation, and promotion gates.
