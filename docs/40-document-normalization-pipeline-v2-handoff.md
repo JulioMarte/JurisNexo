@@ -2,7 +2,9 @@
 
 ## Status
 
-**Implementation handoff / current accepted design.**
+**HISTORICAL / PARTIALLY SUPERSEDED IMPLEMENTATION HANDOFF.**
+
+`41-universal-legal-document-normalization-control-plane-v3-handoff.md` is now the current implementation handoff. This V2 document remains authoritative for its detailed quality/provenance rationale where V3 explicitly carries it forward, but its parser-ownership and implementation-sequencing assumptions are superseded by V3.
 
 This document converts the accepted document-normalization plan into an executable
 engineering sequence. It is intentionally more operational than
