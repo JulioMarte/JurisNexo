@@ -413,3 +413,8 @@ evidence = ["invariant", "integration"]
 guarantee = "INV-NORMALIZATION-RUN-REPRODUCIBILITY-001"
 path = "backend/tests/integration/test_document_normalization_artifacts.py"
 evidence = ["invariant", "integration"]
+
+[[gaps]]
+guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+missing_evidence = ["fitness", "contract", "integration"]
+reason = "V3 documents the source-agnostic normalization control-plane boundary, but the repository does not yet implement or prove the Docling/Tika engine adapters, generic normalization contract suite, or a second-source regression demonstrating that SCJ-specific logic has not leaked into the core."
