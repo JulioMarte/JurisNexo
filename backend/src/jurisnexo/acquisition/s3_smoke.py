@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 from uuid import uuid4
 
+from jurisnexo.acquisition.recovery import classify_infrastructure_error
 from jurisnexo.acquisition.s3_object_store import (
     S3RuntimeSettings,
     create_boto3_s3_client,
@@ -15,6 +17,8 @@ from jurisnexo.acquisition.s3_object_store import (
 SMOKE_PREFIX = "_system/smoke-tests"
 _SMOKE_PAYLOAD = b"jurisnexo-s3-smoke-v1\n"
 _SMOKE_METADATA = {"jurisnexo-purpose": "storage-smoke"}
+_SMOKE_MAX_ATTEMPTS = int(os.environ.get("JURISNEXO_S3_SMOKE_ATTEMPTS", "5"))
+T = TypeVar("T")
 
 
 class S3SmokeClient(Protocol):
@@ -83,6 +87,38 @@ def _listed_keys(response: object) -> set[str]:
     return keys
 
 
+
+
+
+def _retry_s3_operation(
+    operation: Callable[[], T],
+    *,
+    attempts: int = _SMOKE_MAX_ATTEMPTS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> T:
+    if attempts < 1:
+        raise ValueError("S3 smoke attempts must be at least 1")
+
+    delay = 1.0
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            failure = classify_infrastructure_error(exc)
+            if failure is None or not failure.retryable or attempt >= attempts:
+                raise
+            print(
+                "Retrying S3 smoke operation after retryable "
+                f"{failure.kind} ({attempt}/{attempts}).",
+                file=sys.stderr,
+                flush=True,
+            )
+            sleep(delay)
+            delay = min(delay * 2, 8.0)
+
+    raise AssertionError("unreachable")
+
+
 def run_s3_storage_smoke(
     settings: S3RuntimeSettings | None = None,
     *,
@@ -96,28 +132,37 @@ def run_s3_storage_smoke(
     cleaned_up = False
 
     try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=_SMOKE_PAYLOAD,
-            ContentType="text/plain",
-            Metadata=_SMOKE_METADATA,
+        _retry_s3_operation(
+            lambda: client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=_SMOKE_PAYLOAD,
+                ContentType="text/plain",
+                Metadata=_SMOKE_METADATA,
+            )
         )
 
-        head = _object_mapping(client.head_object(Bucket=bucket, Key=key))
+        head = _object_mapping(
+            _retry_s3_operation(lambda: client.head_object(Bucket=bucket, Key=key))
+        )
         if head is None:
             raise RuntimeError("S3 HeadObject returned an unexpected response shape")
         if head.get("ContentLength") != len(_SMOKE_PAYLOAD):
             raise RuntimeError("S3 HeadObject did not confirm the smoke object byte length")
 
         listed_keys = _listed_keys(
-            client.list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=10)
+            _retry_s3_operation(
+                lambda: client.list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=10)
+            )
         )
         if key not in listed_keys:
             raise RuntimeError("S3 ListObjectsV2 did not return the smoke object")
     finally:
         try:
-            client.delete_object(Bucket=bucket, Key=key)
+            _retry_s3_operation(
+                lambda: client.delete_object(Bucket=bucket, Key=key),
+                attempts=min(_SMOKE_MAX_ATTEMPTS, 2),
+            )
         except Exception:
             cleaned_up = False
         else:
