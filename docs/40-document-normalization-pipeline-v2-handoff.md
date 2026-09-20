@@ -1164,3 +1164,89 @@ This document is intended to prevent any of the accepted plan's core ideas from 
 If implementation discovers that one of these contracts is wrong, incomplete or too expensive,
 change the canonical docs/guarantees deliberately with benchmark/evidence support. Do not silently
 implement a different architecture because a provider/library makes a shortcut convenient.
+
+
+---
+
+## 40. Coverage matrix — no-orphan-idea audit
+
+This matrix exists so future agents can verify that the accepted normalization-plan decisions are
+represented in repository documentation rather than only in prior conversation.
+
+| Accepted idea / risk | Canonical location in this handoff |
+| --- | --- |
+| Principales-first bounded rollout | §§6, 33, 36, 37 |
+| acquisition ends before normalization | §§3–5, 9 |
+| immutable source bytes | §§3, 5, 27 |
+| manifest verification before work | §§5, 9 |
+| source artifact / pipeline / config idempotency | §§5, 9 |
+| CI is not the production corpus backfill | §7 |
+| source profiling before expensive processing | §10 |
+| page-level routing for mixed PDFs | §10 |
+| preserve good native text; do not OCR everything | §11 |
+| Docling as technical normalizer, not legal truth/schema | §§11, 27 |
+| complete Docling payload in object storage, not PostgreSQL | §§11, 26, 27 |
+| Markdown/chunks are convenience derivatives, not canonical | §§11, 35 |
+| RapidOCR/Tesseract chosen by benchmark, not preference | §§8, 11, 34 |
+| OCRmyPDF only if measured benefit exists | §§11, 34 |
+| calibration and holdout must be separate | §8 |
+| out-of-Principales holdout before broad SCJ | §§8, 33, 37 |
+| measure legal-critical errors, not only CER/WER | §§8, 12 |
+| deterministic QA before model judging | §12 |
+| legal-critical token/region risk routing | §12 |
+| Docling confidence is only one signal | §13 |
+| JEV is a textual judge/router, not OCR/vision | §14 |
+| provider-neutral `TextQualityJudge` | §14 |
+| JEV starts in shadow mode | §14 |
+| JEV uses atomic questions | §14 |
+| JEV may remain advisory or be removed | §§14, 34, 37 |
+| JEV PASS never proves visual correctness | §§5, 14, 15 |
+| permanent sentinel sampling of apparent PASS pages | §15 |
+| stratified as well as random quality sampling | §15 |
+| provider-neutral `VisualTextVerifier` | §16 |
+| VLM versus vLLM terminology | §16 |
+| VLM is another observation, not ground truth | §§5, 16 |
+| verify suspect crops/spans instead of rewriting whole pages | §16 |
+| conservative transcription, no semantic/grammar repair | §16 |
+| corrections are assertions/patches, not destructive rewrites | §17 |
+| high-risk disagreement may require human review | §§17, 32 |
+| evidence text and search text are distinct | §18 |
+| no automatic spelling/source normalization | §18 |
+| global character offsets are fragile | §19 |
+| stable element/page/bbox locator needed before deep extraction | §19 |
+| sandbox PDF/Office parsing | §20 |
+| no parser network by default | §20 |
+| external JEV/VLM calls require explicit provider/privacy policy | §21 |
+| public judgments may still contain sensitive personal data | §21 |
+| retryable / permanent / quality failures are distinct | §22 |
+| systemic failure uses circuit breaker | §22 |
+| degraded mode must never be silent | §23 |
+| checkpoint after every item and verified resume | §24 |
+| shard by estimated cost, not document count only | §25 |
+| low initial concurrency; measure memory/runtime first | §25 |
+| do not persist all page images by default | §26 |
+| visual preprocessing is itself a derivative | §26 |
+| derived-artifact DB substrate and explicit lineage | §27 |
+| do not relationalize all Docling internals | §27 |
+| run closure requires DB/S3/plan reconciliation | §28 |
+| normalization manifest is immutable | §28 |
+| per-item and per-run cost attribution | §29 |
+| detect source/model/pipeline drift from distributions | §29 |
+| pin packages/models/config/container inputs | §30 |
+| old/new dual-run before major upgrades | §30 |
+| avoid implicit production model downloads | §30 |
+| quality gate before trusted FTS/chunking/embeddings | §31 |
+| corrected text invalidates downstream derived indexes | §31 |
+| human review is a versioned observation, not destructive edit | §32 |
+| explicit phased implementation order | §33 |
+| thresholds/sampling/provider choices remain benchmark decisions | §34 |
+| rejected shortcuts are explicit | §35 |
+| workflow success is not semantic success | §36 |
+| measurable Definition of Done for Principales | §36 |
+| explicit Principales → broad-SCJ promotion gate | §37 |
+| next-agent startup/read order | §38 |
+| architecture changes must update docs/evidence deliberately | §39 |
+
+If a future implementation introduces a material behavior not covered above, update this handoff or the
+appropriate canonical successor document instead of allowing a second undocumented normalization policy
+to emerge in code.
