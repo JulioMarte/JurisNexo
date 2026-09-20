@@ -2,6 +2,9 @@ name: S3 production storage smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ops/s3-storage-smoke-run
 
 permissions:
   contents: read
