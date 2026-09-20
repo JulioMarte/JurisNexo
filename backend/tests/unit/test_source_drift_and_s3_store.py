@@ -132,21 +132,41 @@ def test_boto3_s3_client_uses_required_only_request_checksums(
         def __init__(self, **kwargs: object) -> None:
             captured_config.update(kwargs)
 
+    unregistered: list[tuple[str, object]] = []
+
+    class FakeEvents:
+        @staticmethod
+        def unregister(event_name: str, handler: object) -> None:
+            unregistered.append((event_name, handler))
+
+    class FakeMeta:
+        events = FakeEvents()
+
+    class FakeClient:
+        meta = FakeMeta()
+
     class FakeBoto3:
         @staticmethod
         def client(service: str, **kwargs: object) -> object:
             assert service == "s3"
             captured_client_kwargs.update(kwargs)
-            return object()
+            return FakeClient()
 
     class FakeBotocoreConfigModule:
         Config = FakeConfig
+
+    class FakeBotocoreHandlersModule:
+        @staticmethod
+        def add_expect_header(*_: object, **__: object) -> None:
+            return None
 
     def fake_import(name: str) -> object:
         if name == "boto3":
             return FakeBoto3
         if name == "botocore.config":
             return FakeBotocoreConfigModule
+        if name == "botocore.handlers":
+            return FakeBotocoreHandlersModule
         raise ModuleNotFoundError(name)
 
     monkeypatch.setattr(
@@ -168,3 +188,9 @@ def test_boto3_s3_client_uses_required_only_request_checksums(
     assert captured_config["signature_version"] == "s3v4"
     assert captured_config["s3"] == {"addressing_style": "path"}
     assert captured_client_kwargs["endpoint_url"] == settings.endpoint_url
+    assert unregistered == [
+        (
+            "before-call.s3.PutObject",
+            FakeBotocoreHandlersModule.add_expect_header,
+        )
+    ]

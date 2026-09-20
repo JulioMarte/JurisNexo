@@ -134,6 +134,7 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
     try:
         boto3 = importlib.import_module("boto3")
         botocore_config = importlib.import_module("botocore.config")
+        botocore_handlers = importlib.import_module("botocore.handlers")
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "boto3 is required by S3-enabled jobs; install the storage runtime dependency"
@@ -153,7 +154,12 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
         request_checksum_calculation="when_required",
         s3={"addressing_style": "path" if settings.force_path_style else "virtual"},
     )
-    return boto3.client("s3", config=sdk_config, **boto3_client_kwargs(settings))
+    client = boto3.client("s3", config=sdk_config, **boto3_client_kwargs(settings))
+    client.meta.events.unregister(
+        "before-call.s3.PutObject",
+        botocore_handlers.add_expect_header,
+    )
+    return client
 
 
 def _string_object_mapping(value: object) -> Mapping[str, object] | None:
