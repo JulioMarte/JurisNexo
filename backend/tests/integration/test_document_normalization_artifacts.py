@@ -152,9 +152,12 @@ def test_derivation_requires_exactly_one_parent(
             suffix="json",
         )
 
-        with pytest.raises(errors.CheckViolation), connection.transaction():
-            with connection.cursor() as cursor:
-                cursor.execute(
+        with (
+            pytest.raises(errors.CheckViolation),
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
                     """
                     INSERT INTO corpus.artifact_derivations (
                         source_artifact_id,
@@ -208,9 +211,12 @@ def test_derived_artifact_lineage_rejects_cycles(
                 (first_id, second_id, "e" * 64),
             )
 
-        with pytest.raises(errors.CheckViolation), connection.transaction():
-            with connection.cursor() as cursor:
-                cursor.execute(
+        with (
+            pytest.raises(errors.CheckViolation),
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
                     """
                     INSERT INTO corpus.artifact_derivations (
                         parent_derived_artifact_id, derived_artifact_id,
