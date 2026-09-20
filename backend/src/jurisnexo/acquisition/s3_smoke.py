@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -171,7 +172,29 @@ def run_s3_storage_smoke(
 
 
 def main() -> int:
-    result = run_s3_storage_smoke(run_id=os.getenv("JURISNEXO_S3_SMOKE_RUN_ID"))
+    try:
+        result = run_s3_storage_smoke(run_id=os.getenv("JURISNEXO_S3_SMOKE_RUN_ID"))
+    except Exception as exc:
+        failure = classify_infrastructure_error(exc)
+        if failure is None:
+            raise
+        print(
+            json.dumps(
+                {
+                    "event": "s3.storage_smoke.interrupted",
+                    "kind": failure.kind,
+                    "retryable": failure.retryable,
+                    "code": failure.code,
+                    "http_status": failure.http_status,
+                    "detail": failure.detail,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        return 75
+
     print("S3 storage smoke passed for the configured bucket.")
     print(f"Smoke namespace: {SMOKE_PREFIX}/")
     if not result.cleaned_up:
