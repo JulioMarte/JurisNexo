@@ -133,3 +133,17 @@ def test_production_backfills_remain_source_scoped_and_acquisition_only() -> Non
         "artifact acquisition with PostgreSQL registration/linking or another court. "
         f"Violations: {offenders}"
     )
+
+
+
+def test_scj_reconciliation_does_not_treat_historical_storage_residue_as_snapshot_failure() -> None:
+    verifier = (
+        REPO_ROOT / "backend" / "scripts" / "verify_scj_1994_storage_backfill.py"
+    ).read_text(encoding="utf-8")
+
+    assert "missing_objects = sorted(object_keys - stored_keys)" in verifier
+    assert "if missing_objects:" in verifier
+    assert "unreferenced_storage_objects = sorted(stored_keys - all_manifest_object_keys)" in verifier
+    assert '"unreferenced_storage_object_count"' in verifier
+    assert "unreferenced-storage-objects.json" in verifier
+    assert "storage contains {len(orphan_objects)} unreferenced SCJ decision objects" not in verifier
