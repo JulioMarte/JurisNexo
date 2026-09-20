@@ -30,6 +30,8 @@ The documents are intentionally ordered from product intent to implementation, o
 22. [`21-google-gemini-model-selection-and-ci.md`](./21-google-gemini-model-selection-and-ci.md) — current Gemini model/cost evaluation, provider choice, bounded paid-model CI policy, GitHub Environment secret contract, and model-selection rules.
 23. [`22-document-environment-v1-and-agentic-baseline.md`](./22-document-environment-v1-and-agentic-baseline.md) — first live Gemini baseline, read-only Document Environment v1, bounded agentic tool loop, runtime correction, and one-shot-vs-agentic benchmark contract.
 
+24. [`38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`](./38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md) — canonical current corpus/product strategy: two-speed breadth/depth, SCJ Principales seed, citation-first expansion, selective treatment, Golden Precedent Set, failure corpus, coverage discipline, and explicit non-goals.
+
 ## Current MVP definition
 
 JurisNexo is a multi-tenant experimental legal research product initially validated under QuisqueyaTech.
