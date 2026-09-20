@@ -159,6 +159,18 @@ Docling output, OCR output and vision-model transcription are not automatically
 canonical legal truth. Existing evidence/audit gates still control promotion to
 legal issues, facts, propositions, treatments and other canonical semantics.
 
+## 8. Implementation handoff
+
+The complete operational V2 plan — benchmark strategy, manifest planner, source profiling,
+OCR selection, deterministic QA, JEV shadow mode, sentinel sampling, visual verification,
+correction assertions, privacy/provider gates, resumability, reconciliation and promotion
+criteria — lives in:
+
+- `40-document-normalization-pipeline-v2-handoff.md`
+
+That handoff is the implementation sequence for this architecture. This document remains the
+stable artifact/provenance contract.
+
 ## 8. Initial implementation scope
 
 Migration `0048_document_normalization_artifacts` establishes only the durable
