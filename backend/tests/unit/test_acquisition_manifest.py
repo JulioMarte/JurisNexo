@@ -221,6 +221,7 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
         batch_id="batch-001",
         partition_index=2,
         partition_count=4,
+        certified_inventory_sha256="c" * 64,
         started_at=started,
     )
     uploaded_candidate = OfficialDocumentCandidate(
@@ -288,12 +289,13 @@ def test_run_manifest_commits_complete_observation_set_as_immutable_json() -> No
     assert hashlib.sha256(store.objects[stored.object_key]).hexdigest() == stored.payload_sha256
 
     payload = json.loads(store.objects[stored.object_key])
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["ingestion_id"] == "run-001"
     assert payload["batch_id"] == "batch-001"
     assert payload["partition_index"] == 2
     assert payload["partition_count"] == 4
     assert payload["storage_bucket"] == "official-corpus"
+    assert payload["certified_inventory_sha256"] == "c" * 64
     stored_item = next(item for item in payload["items"] if item["status"] == "uploaded")
     existing_item = next(
         item for item in payload["items"] if item["status"] == "already_present"
@@ -467,4 +469,14 @@ def test_stored_run_items_require_verification_method() -> None:
             object_key="jurisdictions/do/scj/decisions/aa/" + ("a" * 64) + ".pdf",
             content_type="application/pdf",
             file_extension="pdf",
+        )
+
+
+def test_run_manifest_rejects_invalid_certified_inventory_digest() -> None:
+    with pytest.raises(ValueError, match="certified_inventory_sha256"):
+        AcquisitionRunManifestBuilder(
+            source="scj",
+            scope="decisions",
+            storage_bucket="official-corpus",
+            certified_inventory_sha256="not-a-digest",
         )
