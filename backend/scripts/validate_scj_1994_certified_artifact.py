@@ -13,6 +13,7 @@ from jurisnexo.acquisition.http_fetcher import SCJ_DECISION_DOCUMENT_HOSTS
 REQUIRED_FILES = (
     "scj-1994-acquisition.inventory.jsonl",
     "scj-1994-source.inventory.jsonl",
+    "scj-1994-no-locator.inventory.jsonl",
     "duplicate-document-urls.json",
     "summary.json",
     "scj-1994-certify.log",
@@ -67,6 +68,7 @@ def main() -> None:
 
     acquisition_path = root / "scj-1994-acquisition.inventory.jsonl"
     source_path = root / "scj-1994-source.inventory.jsonl"
+    no_locator_path = root / "scj-1994-no-locator.inventory.jsonl"
     acquisition_size = acquisition_path.stat().st_size
     source_size = source_path.stat().st_size
     if acquisition_size <= 0 or source_size <= 0:
@@ -91,6 +93,33 @@ def main() -> None:
         )
 
     expected_count = int(summary.get("unique_document_url_count") or 0)
+    expected_source_count = int(summary.get("unique_source_record_count") or 0)
+    expected_locator_present = int(summary.get("locator_present_source_record_count") or 0)
+    expected_no_locator = int(summary.get("no_locator_source_record_count") or 0)
+    if expected_source_count != expected_locator_present + expected_no_locator:
+        raise RuntimeError(
+            "source availability accounting mismatch: "
+            f"source={expected_source_count} locator_present={expected_locator_present} "
+            f"no_locator={expected_no_locator}"
+        )
+
+    source_line_count = sum(
+        1 for line in source_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    )
+    no_locator_line_count = sum(
+        1 for line in no_locator_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    )
+    if source_line_count != expected_source_count:
+        raise RuntimeError(
+            "source inventory line count mismatch: "
+            f"lines={source_line_count} expected={expected_source_count}"
+        )
+    if no_locator_line_count != expected_no_locator:
+        raise RuntimeError(
+            "no-locator inventory line count mismatch: "
+            f"lines={no_locator_line_count} expected={expected_no_locator}"
+        )
+
     line_count = 0
     host_counts: Counter[str] = Counter()
     unexpected_hosts: Counter[str] = Counter()
@@ -102,6 +131,10 @@ def main() -> None:
             record = json.loads(line)
             if not isinstance(record, dict):
                 raise TypeError("acquisition inventory contains non-object record")
+            if record.get("artifact_availability") != "locator_present":
+                raise RuntimeError(
+                    "acquisition inventory contains record without locator_present state"
+                )
             document_url = str(record.get("document_url") or "").strip()
             host = (urlparse(document_url).hostname or "").casefold()
             host_counts[host] += 1
@@ -130,6 +163,9 @@ def main() -> None:
         "source_inventory": {
             "byte_count": source_size,
             "sha256": source_sha256,
+            "record_count": source_line_count,
+            "locator_present_record_count": expected_locator_present,
+            "no_locator_record_count": no_locator_line_count,
         },
         "document_hosts": dict(sorted(host_counts.items())),
         "allowed_document_hosts": sorted(SCJ_DECISION_DOCUMENT_HOSTS),
