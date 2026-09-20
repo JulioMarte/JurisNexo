@@ -121,7 +121,9 @@ def test_scj_landing_page_can_be_healthy_without_direct_pdf_results() -> None:
 
 
 
-def test_boto3_s3_client_uses_required_only_request_checksums(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_boto3_s3_client_uses_required_only_request_checksums(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured_config: dict[str, object] = {}
     captured_client_kwargs: dict[str, object] = {}
 
