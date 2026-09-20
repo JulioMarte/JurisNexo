@@ -199,7 +199,9 @@ def main() -> int:
     )
 
     store = build_s3_object_store()
-    recovery_journal = AcquisitionRecoveryJournal(OUT / "recovery-checkpoint.jsonl")
+    recovery_journal = AcquisitionRecoveryJournal(
+        OUT / "recovery" / ingestion_id / "checkpoint.jsonl"
+    )
     recovery_mirror = S3RecoveryCheckpointMirror(
         object_store=store,
         object_key=f"_checkpoints/scj/principales-sentencias/{ingestion_id}/full.jsonl",
