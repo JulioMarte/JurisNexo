@@ -166,8 +166,9 @@ therefore still observable without pretending that coverage is complete.
 Each item preserves the source collection, source identifier, discovery URL, document URL when
 known, object key and SHA-256 when stored, byte count when known, detected source content type and
 file extension for stored artifacts, and bounded failure/unavailability information when acquisition
-could not produce a supported source document. Run-manifest schema version 2 adds the stored source
-format fields. The manifest also records the storage bucket explicitly. Therefore a
+could not produce a supported source document. Run-manifest schema version 3 retains the stored source-format fields and adds an optional
+`certified_inventory_sha256` that binds a sharded acquisition batch to the exact certified
+inventory snapshot from which it was executed. The manifest also records the storage bucket explicitly. Therefore a
 consumer has a complete provider-neutral object locator as `s3://<storage_bucket>/<object_key>`
 without relying on deployment-local knowledge of which bucket produced the manifest.
 
@@ -175,6 +176,7 @@ The manifest additionally contains:
 
 - a deterministic `source_inventory_sha256` over the observed source identities/URLs;
 - a deterministic `artifact_set_sha256` over the successfully stored/verified artifact set;
+- `certified_inventory_sha256` when the run is driven from a certified source snapshot;
 - UTC start/completion timestamps;
 - a schema version and stable ingestion identifier;
 - a `batch_id`, `partition_index` and `partition_count` so sharded acquisitions remain
@@ -275,12 +277,27 @@ Private tenant uploads, report exports, presigned upload/download URLs, lifecycl
 
 Large corpus acquisitions must assume that object storage, runners and networks can fail mid-shard. A completed object is never discarded merely because the run that created it did not reach its final manifest.
 
-The SCJ 1994+ backfill therefore keeps an append-only local recovery journal during each shard. The journal is flushed and fsynced after every resolved source observation and is uploaded by GitHub Actions with `if: always()`. Stored records contain the source identifier/URL, SHA-256, object key, byte count and detected format. Unavailable and item-failure observations are recorded separately.
+Large production backfills keep an append-only local recovery journal during each shard. The journal is flushed and fsynced after every resolved source observation. Its compact latest-state view is also mirrored after every observation under the reserved mutable namespace `_checkpoints/<source>/<scope>/...`, independently from the immutable final run-manifest namespace. GitHub Actions still uploads the local evidence with `if: always()` as a second recovery surface. Stored records contain the source identifier/URL, SHA-256, object key, byte count and detected format. Unavailable and item-failure observations are recorded separately.
 
-A resume operation may restore a prior shard journal. For a stored record, resume performs `HeadObject` before skipping the source download and verifies the recorded byte count plus SHA/content-type metadata when the provider returns those fields. A mismatch is an integrity failure and must not be silently overwritten. A previously unavailable observation is reused; an ordinary failed observation is attempted again.
+The checkpoint namespace is operational state, not canonical legal evidence and not an inter-system completion contract. A checkpoint may be overwritten by the next observation for the same shard. The immutable run manifest remains the closure/handoff record. This deliberate split means a runner hard-kill no longer depends solely on the end-of-job artifact upload. There is still an unavoidable non-atomic window between committing a content-addressed source object and persisting the next checkpoint; reconciliation detects any object left behind by that window.
+
+A resume operation first uses an explicitly supplied prior shard journal when one is provided; otherwise it may restore the durable remote checkpoint for that shard automatically. For a stored record, resume performs `HeadObject` before skipping the source download and verifies the recorded byte count plus SHA/content-type metadata when the provider returns those fields. A mismatch is an integrity failure and must not be silently overwritten. A previously unavailable observation is reused; an ordinary failed observation is attempted again.
 
 Infrastructure failures are classified separately from document failures. Capacity/quota exhaustion, invalid credentials, authorization failures and missing/misconfigured buckets are terminal for the shard and activate a circuit breaker. Rate limiting, provider 5xx responses and transport failures are retried within the bounded item budget; if they remain unresolved, the shard is interrupted rather than producing thousands of misleading document failures.
 
-An interrupted shard writes local recovery evidence and exits non-zero with `RUN_INTERRUPTED`, the cause, the interruption point, processed/pending counts and `resumable: true`. It does **not** attempt to commit the final object-storage run manifest when storage itself is the failing dependency. The final immutable run manifest remains a closure record and is committed only after the shard reaches a controlled end.
+An interrupted shard writes recovery evidence and exits non-zero with `RUN_INTERRUPTED`, the cause, the interruption point, processed/pending counts and `resumable: true`. Expected infrastructure interruptions use a controlled process exit rather than manufacturing a traceback as though application code had crashed. The shard does **not** attempt to commit the final object-storage run manifest when storage itself is the failing dependency. The final immutable run manifest remains a closure record and is committed only after the shard reaches a controlled end.
 
 The production SCJ full backfill workflow is manual-only. Running it requires the explicit `confirm_production=RUN` input. An optional `resume_run_id` restores the matching shard artifacts from a prior workflow run and feeds each `recovery-checkpoint.jsonl` back to the shard. This keeps recovery a normal operation rather than requiring a destructive restart.
+
+
+### Certified-snapshot binding and orphan reconciliation
+
+For certified mass acquisition, the inventory snapshot is persisted before corpus mutation under:
+
+```text
+_inventories/<source>/<scope>/<certified_inventory_sha256>/
+```
+
+Every shard manifest in that batch carries the same `certified_inventory_sha256`. Final reconciliation re-reads the durable inventory object from storage, recomputes its SHA-256, requires the local certified inventory to have the same digest, and requires every partition manifest to point to that digest.
+
+Reconciliation is bidirectional. It verifies both that every object claimed by the batch manifests exists and that every legal-document object under the reconciled source prefix is referenced by at least one durable source manifest. A stored object with no manifest reference is reported as an orphan and makes reconciliation fail closed. This is how JurisNexo detects the small crash window in which source bytes may have reached storage but their checkpoint/manifest relation did not.

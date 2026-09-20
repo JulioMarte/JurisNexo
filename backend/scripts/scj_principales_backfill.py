@@ -18,6 +18,14 @@ from jurisnexo.acquisition.official_corpus import (
     discover_scj_principales_candidates_from_html,
 )
 from jurisnexo.acquisition.playwright_fetcher import PlaywrightVerifiedFetcher
+from jurisnexo.acquisition.recovery import (
+    AcquisitionRecoveryJournal,
+    GlobalAcquisitionInterruption,
+    RecoveryCheckpointRecord,
+    S3RecoveryCheckpointMirror,
+    classify_infrastructure_error,
+    utc_now_z,
+)
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, build_s3_object_store
 
 OUT = Path(os.environ.get("SCJ_PRINCIPALES_BACKFILL_OUTPUT", "scj-principales-backfill-output"))
@@ -133,6 +141,7 @@ def _acquire_one(
             return artifact
         except Exception as exc:
             last_error = exc
+            infrastructure_failure = classify_infrastructure_error(exc)
             _event(
                 "principales.backfill.item_attempt_failed",
                 index=index,
@@ -141,14 +150,24 @@ def _acquire_one(
                 source_identifier=candidate.source_identifier,
                 error_type=type(exc).__name__,
                 error=str(exc),
+                infrastructure_failure=(
+                    infrastructure_failure.kind if infrastructure_failure else None
+                ),
             )
+            if infrastructure_failure is not None and (
+                not infrastructure_failure.retryable or attempt == MAX_ATTEMPTS
+            ):
+                raise GlobalAcquisitionInterruption(
+                    infrastructure_failure,
+                    exc,
+                ) from exc
             if attempt < MAX_ATTEMPTS:
                 time.sleep(float(attempt))
     assert last_error is not None
     raise last_error
 
 
-def main() -> None:
+def main() -> int:
     if EXPECTED_COUNT < 1:
         raise ValueError("SCJ_PRINCIPALES_EXPECTED_COUNT must be positive")
     if MAX_ATTEMPTS < 1:
@@ -164,6 +183,13 @@ def main() -> None:
     )
 
     store = build_s3_object_store()
+    recovery_journal = AcquisitionRecoveryJournal(OUT / "recovery-checkpoint.jsonl")
+    recovery_mirror = S3RecoveryCheckpointMirror(
+        object_store=store,
+        object_key="_checkpoints/scj/principales-sentencias/full.jsonl",
+    )
+    if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
+        recovery_mirror.load_if_present(recovery_journal)
     manifest = AcquisitionRunManifestBuilder(
         source="scj",
         scope="principales-sentencias",
@@ -180,6 +206,42 @@ def main() -> None:
             total = len(candidates)
             for index, candidate in enumerate(candidates, start=1):
                 try:
+                    recovered = recovery_journal.get(
+                        source_identifier=candidate.source_identifier,
+                        document_url=candidate.document_url,
+                    )
+                    if recovered is not None and recovered.status == "stored":
+                        assert recovered.object_key is not None
+                        head = store.client.head_object(
+                            Bucket=store.config.bucket,
+                            Key=recovered.object_key,
+                        )
+                        if int(head.get("ContentLength") or -1) != recovered.byte_count:
+                            raise RuntimeError(
+                                f"INTEGRITY_MISMATCH byte_count for {recovered.object_key}"
+                            )
+                        manifest.record_existing(
+                            candidate=candidate,
+                            sha256=recovered.sha256 or "",
+                            object_key=recovered.object_key,
+                            byte_count=recovered.byte_count,
+                            content_type=recovered.content_type or "application/pdf",
+                            file_extension=recovered.file_extension or "pdf",
+                        )
+                        artifacts.append(
+                            {
+                                "index": index,
+                                "source_identifier": candidate.source_identifier,
+                                "document_url": candidate.document_url,
+                                "sha256": recovered.sha256,
+                                "byte_count": recovered.byte_count,
+                                "object_key": recovered.object_key,
+                                "already_present": True,
+                                "verification_method": "prior_manifest_and_head",
+                                "recovered": True,
+                            }
+                        )
+                        continue
                     artifact = _acquire_one(
                         fetcher=fetcher,
                         store=store,
@@ -199,7 +261,37 @@ def main() -> None:
                         "verification_method": "downloaded_and_hashed",
                     }
                     artifacts.append(record)
+                    recovery_journal.append(
+                        RecoveryCheckpointRecord(
+                            source_identifier=candidate.source_identifier,
+                            document_url=candidate.document_url,
+                            status="stored",
+                            recorded_at=utc_now_z(),
+                            sha256=artifact.sha256,
+                            object_key=artifact.object_key,
+                            byte_count=artifact.byte_count,
+                            content_type=artifact.content_type,
+                            file_extension=artifact.file_extension,
+                        )
+                    )
+                    recovery_mirror.persist(recovery_journal)
                     _event("principales.backfill.item_completed", **record)
+                except GlobalAcquisitionInterruption as exc:
+                    interruption = {
+                        "status": "RUN_INTERRUPTED",
+                        "cause": exc.failure.kind,
+                        "retryable": exc.failure.retryable,
+                        "error_code": exc.failure.code,
+                        "http_status": exc.failure.http_status,
+                        "detail": exc.failure.detail,
+                        "processed_count": len(artifacts) + len(failures),
+                        "pending_count": total - len(artifacts) - len(failures),
+                        "resumable": True,
+                    }
+                    _write_json(OUT / "interruption.json", interruption)
+                    _write_json(OUT / "summary.json", interruption)
+                    _event("principales.backfill.interrupted", **interruption)
+                    return 75
                 except Exception as exc:
                     manifest.record_failure(
                         collection=candidate.collection,
@@ -261,13 +353,19 @@ def main() -> None:
             run_manifest_object_key=stored_manifest.object_key,
         )
         if failures:
-            raise RuntimeError(
-                f"Principales backfill completed with {len(failures)} failed documents"
-            )
+            return 1
         if len(artifacts) != EXPECTED_COUNT:
-            raise RuntimeError(
-                f"Principales backfill stored {len(artifacts)} artifacts, expected {EXPECTED_COUNT}"
+            _write_json(
+                OUT / "failure.json",
+                {
+                    "status": "INCOMPLETE",
+                    "reason": "artifact_count_mismatch",
+                    "artifact_count": len(artifacts),
+                    "expected_count": EXPECTED_COUNT,
+                },
             )
+            return 1
+        return 0
     except Exception as exc:
         _write_json(
             OUT / "failure.json",
@@ -285,4 +383,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

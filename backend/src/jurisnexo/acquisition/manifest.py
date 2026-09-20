@@ -19,7 +19,7 @@ from jurisnexo.acquisition.official_corpus import (
     acquire_candidates,
 )
 
-_RUN_SCHEMA_VERSION = 2
+_RUN_SCHEMA_VERSION = 3
 _STORAGE_SEGMENT_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RunItemStatus = Literal["uploaded", "already_present", "failed", "unavailable"]
 VerificationMethod = Literal["downloaded_and_hashed", "prior_manifest_and_head"]
@@ -173,6 +173,7 @@ class AcquisitionRunManifest:
     failed_count: int
     source_inventory_sha256: str
     artifact_set_sha256: str
+    certified_inventory_sha256: str | None
     items: tuple[AcquisitionRunItem, ...]
 
     def canonical_bytes(self) -> bytes:
@@ -208,6 +209,7 @@ class AcquisitionRunManifestBuilder:
         batch_id: str | None = None,
         partition_index: int = 0,
         partition_count: int = 1,
+        certified_inventory_sha256: str | None = None,
         started_at: datetime | None = None,
     ) -> None:
         if not _STORAGE_SEGMENT_RE.fullmatch(source):
@@ -231,8 +233,11 @@ class AcquisitionRunManifestBuilder:
         ):
             if "/" in value or not value.strip():
                 raise ValueError(f"{field_name} must be a non-empty object-key-safe identifier")
+        if certified_inventory_sha256 is not None and len(certified_inventory_sha256) != 64:
+            raise ValueError("certified_inventory_sha256 must be a SHA-256 digest")
         self.partition_index = partition_index
         self.partition_count = partition_count
+        self.certified_inventory_sha256 = certified_inventory_sha256
         self.started_at = _utc(started_at or datetime.now(UTC))
         self._items: dict[tuple[str, str, str], AcquisitionRunItem] = {}
         self._committed = False
@@ -368,6 +373,7 @@ class AcquisitionRunManifestBuilder:
             failed_count=failed,
             source_inventory_sha256=_inventory_digest(items),
             artifact_set_sha256=_artifact_set_digest(items),
+            certified_inventory_sha256=self.certified_inventory_sha256,
             items=items,
         )
 
@@ -404,6 +410,11 @@ class AcquisitionRunManifestBuilder:
                 "partition_count": str(self.partition_count),
                 "status": manifest.status,
                 "payload_sha256": payload_sha256,
+                **(
+                    {"certified_inventory_sha256": self.certified_inventory_sha256}
+                    if self.certified_inventory_sha256
+                    else {}
+                ),
             },
         )
         self._committed = True

@@ -388,7 +388,17 @@ guarantee = "INV-ACQUISITION-RECOVERY-001"
 path = "backend/tests/unit/test_acquisition_recovery.py"
 evidence = ["invariant", "contract"]
 
-[[gaps]]
+[[proofs]]
 guarantee = "INV-ACQUISITION-RECOVERY-001"
-missing_evidence = ["integration"]
-reason = "Unit proof covers the durable recovery journal, infrastructure-vs-document error classification and Backblaze capacity-exhaustion resume semantics, but a real shard-level integration proof that resumes against object storage after an interruption is not yet present."
+path = "backend/tests/integration/test_acquisition_recovery_flow.py"
+evidence = ["integration"]
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-RECONCILIATION-001"
+path = "backend/tests/integration/test_acquisition_recovery_flow.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-ACQUISITION-RECONCILIATION-001"
+path = "backend/tests/architecture/test_acquisition_run_manifest_contract.py"
+evidence = ["fitness"]

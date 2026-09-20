@@ -23,3 +23,34 @@ def test_document_upload_scripts_commit_durable_run_manifests() -> None:
         "an immutable acquisition run manifest. Missing manifest integration: "
         f"{offenders}"
     )
+
+
+
+def test_large_document_backfills_require_durable_recovery_contract() -> None:
+    scripts_dir = REPO_ROOT / "backend" / "scripts"
+    offenders: list[str] = []
+
+    for path in sorted(scripts_dir.glob("*backfill*.py")):
+        if "canary" in path.name:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "acquire_candidates(" not in text:
+            continue
+        required = (
+            "AcquisitionRecoveryJournal",
+            "S3RecoveryCheckpointMirror",
+            "classify_infrastructure_error",
+            "raise SystemExit(main())",
+        )
+        missing = [marker for marker in required if marker not in text]
+        if missing:
+            offenders.append(
+                f"{path.relative_to(REPO_ROOT)} missing {', '.join(missing)}"
+            )
+
+    assert not offenders, (
+        "Large production document backfills must preserve incremental durable recovery "
+        "state, classify infrastructure failures separately from document failures, and "
+        "terminate expected interruptions through controlled exit codes. Violations: "
+        f"{offenders}"
+    )
