@@ -11,6 +11,9 @@ on:
         description: 'Optional prior workflow run ID whose shard checkpoints should be reused'
         required: false
         default: ''
+  push:
+    branches:
+      - ops/scj-decisions-backfill-run-6
 
 
 permissions:
@@ -27,7 +30,7 @@ env:
 
 jobs:
   storage-smoke:
-    if: inputs.confirm_production == 'RUN'
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.confirm_production == 'RUN') || (github.event_name == 'push' && github.ref == 'refs/heads/ops/scj-decisions-backfill-run-6') }}
     name: Validate production S3 write access
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -52,7 +55,7 @@ jobs:
 
   discover_years:
     needs: storage-smoke
-    if: inputs.confirm_production == 'RUN'
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.confirm_production == 'RUN') || (github.event_name == 'push' && github.ref == 'refs/heads/ops/scj-decisions-backfill-run-6') }}
     name: Discover official SCJ decision years
     runs-on: ubuntu-24.04
     timeout-minutes: 20
