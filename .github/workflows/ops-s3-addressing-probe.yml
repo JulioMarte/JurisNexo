@@ -1,4 +1,4 @@
-name: Ops S3 checksum framing probe
+name: Ops S3 expect framing probe
 
 on:
   push:
@@ -26,13 +26,16 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install -e ./backend 'boto3==1.43.93'
-      - name: Inspect framing and write smoke object
+      - name: Disable Expect handler and write smoke object
         run: |
           python - <<'PY'
+          from botocore.handlers import add_expect_header
           from jurisnexo.acquisition.s3_object_store import S3RuntimeSettings, create_boto3_s3_client
 
           settings = S3RuntimeSettings()
           client = create_boto3_s3_client(settings)
+          client.meta.events.unregister("before-call.s3", add_expect_header)
+
           safe_names = {
               "content-length",
               "content-encoding",
@@ -52,13 +55,13 @@ jobs:
               print("SAFE_PUT_HEADERS", headers, flush=True)
 
           client.meta.events.register("before-send.s3.PutObject", inspect)
-          key = "_system/probes/checksum-when-required.txt"
+          key = "_system/probes/no-expect.txt"
           client.put_object(
               Bucket=settings.bucket,
               Key=key,
-              Body=b"checksum-probe\n",
+              Body=b"no-expect-probe\n",
               ContentType="text/plain",
-              Metadata={"jurisnexo-purpose": "checksum-probe"},
+              Metadata={"jurisnexo-purpose": "no-expect-probe"},
           )
           head = client.head_object(Bucket=settings.bucket, Key=key)
           print("PUT_OK", head.get("ContentLength"), flush=True)
