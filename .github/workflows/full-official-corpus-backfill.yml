@@ -1,10 +1,10 @@
-name: Full official corpus backfill
+name: Full SCJ + TC official corpus backfill
 
 on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Run the full backfill or only validate configured S3 storage
+        description: Advanced SCJ + TC + PostgreSQL backfill, or only validate configured S3 storage
         required: true
         default: full
         type: choice

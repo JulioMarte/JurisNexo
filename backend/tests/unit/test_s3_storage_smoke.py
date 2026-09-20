@@ -67,6 +67,29 @@ class FakeSmokeClient:
 
 
 @dataclass(slots=True)
+class TransientPutSmokeClient(FakeSmokeClient):
+    failures_remaining: int = 1
+
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        ContentType: str,
+        Metadata: dict[str, str],
+    ) -> object:
+        self.calls.append("put")
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise RuntimeError(
+                "Connection was closed before we received a valid response from endpoint URL"
+            )
+        self.objects[(Bucket, Key)] = Body
+        return {"ETag": "fixture"}
+
+
+@dataclass(slots=True)
 class MissingListSmokeClient(FakeSmokeClient):
     def list_objects_v2(self, *, Bucket: str, Prefix: str, MaxKeys: int) -> object:
         self.calls.append("list")
@@ -128,3 +151,18 @@ def test_storage_smoke_fails_when_list_contract_does_not_observe_written_object(
         )
 
     assert client.calls == ["put", "head", "list", "delete"]
+
+
+
+def test_storage_smoke_retries_retryable_transport_failure() -> None:
+    client = TransientPutSmokeClient()
+
+    result = run_s3_storage_smoke(
+        _settings(),
+        run_id="123-4",
+        client_factory=lambda _: client,
+    )
+
+    assert result.cleaned_up is True
+    assert client.calls == ["put", "put", "head", "list", "delete"]
+    assert client.objects == {}
