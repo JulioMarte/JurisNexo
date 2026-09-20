@@ -155,19 +155,19 @@ def test_derivation_requires_exactly_one_parent(
         with pytest.raises(errors.CheckViolation), connection.transaction():
             with connection.cursor() as cursor:
                 cursor.execute(
-                        """
-                        INSERT INTO corpus.artifact_derivations (
-                            source_artifact_id,
-                            parent_derived_artifact_id,
-                            derived_artifact_id,
-                            derivation_type,
-                            engine,
-                            pipeline_version,
-                            config_sha256
-                        ) VALUES (%s,%s,%s,'invalid','fixture','v1',%s)
-                        """,
-                        (source_id, parent_id, child_id, "c" * 64),
-                    )
+                    """
+                    INSERT INTO corpus.artifact_derivations (
+                        source_artifact_id,
+                        parent_derived_artifact_id,
+                        derived_artifact_id,
+                        derivation_type,
+                        engine,
+                        pipeline_version,
+                        config_sha256
+                    ) VALUES (%s,%s,%s,'invalid','fixture','v1',%s)
+                    """,
+                    (source_id, parent_id, child_id, "c" * 64),
+                )
 
 
 def test_derived_artifact_lineage_rejects_cycles(
@@ -211,14 +211,14 @@ def test_derived_artifact_lineage_rejects_cycles(
         with pytest.raises(errors.CheckViolation), connection.transaction():
             with connection.cursor() as cursor:
                 cursor.execute(
-                        """
-                        INSERT INTO corpus.artifact_derivations (
-                            parent_derived_artifact_id, derived_artifact_id,
-                            derivation_type, engine, pipeline_version, config_sha256
-                        ) VALUES (%s,%s,'cycle','fixture','v1',%s)
-                        """,
-                        (second_id, first_id, "f" * 64),
-                    )
+                    """
+                    INSERT INTO corpus.artifact_derivations (
+                        parent_derived_artifact_id, derived_artifact_id,
+                        derivation_type, engine, pipeline_version, config_sha256
+                    ) VALUES (%s,%s,'cycle','fixture','v1',%s)
+                    """,
+                    (second_id, first_id, "f" * 64),
+                )
 
 
 def test_normalization_run_is_manifest_scoped_and_tracks_outputs(
