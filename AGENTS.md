@@ -100,7 +100,9 @@ Recommended order:
 16. `docs/11-benchmark-annotation-and-evaluation-protocol.md` and `docs/17-agent-methodology-and-benchmark-map.md` when changing benchmarks, retrieval, agent behavior, or research methods;
 17. `docs/05-security-privacy-and-trust.md` and `docs/09-tenancy-authentication-and-access-control.md` for trust/tenant-sensitive changes;
 18. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work;
-19. `docs/27-database-bootstrap-and-multi-court-registry.md` for database bootstrap, PostgreSQL configuration, and ephemeral-CI database policy.\n20. `docs/39-document-normalization-and-derived-artifacts.md` when changing OCR, Docling, derived artifacts, or normalization execution.\n21. `docs/40-document-normalization-pipeline-v2-handoff.md` before implementing the post-acquisition normalization worker, JEV quality routing, visual verification, Principales canaries, or normalization reconciliation.
+19. `docs/27-database-bootstrap-and-multi-court-registry.md` for database bootstrap, PostgreSQL configuration, and ephemeral-CI database policy.
+20. `docs/39-document-normalization-and-derived-artifacts.md` when changing OCR, Docling, derived artifacts, or normalization execution.
+21. `docs/40-document-normalization-pipeline-v2-handoff.md` before implementing the post-acquisition normalization worker, JEV quality routing, visual verification, Principales canaries, or normalization reconciliation.
 
 Do not treat historical benchmark behavior or the current implementation as authoritative when it conflicts with accepted current docs. Conversely, do not assume documented architecture has already been implemented: verify the code.
 
