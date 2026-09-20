@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from pydantic import SecretStr
 
 from jurisnexo.acquisition.s3_object_store import (
     S3ObjectStore,
@@ -156,8 +157,8 @@ def test_boto3_s3_client_uses_required_only_request_checksums(
         bucket="jurisnexo-official",
         region="us-east-005",
         endpoint_url="https://s3.us-east-005.backblazeb2.com",
-        access_key_id="key-id",
-        secret_access_key="secret-key",
+        access_key_id=SecretStr("key-id"),
+        secret_access_key=SecretStr("secret-key"),
         force_path_style=True,
     )
 
