@@ -39,7 +39,10 @@ def test_large_document_backfills_require_durable_recovery_contract() -> None:
         required = (
             "AcquisitionRecoveryJournal",
             "S3RecoveryCheckpointMirror",
+            "checkpoint_identity=",
             "classify_infrastructure_error",
+            "signal.SIGTERM",
+            "signal.SIGINT",
             "raise SystemExit(main())",
         )
         missing = [marker for marker in required if marker not in text]
@@ -50,7 +53,8 @@ def test_large_document_backfills_require_durable_recovery_contract() -> None:
 
     assert not offenders, (
         "Large production document backfills must preserve incremental durable recovery "
-        "state, classify infrastructure failures separately from document failures, and "
-        "terminate expected interruptions through controlled exit codes. Violations: "
+        "state scoped to an explicit checkpoint identity, classify infrastructure failures "
+        "separately from document failures, handle normal termination signals, and terminate "
+        "expected interruptions through controlled exit codes. Violations: "
         f"{offenders}"
     )
