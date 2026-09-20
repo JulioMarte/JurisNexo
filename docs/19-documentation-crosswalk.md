@@ -157,3 +157,7 @@ Architecture governance: normative guarantees + blocking fitness + proof map + e
 Evolution mode: freeze evidence, not accidental pre-production shape
 Legal reality: controversy/proceeding/claim/decision graph + scoped judicial stance + first-class legal issues and factual propositions + disposition actions with typed arguments + auditable entity resolution + bitemporal contextual truth
 ```
+
+## Jurisprudential intelligence strategy
+
+`38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` is the canonical product/data strategy for corpus breadth versus semantic depth, the SCJ Principales seed, citation-first expansion, normalization priority, Golden Precedent Set/failure corpus, and coverage discipline. Older corpus-sequencing language must be interpreted consistently with it. It does not replace the canonical legal-reality schema documents or repository governance rules.
