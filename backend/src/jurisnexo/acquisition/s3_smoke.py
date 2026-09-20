@@ -5,7 +5,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from jurisnexo.acquisition.recovery import classify_infrastructure_error
@@ -18,7 +18,6 @@ SMOKE_PREFIX = "_system/smoke-tests"
 _SMOKE_PAYLOAD = b"jurisnexo-s3-smoke-v1\n"
 _SMOKE_METADATA = {"jurisnexo-purpose": "storage-smoke"}
 _SMOKE_MAX_ATTEMPTS = int(os.environ.get("JURISNEXO_S3_SMOKE_ATTEMPTS", "5"))
-T = TypeVar("T")
 
 
 class S3SmokeClient(Protocol):
@@ -90,7 +89,7 @@ def _listed_keys(response: object) -> set[str]:
 
 
 
-def _retry_s3_operation(
+def _retry_s3_operation[T](
     operation: Callable[[], T],
     *,
     attempts: int = _SMOKE_MAX_ATTEMPTS,
