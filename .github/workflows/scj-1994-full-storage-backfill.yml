@@ -44,14 +44,16 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Discover years from official SCJ surface
         env:
-          SCJ_YEAR_DISCOVERY_OUTPUT: ${{ runner.temp }}/scj-year-discovery.json
+          SCJ_YEAR_DISCOVERY_DIR: ${{ runner.temp }}/scj-year-discovery
+          SCJ_YEAR_DISCOVERY_OUTPUT: ${{ runner.temp }}/scj-year-discovery/scj-year-discovery.json
         run: |
           set -o pipefail
-          python backend/scripts/scj_decision_year_discovery.py 2>&1 | tee scj-year-discovery.log
+          mkdir -p "${SCJ_YEAR_DISCOVERY_DIR}"
+          python backend/scripts/scj_decision_year_discovery.py 2>&1 | tee "${SCJ_YEAR_DISCOVERY_DIR}/scj-year-discovery.log"
       - id: matrix
         name: Export dynamic year matrix
         env:
-          DISCOVERY: ${{ runner.temp }}/scj-year-discovery.json
+          DISCOVERY: ${{ runner.temp }}/scj-year-discovery/scj-year-discovery.json
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os
@@ -64,9 +66,7 @@ jobs:
           name: scj-year-discovery
           retention-days: 30
           if-no-files-found: error
-          path: |
-            ${{ runner.temp }}/scj-year-discovery.json
-            scj-year-discovery.log
+          path: ${{ runner.temp }}/scj-year-discovery/
 
   inventory:
     needs: discover_years

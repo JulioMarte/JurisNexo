@@ -78,6 +78,16 @@ def test_scj_corpus_backfill_discovers_source_scope_and_preserves_no_locator_rec
     assert "fromJSON(needs.discover_years.outputs.active_years)" in workflow
     assert "SCJ_YEAR: ${{ matrix.year }}" in workflow
     assert "persist_scj_certified_inventory.py" in workflow
+    assert "SCJ_YEAR_DISCOVERY_DIR: ${{ runner.temp }}/scj-year-discovery" in workflow
+    assert (
+        "SCJ_YEAR_DISCOVERY_OUTPUT: "
+        "${{ runner.temp }}/scj-year-discovery/scj-year-discovery.json"
+    ) in workflow
+    assert 'path: ${{ runner.temp }}/scj-year-discovery/' in workflow
+    assert (
+        "SCJ_YEAR_DISCOVERY_FILE: "
+        "${{ runner.temp }}/scj-year-discovery/scj-year-discovery.json"
+    ) in workflow
 
     assert 'f"decisions\\t{expediente_id}\\t{guid}\\t{url}"' not in inventory
     assert '"no_locator"' in inventory
