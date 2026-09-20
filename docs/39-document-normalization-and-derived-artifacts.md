@@ -166,10 +166,10 @@ OCR selection, deterministic QA, JEV shadow mode, sentinel sampling, visual veri
 correction assertions, privacy/provider gates, resumability, reconciliation and promotion
 criteria — lives in:
 
-- `40-document-normalization-pipeline-v2-handoff.md`
+- `41-universal-legal-document-normalization-control-plane-v3-handoff.md` — current implementation handoff;
+- `40-document-normalization-pipeline-v2-handoff.md` — retained V2 quality/provenance rationale where not superseded.
 
-That handoff is the implementation sequence for this architecture. This document remains the
-stable artifact/provenance contract.
+V3 is the implementation sequence for this architecture. This document remains the stable artifact/provenance contract.
 
 ## 8. Initial implementation scope
 
