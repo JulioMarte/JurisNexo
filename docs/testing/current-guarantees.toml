@@ -473,3 +473,19 @@ severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "fitness"]
 risk = ["provenance", "operations", "architecture"]
+
+[[guarantees]]
+id = "INV-NORMALIZATION-LINEAGE-001"
+statement = "Every normalized or corrected derivative remains immutable and traceable through acyclic derivation lineage to preserved source bytes, with engine, pipeline and configuration identity recorded at the derivation boundary."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+statement = "Technical document normalization remains source-agnostic: source adapters do not own parser, OCR, quality-judge or visual-verifier implementations, and institution-specific pipelines do not duplicate the normalization core."
+severity = "high"
+classification = "CONTROLLED"
+required_evidence = ["fitness", "contract"]
+risk = ["architecture", "operations"]
