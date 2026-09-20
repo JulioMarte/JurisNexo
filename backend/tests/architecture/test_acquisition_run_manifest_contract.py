@@ -58,3 +58,29 @@ def test_large_document_backfills_require_durable_recovery_contract() -> None:
         "expected interruptions through controlled exit codes. Violations: "
         f"{offenders}"
     )
+
+
+
+def test_scj_corpus_backfill_discovers_source_scope_and_preserves_no_locator_records() -> None:
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "scj-1994-full-storage-backfill.yml"
+    ).read_text(encoding="utf-8")
+    inventory = (REPO_ROOT / "backend" / "scripts" / "scj_year_inventory.py").read_text(
+        encoding="utf-8"
+    )
+    merger = (
+        REPO_ROOT / "backend" / "scripts" / "merge_scj_1994_inventory.py"
+    ).read_text(encoding="utf-8")
+
+    assert "SCJ_YEAR_MIN:" not in workflow
+    assert "SCJ_YEAR_MAX:" not in workflow
+    assert "scj_decision_year_discovery.py" in workflow
+    assert "fromJSON(needs.discover_years.outputs.active_years)" in workflow
+    assert "SCJ_YEAR: ${{ matrix.year }}" in workflow
+    assert "persist_scj_certified_inventory.py" in workflow
+
+    assert 'f"decisions\\t{expediente_id}\\t{guid}\\t{url}"' not in inventory
+    assert '"no_locator"' in inventory
+    assert "official_record_has_no_download_url" in inventory
+    assert "locator_present_source_record_count" in merger
+    assert "no_locator_source_record_count" in merger

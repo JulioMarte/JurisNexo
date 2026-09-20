@@ -290,7 +290,14 @@ def classify_infrastructure_error(exc: Exception) -> InfrastructureFailure | Non
 
     if any(
         marker in haystack
-        for marker in ("timeout", "connection reset", "connection aborted", "endpoint connection")
+        for marker in (
+            "timeout",
+            "connection reset",
+            "connection aborted",
+            "connection was closed",
+            "connectionclosederror",
+            "endpoint connection",
+        )
     ):
         return InfrastructureFailure(
             kind="transport_error",

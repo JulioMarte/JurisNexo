@@ -109,22 +109,36 @@ def fetch_page(
     return int(payload.get("recordsFiltered", 0)), rows
 
 
-def stable_identity(surface: Surface, row: dict[str, Any]) -> tuple[str, str]:
+def stable_identity(
+    surface: Surface,
+    row: dict[str, Any],
+) -> tuple[str, str | None, str, str | None]:
     if surface == "decisions":
         expediente_id = str(row.get("idExpediente") or "").strip()
         guid = str(row.get("guidBlob") or "").strip()
         url = str(row.get("urlBlob") or "").strip()
-        if not expediente_id or not url.startswith("https://"):
-            raise ValueError("SCJ decision row lacks idExpediente or HTTPS PDF URL")
-        return f"decisions\t{expediente_id}\t{guid}\t{url}", url
+        if not expediente_id:
+            raise ValueError("SCJ decision row lacks idExpediente")
+        # The official record identity must not depend on a mutable download URL.
+        key = f"decisions\t{expediente_id}\t{guid}"
+        if not url:
+            return key, None, "no_locator", "official_record_has_no_download_url"
+        if not url.startswith("https://"):
+            return key, None, "no_locator", "official_record_has_invalid_download_url"
+        return key, url, "locator_present", None
 
     url = str(row.get("rutaDoc") or "").strip()
     year = str(row.get("ano") or "").strip()
     month = str(row.get("mes") or "").strip()
     parties = " ".join(str(row.get("partes") or "").split())
-    if not url.startswith("https://") or not (year or month or parties):
-        raise ValueError("SCJ historical row lacks stable metadata or HTTPS PDF URL")
-    return f"historical\t{year}\t{month}\t{parties}\t{url}", url
+    if not (year or month or parties):
+        raise ValueError("SCJ historical row lacks stable metadata")
+    key = f"historical\t{year}\t{month}\t{parties}"
+    if not url:
+        return key, None, "no_locator", "official_record_has_no_download_url"
+    if not url.startswith("https://"):
+        return key, None, "no_locator", "official_record_has_invalid_download_url"
+    return key, url, "locator_present", None
 
 
 def main() -> None:
@@ -134,10 +148,19 @@ def main() -> None:
     surface: Surface = surface_value  # type: ignore[assignment]
     shard_index = int(os.environ["SCJ_SHARD_INDEX"])
     shard_count = int(os.environ["SCJ_SHARD_COUNT"])
+    exact_year = os.environ.get("SCJ_YEAR", "").strip()
     year_min = int(os.environ.get("SCJ_YEAR_MIN", "1994"))
-    year_max = int(os.environ.get("SCJ_YEAR_MAX", "2026"))
-    if year_min > year_max:
-        raise ValueError("SCJ_YEAR_MIN must be <= SCJ_YEAR_MAX")
+    year_max = int(os.environ.get("SCJ_YEAR_MAX", str(datetime.now(UTC).year)))
+    if exact_year:
+        assigned_years = [int(exact_year)]
+    else:
+        if year_min > year_max:
+            raise ValueError("SCJ_YEAR_MIN must be <= SCJ_YEAR_MAX")
+        assigned_years = [
+            year
+            for offset, year in enumerate(range(year_min, year_max + 1))
+            if offset % shard_count == shard_index
+        ]
     if PAGE_SIZE < 1 or PAGE_SIZE > 1000:
         raise ValueError("SCJ_PAGE_SIZE must be between 1 and 1000")
     if shard_count < 1 or not 0 <= shard_index < shard_count:
@@ -145,13 +168,9 @@ def main() -> None:
 
     output_dir = Path(os.environ["SCJ_SHARD_OUTPUT"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    assigned_years = [
-        year
-        for offset, year in enumerate(range(year_min, year_max + 1))
-        if offset % shard_count == shard_index
-    ]
-    output_path = output_dir / f"{surface}-years-shard-{shard_index:02d}.jsonl"
-    summary_path = output_dir / f"{surface}-years-shard-{shard_index:02d}-summary.json"
+    suffix = f"year-{assigned_years[0]}" if exact_year else f"years-shard-{shard_index:02d}"
+    output_path = output_dir / f"{surface}-{suffix}.jsonl"
+    summary_path = output_dir / f"{surface}-{suffix}-summary.json"
     digest = hashlib.sha256()
     captured = 0
     year_reports: dict[str, object] = {}
@@ -223,7 +242,9 @@ def main() -> None:
                             f"SCJ {surface} year {year} empty page before total at start={start}"
                         )
                     for offset, row in enumerate(rows):
-                        key, document_url = stable_identity(surface, row)
+                        key, document_url, availability, availability_reason = stable_identity(
+                            surface, row
+                        )
                         raw_position = row.get("linea")
                         if not isinstance(raw_position, int):
                             raise ValueError(
@@ -238,7 +259,8 @@ def main() -> None:
                             "coordinate": f"year={year};start={start};offset={offset}",
                             "_stable_key": key,
                             "_document_url": document_url,
-                            "_artifact_availability": "available",
+                            "_artifact_availability": availability,
+                            "_availability_reason": availability_reason,
                             "row": row,
                         }
                         line = json.dumps(record, ensure_ascii=False, sort_keys=True)
@@ -282,8 +304,8 @@ def main() -> None:
         "surface": surface,
         "shard_index": shard_index,
         "shard_count": shard_count,
-        "year_min": year_min,
-        "year_max": year_max,
+        "year_min": min(assigned_years),
+        "year_max": max(assigned_years),
         "assigned_years": assigned_years,
         "captured_raw_records": captured,
         "inventory_sha256": digest.hexdigest(),
