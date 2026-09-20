@@ -1,4 +1,4 @@
-name: SCJ 1994+ one-shot storage backfill
+name: SCJ official decisions corpus backfill
 
 on:
   workflow_dispatch:
@@ -23,21 +23,61 @@ concurrency:
 
 env:
   PYTHONUNBUFFERED: '1'
-  SCJ_YEAR_MIN: '1994'
-  SCJ_YEAR_MAX: '2026'
   EXPECTED_BUCKET_SHA256: '02ab33707c72f445f70f400f18e089c00328ff19bbd5c306a93eeee1ffe2101f'
 
 jobs:
-  inventory:
+  discover_years:
     if: inputs.confirm_production == 'RUN'
-    name: Inventory decisions year-index ${{ matrix.shard }}/33
+    name: Discover official SCJ decision years
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      active_years: ${{ steps.matrix.outputs.active_years }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned discovery runtime
+        run: python -m pip install 'playwright==1.62.0'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Discover years from official SCJ surface
+        env:
+          SCJ_YEAR_DISCOVERY_OUTPUT: ${{ runner.temp }}/scj-year-discovery.json
+        run: |
+          set -o pipefail
+          python backend/scripts/scj_decision_year_discovery.py 2>&1 | tee scj-year-discovery.log
+      - id: matrix
+        name: Export dynamic year matrix
+        env:
+          DISCOVERY: ${{ runner.temp }}/scj-year-discovery.json
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from pathlib import Path
+          payload=json.loads(Path(os.environ["DISCOVERY"]).read_text())
+          print("active_years="+json.dumps(payload["active_years"], separators=(",",":")))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-year-discovery
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/scj-year-discovery.json
+            scj-year-discovery.log
+
+  inventory:
+    needs: discover_years
+    name: Inventory decisions year ${{ matrix.year }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 16
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        year: ${{ fromJSON(needs.discover_years.outputs.active_years) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -47,30 +87,31 @@ jobs:
         run: python -m pip install 'playwright==1.62.0'
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Inventory assigned years
+      - name: Inventory official decisions for year
         env:
           SCJ_SURFACE: decisions
-          SCJ_SHARD_INDEX: ${{ matrix.shard }}
-          SCJ_SHARD_COUNT: '33'
+          SCJ_YEAR: ${{ matrix.year }}
+          SCJ_SHARD_INDEX: '0'
+          SCJ_SHARD_COUNT: '1'
           SCJ_PAGE_SIZE: '10'
           SCJ_SHARD_OUTPUT: ${{ runner.temp }}/scj-year-inventory
         run: |
           set -o pipefail
-          python backend/scripts/scj_year_inventory.py 2>&1 | tee scj-year-decisions-${{ matrix.shard }}.log
-      - name: Preserve yearly inventory shard
+          python backend/scripts/scj_year_inventory.py 2>&1 | tee scj-year-decisions-${{ matrix.year }}.log
+      - name: Preserve yearly inventory
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-year-inventory-decisions-${{ matrix.shard }}
+          name: scj-year-inventory-decisions-${{ matrix.year }}
           if-no-files-found: error
           retention-days: 30
           path: |
             ${{ runner.temp }}/scj-year-inventory/**
-            scj-year-decisions-${{ matrix.shard }}.log
+            scj-year-decisions-${{ matrix.year }}.log
 
   certify:
     name: Certify 1994+ acquisition inventory
-    needs: inventory
+    needs: [discover_years, inventory]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -85,10 +126,15 @@ jobs:
           pattern: scj-year-inventory-*
           path: ${{ runner.temp }}/scj-year-shards
           merge-multiple: true
+      - uses: actions/download-artifact@v5
+        with:
+          name: scj-year-discovery
+          path: ${{ runner.temp }}/scj-year-discovery
       - name: Merge, certify and deduplicate official source rows
         env:
           SCJ_YEAR_INVENTORY_INPUT: ${{ runner.temp }}/scj-year-shards
           SCJ_YEAR_INVENTORY_OUTPUT: ${{ runner.temp }}/scj-certified-build
+          SCJ_YEAR_DISCOVERY_FILE: ${{ runner.temp }}/scj-year-discovery/scj-year-discovery.json
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/scj-certified-build"
@@ -102,10 +148,12 @@ jobs:
           from pathlib import Path
           summary=json.loads((Path(os.environ['CERTIFIED'])/'summary.json').read_text())
           assert summary['status']=='COMPLETE', summary
-          assert summary['year_min']==1994 and summary['year_max']==2026, summary
-          assert summary['requested_year_count']==33, summary
           assert summary['surface_counts'].get('decisions',0)>80000, summary['surface_counts']
-          assert summary['acquisition_year_counts'].get('2026',0)==0, summary['acquisition_year_counts']
+          assert summary['requested_year_count']==len(summary['discovered_active_years']), summary
+          assert summary['unique_source_record_count']==(
+              summary['locator_present_source_record_count']+
+              summary['no_locator_source_record_count']
+          ), summary
           print(json.dumps(summary, indent=2, sort_keys=True))
           PY
       - name: Validate packaged artifact before upload
@@ -177,67 +225,8 @@ jobs:
           path: ${{ runner.temp }}/scj-certified
       - name: Fingerprint bucket, persist certified snapshot and inspect decisions prefix
         env:
-          CERTIFIED: ${{ runner.temp }}/scj-certified
-        run: |
-          python - <<'PY'
-          import hashlib, json, os
-          from pathlib import Path
-          from jurisnexo.acquisition.s3_object_store import build_s3_object_store
-          store=build_s3_object_store()
-          actual=hashlib.sha256(store.config.bucket.encode()).hexdigest()
-          expected=os.environ['EXPECTED_BUCKET_SHA256']
-          assert actual==expected, f'bucket fingerprint mismatch: {actual}'
-          client=store.client
-
-          certified=Path(os.environ['CERTIFIED'])
-          summary=json.loads((certified/'summary.json').read_text(encoding='utf-8'))
-          inventory_sha=summary['acquisition_inventory_sha256']
-          prefix=f'_inventories/scj/sentencias-1994-actualidad/{inventory_sha}'
-          persisted=[]
-          for name in (
-              'summary.json',
-              'scj-1994-source.inventory.jsonl',
-              'scj-1994-acquisition.inventory.jsonl',
-              'duplicate-document-urls.json',
-          ):
-              path=certified/name
-              payload=path.read_bytes()
-              digest=hashlib.sha256(payload).hexdigest()
-              key=f'{prefix}/{name}'
-              try:
-                  head=client.head_object(Bucket=store.config.bucket,Key=key)
-              except Exception as exc:
-                  if not store.is_not_found(exc):
-                      raise
-                  client.put_object(
-                      Bucket=store.config.bucket,
-                      Key=key,
-                      Body=payload,
-                      ContentType='application/json' if name.endswith('.json') else 'application/x-ndjson',
-                      Metadata={'sha256':digest,'inventory_sha256':inventory_sha},
-                  )
-                  persisted.append({'key':key,'status':'uploaded','bytes':len(payload)})
-              else:
-                  metadata=head.get('Metadata') or {}
-                  if int(head.get('ContentLength') or -1)!=len(payload):
-                      raise RuntimeError(f'inventory snapshot size mismatch: {key}')
-                  stored_sha=str(metadata.get('sha256') or '')
-                  if stored_sha and stored_sha!=digest:
-                      raise RuntimeError(f'inventory snapshot sha mismatch: {key}')
-                  persisted.append({'key':key,'status':'already_present','bytes':len(payload)})
-          print(json.dumps({'inventory_sha256':inventory_sha,'snapshot_prefix':prefix,'snapshot_objects':persisted},sort_keys=True))
-
-          count=0; size=0; token=None
-          while True:
-              kw={'Bucket':store.config.bucket,'Prefix':'jurisdictions/do/scj/decisions/','MaxKeys':1000}
-              if token: kw['ContinuationToken']=token
-              resp=client.list_objects_v2(**kw)
-              for item in resp.get('Contents',[]):
-                  count+=1; size+=int(item.get('Size') or 0)
-              if not resp.get('IsTruncated'): break
-              token=resp.get('NextContinuationToken')
-          print(json.dumps({'bucket_sha256':actual,'existing_decision_objects':count,'existing_decision_bytes':size},sort_keys=True))
-          PY
+          SCJ_CERTIFIED_ARTIFACT_DIR: ${{ runner.temp }}/scj-certified
+        run: python backend/scripts/persist_scj_certified_inventory.py
 
   backfill:
     name: Backfill decisions shard ${{ matrix.shard }}/64
