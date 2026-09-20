@@ -1,4 +1,4 @@
-name: Ops S3 expect framing probe
+name: Ops S3 corpus inventory probe
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
       JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
@@ -26,47 +26,35 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install -e ./backend 'boto3==1.43.93'
-      - name: Disable Expect handler and write smoke object
+      - name: Read-only SCJ storage inventory
         run: |
           python - <<'PY'
-          from botocore.handlers import add_expect_header
+          import json
           from jurisnexo.acquisition.s3_object_store import S3RuntimeSettings, create_boto3_s3_client
 
           settings = S3RuntimeSettings()
           client = create_boto3_s3_client(settings)
-          client.meta.events.unregister("before-call.s3", add_expect_header)
-
-          safe_names = {
-              "content-length",
-              "content-encoding",
-              "transfer-encoding",
-              "expect",
-              "x-amz-sdk-checksum-algorithm",
-              "x-amz-trailer",
-              "x-amz-content-sha256",
-          }
-
-          def inspect(request, **kwargs):
-              headers = {}
-              for key, value in request.headers.items():
-                  name = str(key).lower()
-                  if name in safe_names:
-                      headers[name] = str(value)
-              print("SAFE_PUT_HEADERS", headers, flush=True)
-
-          client.meta.events.register("before-send.s3.PutObject", inspect)
-          key = "_system/probes/no-expect.txt"
-          client.put_object(
-              Bucket=settings.bucket,
-              Key=key,
-              Body=b"no-expect-probe\n",
-              ContentType="text/plain",
-              Metadata={"jurisnexo-purpose": "no-expect-probe"},
-          )
-          head = client.head_object(Bucket=settings.bucket, Key=key)
-          print("PUT_OK", head.get("ContentLength"), flush=True)
-          try:
-              client.delete_object(Bucket=settings.bucket, Key=key)
-          except Exception:
-              pass
+          prefix = "jurisdictions/do/scj/decisions/"
+          count = 0
+          size = 0
+          token = None
+          while True:
+              kwargs = {"Bucket": settings.bucket, "Prefix": prefix, "MaxKeys": 1000}
+              if token:
+                  kwargs["ContinuationToken"] = token
+              response = client.list_objects_v2(**kwargs)
+              for item in response.get("Contents", []):
+                  count += 1
+                  size += int(item.get("Size") or 0)
+              if not response.get("IsTruncated"):
+                  break
+              token = response.get("NextContinuationToken")
+              if not token:
+                  raise RuntimeError("truncated listing without continuation token")
+          print(json.dumps({
+              "prefix": prefix,
+              "object_count": count,
+              "total_bytes": size,
+              "total_gib": round(size / (1024**3), 3),
+          }, sort_keys=True))
           PY
