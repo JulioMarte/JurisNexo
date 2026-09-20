@@ -156,7 +156,7 @@ def create_boto3_s3_client(settings: S3RuntimeSettings) -> Any:
     )
     client = boto3.client("s3", config=sdk_config, **boto3_client_kwargs(settings))
     client.meta.events.unregister(
-        "before-call.s3.PutObject",
+        "before-call.s3",
         botocore_handlers.add_expect_header,
     )
     return client

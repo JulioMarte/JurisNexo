@@ -190,7 +190,7 @@ def test_boto3_s3_client_uses_required_only_request_checksums(
     assert captured_client_kwargs["endpoint_url"] == settings.endpoint_url
     assert unregistered == [
         (
-            "before-call.s3.PutObject",
+            "before-call.s3",
             FakeBotocoreHandlersModule.add_expect_header,
         )
     ]
