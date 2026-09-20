@@ -277,7 +277,9 @@ Use OCR or a document-understanding model, then preserve:
 
 OCR output is derived data and must not replace the original image.
 
-Low-confidence pages should be eligible for human review or stronger OCR processing.\n\nDocument normalization is a separate post-acquisition stage. The complete normalized representation (for example Docling JSON) is stored as an immutable derived artifact in object storage, linked by explicit provenance to the preserved source artifact. PostgreSQL stores/query-materializes only the identities, lineage and projections needed by corpus/research workflows; it is not the bulk blob store for complete normalized documents. See `39-document-normalization-and-derived-artifacts.md`.
+Low-confidence pages should be eligible for human review or stronger OCR processing.
+
+Document normalization is a separate post-acquisition stage. The complete normalized representation (for example Docling JSON) is stored as an immutable derived artifact in object storage, linked by explicit provenance to the preserved source artifact. PostgreSQL stores/query-materializes only the identities, lineage and projections needed by corpus/research workflows; it is not the bulk blob store for complete normalized documents. See `39-document-normalization-and-derived-artifacts.md`.
 
 ## 8. Normalization levels
 
