@@ -82,6 +82,13 @@ def test_journal_is_durable_and_latest_record_wins(tmp_path: Path) -> None:
         (FakeS3Error("NoSuchBucket", 404, "missing"), "bucket_configuration_error", False),
         (FakeS3Error("SlowDown", 429, "slow down"), "rate_limited", True),
         (FakeS3Error("ServiceUnavailable", 503, "later"), "storage_unavailable", True),
+        (
+            RuntimeError(
+                "Connection was closed before we received a valid response from endpoint URL"
+            ),
+            "transport_error",
+            True,
+        ),
     ],
 )
 def test_infrastructure_failures_are_classified(
