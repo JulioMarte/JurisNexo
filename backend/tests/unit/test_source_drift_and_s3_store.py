@@ -4,7 +4,12 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from jurisnexo.acquisition.s3_object_store import S3ObjectStore, S3ObjectStoreConfig
+from jurisnexo.acquisition.s3_object_store import (
+    S3ObjectStore,
+    S3ObjectStoreConfig,
+    S3RuntimeSettings,
+    create_boto3_s3_client,
+)
 from jurisnexo.acquisition.source_drift import (
     BrowserRecoveryRequest,
     inspect_scj_megaconsulta_surface,
@@ -113,3 +118,50 @@ def test_scj_landing_page_can_be_healthy_without_direct_pdf_results() -> None:
 
     assert observation.status == "healthy"
     assert observation.discovered_item_count == 0
+
+
+
+def test_boto3_s3_client_uses_required_only_request_checksums(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_config: dict[str, object] = {}
+    captured_client_kwargs: dict[str, object] = {}
+
+    class FakeConfig:
+        def __init__(self, **kwargs: object) -> None:
+            captured_config.update(kwargs)
+
+    class FakeBoto3:
+        @staticmethod
+        def client(service: str, **kwargs: object) -> object:
+            assert service == "s3"
+            captured_client_kwargs.update(kwargs)
+            return object()
+
+    class FakeBotocoreConfigModule:
+        Config = FakeConfig
+
+    def fake_import(name: str) -> object:
+        if name == "boto3":
+            return FakeBoto3
+        if name == "botocore.config":
+            return FakeBotocoreConfigModule
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(
+        "jurisnexo.acquisition.s3_object_store.importlib.import_module",
+        fake_import,
+    )
+    settings = S3RuntimeSettings(
+        bucket="jurisnexo-official",
+        region="us-east-005",
+        endpoint_url="https://s3.us-east-005.backblazeb2.com",
+        access_key_id="key-id",
+        secret_access_key="secret-key",
+        force_path_style=True,
+    )
+
+    create_boto3_s3_client(settings)
+
+    assert captured_config["request_checksum_calculation"] == "when_required"
+    assert captured_config["signature_version"] == "s3v4"
+    assert captured_config["s3"] == {"addressing_style": "path"}
+    assert captured_client_kwargs["endpoint_url"] == settings.endpoint_url
