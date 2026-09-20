@@ -924,6 +924,27 @@ Avoid implicit model downloads in production workers; pre-fetch and verify pinne
 
 ---
 
+## 30.5. Consumer/workspace boundary
+
+Research and ingestion agents must not choose among Docling/OCR/JEV/VLM artifacts themselves.
+
+Expose a deterministic resolver/capability layer conceptually equivalent to:
+
+```text
+preferred_normalized_representation(document)
+read_page(...)
+read_pages(...)
+search_document(...)
+render_page_image(...)
+```
+
+The resolver applies the accepted quality/version policy and returns stable document capabilities.
+Agents should not need to know which Docling version, OCR backend, JEV configuration or VLM produced
+the preferred view.
+
+This preserves the stable Document Workspace boundary described in
+`15-ingestion-agent-pipeline.md` and lets normalization evolve without rewriting agent behavior.
+
 ## 31. Indexing boundary
 
 Only accepted normalized text should feed the trusted search/index pipeline.
@@ -1042,6 +1063,15 @@ fixtures
 Run a controlled non-Principales SCJ sample before any broad backfill decision.
 
 ---
+
+## 33.5. Derived-artifact retention and garbage collection
+
+Do not implement automatic deletion during the initial normalization rollout.
+
+Content-addressed normalization will naturally produce superseded or unreferenced derivatives over
+time. Start with a **read-only orphan/reachability audit** that can identify objects not referenced by
+live provenance/run manifests. Automatic garbage collection should only be introduced later with a
+separate retention contract and proof that reachable historical provenance cannot be deleted.
 
 ## 34. Decisions intentionally left open
 
@@ -1246,6 +1276,8 @@ represented in repository documentation rather than only in prior conversation.
 | explicit Principales → broad-SCJ promotion gate | §37 |
 | next-agent startup/read order | §38 |
 | architecture changes must update docs/evidence deliberately | §39 |
+| agents consume a stable resolved workspace, not provider/version internals | §30.5 |
+| garbage collection starts as read-only orphan/reachability audit | §33.5 |
 
 If a future implementation introduces a material behavior not covered above, update this handoff or the
 appropriate canonical successor document instead of allowing a second undocumented normalization policy
