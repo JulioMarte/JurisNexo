@@ -102,7 +102,7 @@ Recommended order:
 18. `docs/18-migration-plan-custom-harness-to-agents-sdk.md` for runtime migration work;
 19. `docs/27-database-bootstrap-and-multi-court-registry.md` for database bootstrap, PostgreSQL configuration, and ephemeral-CI database policy.
 20. `docs/39-document-normalization-and-derived-artifacts.md` when changing OCR, Docling, derived artifacts, or normalization execution.
-21. `docs/40-document-normalization-pipeline-v2-handoff.md` before implementing the post-acquisition normalization worker, JEV quality routing, visual verification, Principales canaries, or normalization reconciliation.
+21. `docs/41-universal-legal-document-normalization-control-plane-v3-handoff.md` before implementing the post-acquisition normalization platform, Docling/Tika integration, OCR/JEV/VLM routing, Principales canaries, second-source proof, or normalization reconciliation. `docs/40-document-normalization-pipeline-v2-handoff.md` is retained design provenance, not the current parser-ownership/implementation handoff.
 
 Do not treat historical benchmark behavior or the current implementation as authoritative when it conflicts with accepted current docs. Conversely, do not assume documented architecture has already been implemented: verify the code.
 
