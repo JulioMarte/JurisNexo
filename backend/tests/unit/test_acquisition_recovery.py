@@ -145,17 +145,30 @@ def test_backblaze_capacity_incident_preserves_completed_work_for_resume(
 class FakeCheckpointClient:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.metadata: dict[str, dict[str, str]] = {}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: object) -> None:
+    def put_object(
+        self,
+        *,
+        Bucket: str,
+        Key: str,
+        Body: bytes,
+        Metadata: dict[str, str],
+        **_: object,
+    ) -> None:
         assert Bucket == "checkpoint-bucket"
         self.objects[Key] = Body
+        self.metadata[Key] = dict(Metadata)
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
         assert Bucket == "checkpoint-bucket"
         if Key not in self.objects:
             error = FakeS3Error("NoSuchKey", 404, "missing")
             raise error
-        return {"Body": BytesIO(self.objects[Key])}
+        return {
+            "Body": BytesIO(self.objects[Key]),
+            "Metadata": self.metadata.get(Key, {}),
+        }
 
 
 class FakeCheckpointConfig:
@@ -181,7 +194,8 @@ def test_remote_checkpoint_mirror_survives_loss_of_runner_disk(tmp_path: Path) -
     first.append(record)
     mirror = S3RecoveryCheckpointMirror(
         object_store=store,
-        object_key="_checkpoints/scj/decisions/shard-000.jsonl",
+        object_key="_checkpoints/scj/decisions/snapshot-a/shard-000.jsonl",
+        checkpoint_identity="scj:decisions:snapshot-a:0:1",
     )
     mirror.persist(first)
 
@@ -198,7 +212,46 @@ def test_remote_checkpoint_missing_is_not_an_error(tmp_path: Path) -> None:
     store = FakeCheckpointStore()
     mirror = S3RecoveryCheckpointMirror(
         object_store=store,
-        object_key="_checkpoints/scj/decisions/shard-001.jsonl",
+        object_key="_checkpoints/scj/decisions/snapshot-a/shard-001.jsonl",
+        checkpoint_identity="scj:decisions:snapshot-a:1:2",
     )
     journal = AcquisitionRecoveryJournal(tmp_path / "checkpoint.jsonl")
     assert mirror.load_if_present(journal) is False
+
+
+def test_remote_checkpoint_rejects_corrupted_payload(tmp_path: Path) -> None:
+    store = FakeCheckpointStore()
+    journal = AcquisitionRecoveryJournal(tmp_path / "runner-a.jsonl")
+    journal.append(_stored())
+    mirror = S3RecoveryCheckpointMirror(
+        object_store=store,
+        object_key="_checkpoints/scj/decisions/snapshot-a/shard-000.jsonl",
+        checkpoint_identity="scj:decisions:snapshot-a:0:1",
+    )
+    mirror.persist(journal)
+    store.client.objects[mirror.object_key] += b"corruption"
+
+    restored = AcquisitionRecoveryJournal(tmp_path / "runner-b.jsonl")
+    with pytest.raises(RuntimeError, match="CHECKPOINT_INTEGRITY_MISMATCH"):
+        mirror.load_if_present(restored)
+
+
+def test_remote_checkpoint_rejects_identity_mismatch(tmp_path: Path) -> None:
+    store = FakeCheckpointStore()
+    journal = AcquisitionRecoveryJournal(tmp_path / "runner-a.jsonl")
+    journal.append(_stored())
+    writer = S3RecoveryCheckpointMirror(
+        object_store=store,
+        object_key="_checkpoints/scj/decisions/snapshot-a/shard-000.jsonl",
+        checkpoint_identity="scj:decisions:snapshot-a:0:1",
+    )
+    writer.persist(journal)
+
+    reader = S3RecoveryCheckpointMirror(
+        object_store=store,
+        object_key=writer.object_key,
+        checkpoint_identity="scj:decisions:snapshot-b:0:1",
+    )
+    restored = AcquisitionRecoveryJournal(tmp_path / "runner-b.jsonl")
+    with pytest.raises(RuntimeError, match="CHECKPOINT_IDENTITY_MISMATCH"):
+        reader.load_if_present(restored)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -66,6 +67,14 @@ def _event(name: str, **payload: object) -> None:
         ),
         flush=True,
     )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -343,11 +352,23 @@ def main() -> int:
     )
 
     object_store = build_s3_object_store()
+    inventory_sha256 = _sha256_file(inventory_path)
+    certified_inventory_sha256 = (
+        os.environ.get("SCJ_CERTIFIED_INVENTORY_SHA256", "").strip() or inventory_sha256
+    )
+    if certified_inventory_sha256 != inventory_sha256:
+        raise RuntimeError(
+            "SCJ certified inventory digest does not match the inventory file used by this shard"
+        )
     recovery_mirror = S3RecoveryCheckpointMirror(
         object_store=object_store,
         object_key=(
             "_checkpoints/scj/sentencias-1994-actualidad/"
-            f"shard-{shard_index:03d}.jsonl"
+            f"{certified_inventory_sha256}/shard-{shard_index:03d}.jsonl"
+        ),
+        checkpoint_identity=(
+            "scj:sentencias-1994-actualidad:"
+            f"{certified_inventory_sha256}:{shard_index}:{shard_count}"
         ),
     )
     if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
@@ -389,9 +410,7 @@ def main() -> int:
         batch_id=batch_id,
         partition_index=shard_index,
         partition_count=shard_count,
-        certified_inventory_sha256=(
-            os.environ.get("SCJ_CERTIFIED_INVENTORY_SHA256", "").strip() or None
-        ),
+        certified_inventory_sha256=certified_inventory_sha256,
     )
 
     _event(

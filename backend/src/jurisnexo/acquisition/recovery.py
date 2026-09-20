@@ -117,11 +117,20 @@ class AcquisitionRecoveryJournal:
 class S3RecoveryCheckpointMirror:
     """Durable compact checkpoint outside the final run-manifest namespace."""
 
-    def __init__(self, *, object_store: Any, object_key: str) -> None:
+    def __init__(
+        self,
+        *,
+        object_store: Any,
+        object_key: str,
+        checkpoint_identity: str,
+    ) -> None:
         if not object_key.startswith("_checkpoints/"):
             raise ValueError("recovery checkpoint key must use _checkpoints/")
+        if not checkpoint_identity.strip():
+            raise ValueError("checkpoint_identity must not be empty")
         self.object_store = object_store
         self.object_key = object_key
+        self.checkpoint_identity = checkpoint_identity.strip()
 
     def load_if_present(self, journal: AcquisitionRecoveryJournal) -> bool:
         try:
@@ -133,7 +142,24 @@ class S3RecoveryCheckpointMirror:
             if self.object_store.is_not_found(exc):
                 return False
             raise
-        journal.restore_bytes(response["Body"].read())
+        payload = response["Body"].read()
+        response_mapping = _mapping(response) or {}
+        metadata = _mapping(response_mapping.get("Metadata")) or {}
+        expected_digest = str(metadata.get("sha256") or "")
+        actual_digest = hashlib.sha256(payload).hexdigest()
+        if not expected_digest:
+            raise RuntimeError("CHECKPOINT_INTEGRITY_METADATA_MISSING")
+        if actual_digest != expected_digest:
+            raise RuntimeError(
+                f"CHECKPOINT_INTEGRITY_MISMATCH for {self.object_key}"
+            )
+        stored_identity = str(metadata.get("checkpoint_identity") or "")
+        if stored_identity != self.checkpoint_identity:
+            raise RuntimeError(
+                f"CHECKPOINT_IDENTITY_MISMATCH for {self.object_key}: "
+                f"expected {self.checkpoint_identity!r}, got {stored_identity!r}"
+            )
+        journal.restore_bytes(payload)
         return True
 
     def persist(self, journal: AcquisitionRecoveryJournal) -> None:
@@ -144,7 +170,11 @@ class S3RecoveryCheckpointMirror:
             Key=self.object_key,
             Body=payload,
             ContentType="application/x-ndjson",
-            Metadata={"sha256": digest, "checkpoint_kind": "recovery-latest-state"},
+            Metadata={
+                "sha256": digest,
+                "checkpoint_kind": "recovery-latest-state",
+                "checkpoint_identity": self.checkpoint_identity,
+            },
         )
 
 

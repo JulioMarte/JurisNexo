@@ -80,7 +80,10 @@ class FakeS3Client:
         assert Bucket == self.owner.config.bucket
         if Key not in self.owner.objects:
             raise FakeS3Error("NoSuchKey", 404, "missing")
-        return {"Body": BytesIO(self.owner.objects[Key])}
+        return {
+            "Body": BytesIO(self.owner.objects[Key]),
+            "Metadata": self.owner.metadata.get(Key, {}),
+        }
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
         assert Bucket == self.owner.config.bucket
@@ -161,7 +164,8 @@ def test_capacity_interruption_resume_manifest_and_reconciliation(tmp_path: Path
     first_journal = AcquisitionRecoveryJournal(tmp_path / "runner-a.jsonl")
     mirror = S3RecoveryCheckpointMirror(
         object_store=store,
-        object_key="_checkpoints/scj/decisions/shard-000.jsonl",
+        object_key="_checkpoints/scj/decisions/snapshot-c/shard-000.jsonl",
+        checkpoint_identity="scj:decisions:snapshot-c:0:1",
     )
 
     interrupted = False

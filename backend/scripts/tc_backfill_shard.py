@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 
 import psycopg
@@ -32,6 +34,30 @@ from jurisnexo.corpus.source_inventory import (
     PostgresSourceDocumentInventory,
     SourceDocumentObservation,
 )
+
+_STOP_SIGNAL: str | None = None
+
+
+def _capture_stop_signal(signum: int, _frame: object) -> None:
+    global _STOP_SIGNAL
+    try:
+        _STOP_SIGNAL = signal.Signals(signum).name
+    except ValueError:
+        _STOP_SIGNAL = str(signum)
+
+
+def _install_signal_handlers() -> None:
+    signal.signal(signal.SIGTERM, _capture_stop_signal)
+    signal.signal(signal.SIGINT, _capture_stop_signal)
+
+
+def _inventory_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 
 REQUIRED_ENV = (
     "DATABASE_URL",
@@ -114,6 +140,7 @@ def assigned_records(
 
 
 def main() -> int:
+    _install_signal_handlers()
     require_environment()
     shard_index = int(os.environ["TC_BACKFILL_SHARD_INDEX"])
     shard_count = int(os.environ["TC_BACKFILL_SHARD_COUNT"])
@@ -125,15 +152,38 @@ def main() -> int:
     tracer = trace.get_tracer("jurisnexo.tc.backfill")
     fetcher = BoundedHttpFetcher(allowed_hosts=OFFICIAL_SOURCE_HOSTS)
     object_store = build_s3_object_store()
+    inventory_path = Path(os.environ["TC_INVENTORY_FILE"])
+    inventory_sha256 = _inventory_sha256(inventory_path)
     recovery_journal = AcquisitionRecoveryJournal(output_dir / "recovery-checkpoint.jsonl")
     recovery_mirror = S3RecoveryCheckpointMirror(
         object_store=object_store,
-        object_key=f"_checkpoints/tc/decisions/shard-{shard_index:03d}.jsonl",
+        object_key=(
+            "_checkpoints/tc/decisions/"
+            f"{inventory_sha256}/shard-{shard_index:03d}.jsonl"
+        ),
+        checkpoint_identity=f"tc:decisions:{inventory_sha256}:{shard_index}:{shard_count}",
     )
     if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
-        recovery_mirror.load_if_present(recovery_journal)
+        try:
+            recovery_mirror.load_if_present(recovery_journal)
+        except Exception as exc:
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is not None:
+                interruption = {
+                    "status": "RUN_INTERRUPTED",
+                    "cause": infrastructure_failure.kind,
+                    "phase": "checkpoint_restore",
+                    "retryable": infrastructure_failure.retryable,
+                    "resumable": True,
+                }
+                (output_dir / f"backfill-{shard_index:02d}-interruption.json").write_text(
+                    json.dumps(interruption, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                return 75
+            raise
     records = assigned_records(
-        inventory_path=Path(os.environ["TC_INVENTORY_FILE"]),
+        inventory_path=inventory_path,
         shard_index=shard_index,
         shard_count=shard_count,
     )
