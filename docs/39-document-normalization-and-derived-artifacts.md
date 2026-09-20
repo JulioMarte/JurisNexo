@@ -171,7 +171,7 @@ criteria — lives in:
 
 V3 is the implementation sequence for this architecture. This document remains the stable artifact/provenance contract.
 
-## 8. Initial implementation scope
+## 9. Initial implementation scope
 
 Migration `0048_document_normalization_artifacts` establishes only the durable
 database substrate:
