@@ -9,8 +9,6 @@ from typing import Any
 
 INPUT_DIR = Path(os.environ["SCJ_YEAR_INVENTORY_INPUT"])
 OUTPUT_DIR = Path(os.environ["SCJ_YEAR_INVENTORY_OUTPUT"])
-YEAR_MIN = int(os.environ.get("SCJ_YEAR_MIN", "1994"))
-YEAR_MAX = int(os.environ.get("SCJ_YEAR_MAX", "2026"))
 SURFACES = ("decisions",)
 
 
@@ -36,14 +34,26 @@ def source_identifier(record: dict[str, Any]) -> tuple[str, str]:
     return identifier, "decisions"
 
 
-def main() -> None:
-    if YEAR_MIN > YEAR_MAX:
-        raise ValueError("SCJ_YEAR_MIN must be <= SCJ_YEAR_MAX")
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    expected_years = set(range(YEAR_MIN, YEAR_MAX + 1))
+def _expected_years_from_discovery() -> set[int] | None:
+    raw = os.environ.get("SCJ_YEAR_DISCOVERY_FILE", "").strip()
+    if not raw:
+        return None
+    payload = load_json(Path(raw))
+    years = payload.get("active_years")
+    if not isinstance(years, list) or not years:
+        raise RuntimeError("SCJ year discovery artifact lacks active_years")
+    return {int(year) for year in years}
 
-    summaries = sorted(INPUT_DIR.glob("**/*-years-shard-*-summary.json"))
-    rows = sorted(INPUT_DIR.glob("**/*-years-shard-*.jsonl"))
+
+def main() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    summaries = sorted(INPUT_DIR.glob("**/*-summary.json"))
+    rows = sorted(
+        path
+        for path in INPUT_DIR.glob("**/*.jsonl")
+        if "-summary" not in path.name
+    )
     if not summaries or not rows:
         raise RuntimeError("year-sharded SCJ inventory artifacts are missing")
 
@@ -55,7 +65,9 @@ def main() -> None:
             continue
         summaries_by_surface[surface].append(summary)
 
+    discovered_years = _expected_years_from_discovery()
     coverage: dict[str, dict[str, Any]] = {}
+    observed_expected_years: set[int] | None = None
     for surface in SURFACES:
         surface_summaries = summaries_by_surface[surface]
         if not surface_summaries:
@@ -76,6 +88,9 @@ def main() -> None:
             for year in item.get("assigned_years", [])
         ]
         assigned_counts = Counter(assigned)
+        expected_years = discovered_years or set(assigned_counts)
+        if observed_expected_years is None:
+            observed_expected_years = set(expected_years)
         if set(assigned_counts) != expected_years:
             raise RuntimeError(
                 f"{surface} year coverage mismatch: "
@@ -121,11 +136,20 @@ def main() -> None:
                 raw_count += 1
                 unique_by_source_key.setdefault((surface, stable_key), record)
 
+    if observed_expected_years is None or not observed_expected_years:
+        raise RuntimeError("SCJ inventory contains no certified year coverage")
+    expected_years = observed_expected_years
+
     canonical_records: list[dict[str, Any]] = []
     url_sources: dict[str, list[dict[str, Any]]] = {}
+    no_locator_records: list[dict[str, Any]] = []
     for (_, _), record in sorted(unique_by_source_key.items()):
         identifier, collection = source_identifier(record)
         document_url = str(record.get("_document_url") or "").strip()
+        availability = str(record.get("_artifact_availability") or "").strip()
+        availability_reason = str(record.get("_availability_reason") or "").strip() or None
+        if availability not in {"locator_present", "no_locator"}:
+            raise ValueError(f"unsupported SCJ artifact availability: {availability!r}")
         prepared = {
             "surface": record["surface"],
             "year": int(record["year"]),
@@ -133,12 +157,19 @@ def main() -> None:
             "source_identifier": identifier,
             "collection": collection,
             "discovery_url": "https://consultasentenciascj.poderjudicial.gob.do/",
-            "document_url": document_url,
+            "document_url": document_url or None,
+            "artifact_availability": availability,
+            "availability_reason": availability_reason,
             "_stable_key": record["_stable_key"],
             "row": record["row"],
         }
         canonical_records.append(prepared)
-        url_sources.setdefault(document_url, []).append(prepared)
+        if availability == "locator_present":
+            if not document_url.startswith("https://"):
+                raise ValueError("locator_present record lacks HTTPS document URL")
+            url_sources.setdefault(document_url, []).append(prepared)
+        else:
+            no_locator_records.append(prepared)
 
     duplicate_urls = {
         url: [
@@ -188,12 +219,18 @@ def main() -> None:
     acquisition_year_counts = Counter(int(record["year"]) for record in acquisition_records)
     summary = {
         "status": "COMPLETE",
-        "year_min": YEAR_MIN,
-        "year_max": YEAR_MAX,
+        "year_min": min(expected_years),
+        "year_max": max(expected_years),
         "requested_year_count": len(expected_years),
+        "discovered_active_years": sorted(expected_years),
         "raw_observation_count": raw_count,
         "unique_source_record_count": len(canonical_records),
         "unique_document_url_count": len(acquisition_records),
+        "locator_present_source_record_count": sum(
+            1 for record in canonical_records
+            if record["artifact_availability"] == "locator_present"
+        ),
+        "no_locator_source_record_count": len(no_locator_records),
         "duplicate_document_url_count": len(duplicate_urls),
         "surface_counts": dict(sorted(surface_counts.items())),
         "source_year_counts": {str(k): v for k, v in sorted(year_counts.items())},
@@ -212,6 +249,16 @@ def main() -> None:
         json.dumps(duplicate_urls, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    no_locator_path = OUTPUT_DIR / "scj-1994-no-locator.inventory.jsonl"
+    with no_locator_path.open("w", encoding="utf-8") as output:
+        for record in sorted(
+            no_locator_records,
+            key=lambda item: (
+                int(item["year"]),
+                str(item["source_identifier"]),
+            ),
+        ):
+            output.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
 
 
