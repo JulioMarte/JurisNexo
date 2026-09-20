@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install backend runtime
-        run: python -m pip install -e ./backend
+        run: python -m pip install -e ./backend 'boto3==1.43.93'
       - name: Download certified inventory from completed acquisition run
         uses: actions/download-artifact@v5
         with:
