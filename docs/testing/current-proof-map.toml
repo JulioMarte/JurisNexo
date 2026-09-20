@@ -402,3 +402,14 @@ evidence = ["invariant", "integration"]
 guarantee = "INV-ACQUISITION-RECONCILIATION-001"
 path = "backend/tests/architecture/test_acquisition_run_manifest_contract.py"
 evidence = ["fitness"]
+
+
+[[proofs]]
+guarantee = "INV-DERIVED-ARTIFACT-PROVENANCE-001"
+path = "backend/tests/integration/test_document_normalization_artifacts.py"
+evidence = ["invariant", "integration"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-RUN-REPRODUCIBILITY-001"
+path = "backend/tests/integration/test_document_normalization_artifacts.py"
+evidence = ["invariant", "integration"]

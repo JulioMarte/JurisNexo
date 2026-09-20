@@ -473,3 +473,20 @@ severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "integration", "fitness"]
 risk = ["provenance", "operations", "architecture"]
+
+
+[[guarantees]]
+id = "INV-DERIVED-ARTIFACT-PROVENANCE-001"
+statement = "Document normalization, OCR, layout analysis and vision processing produce immutable derived artifacts with explicit acyclic lineage back to a preserved official source artifact; a derivative never overwrites or impersonates primary-source bytes."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["provenance", "legal_quality", "architecture"]
+
+[[guarantees]]
+id = "INV-NORMALIZATION-RUN-REPRODUCIBILITY-001"
+statement = "A durable document-normalization run is scoped to an immutable acquisition-manifest locator and checksum and persists pipeline/configuration identity plus per-source outcomes, so normalization failure or rerun remains distinguishable from source acquisition."
+severity = "high"
+classification = "HARD"
+required_evidence = ["invariant", "integration"]
+risk = ["provenance", "operations", "architecture"]
