@@ -490,3 +490,11 @@ severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "integration"]
 risk = ["provenance", "operations", "architecture"]
+
+[[guarantees]]
+id = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+statement = "The post-acquisition normalization core is institution/source agnostic and delegates commodity format parsing to replaceable engines behind explicit control-plane boundaries; adding a new legal source should normally require source discovery/regression evidence rather than a duplicated SCJ/TC/legislation normalization pipeline."
+severity = "high"
+classification = "CONTROLLED"
+required_evidence = ["fitness", "contract", "integration"]
+risk = ["architecture", "operations", "legal_quality"]
