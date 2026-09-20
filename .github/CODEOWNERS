@@ -1,0 +1,10 @@
+# JurisNexo code owners.
+#
+# The Main Release ruleset enables "require code owner review", so a pull
+# request can only reach main when a listed owner approves it. The default
+# owner covers every path; add narrower rules above this line if ownership
+# later splits by area (for example .github/workflows/, migrations, or docs/).
+#
+# Syntax: <pattern> <owner>...  (owners must be users or org teams with write access)
+
+* @JulioMarte
