@@ -84,3 +84,39 @@ def test_scj_corpus_backfill_discovers_source_scope_and_preserves_no_locator_rec
     assert "official_record_has_no_download_url" in inventory
     assert "locator_present_source_record_count" in merger
     assert "no_locator_source_record_count" in merger
+
+
+
+def test_production_backfills_remain_source_scoped_and_acquisition_only() -> None:
+    workflows_dir = REPO_ROOT / ".github" / "workflows"
+    offenders: list[str] = []
+
+    for path in sorted(workflows_dir.glob("*backfill*.yml")):
+        text = path.read_text(encoding="utf-8")
+        has_scj = "SCJ_" in text or "scj_" in text
+        has_tc = "TC_" in text or "tc_" in text
+        if has_scj and has_tc:
+            offenders.append(f"{path.name}: mixes SCJ and TC acquisition")
+
+    scj_workflow = (
+        workflows_dir / "scj-1994-full-storage-backfill.yml"
+    ).read_text(encoding="utf-8")
+    forbidden_scj_markers = (
+        "DATABASE_URL",
+        "register_scj_source_inventory.py",
+        "link_source_documents_to_artifacts.py",
+        "tc_inventory.py",
+        "tc_backfill_shard.py",
+    )
+    for marker in forbidden_scj_markers:
+        if marker in scj_workflow:
+            offenders.append(
+                "scj-1994-full-storage-backfill.yml: "
+                f"contains downstream or cross-source marker {marker}"
+            )
+
+    assert not offenders, (
+        "Production acquisition workflows must stay source-scoped and must not combine "
+        "artifact acquisition with PostgreSQL registration/linking or another court. "
+        f"Violations: {offenders}"
+    )

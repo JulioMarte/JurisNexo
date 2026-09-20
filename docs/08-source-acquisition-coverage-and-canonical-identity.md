@@ -227,3 +227,36 @@ The acquisition layer should maximize trustworthy optionality:
 > preserve official source evidence broadly and cheaply; resolve identity conservatively; make reliable text searchable when practical; spend expensive semantic analysis where jurisprudential/research value warrants it.
 
 This is the acquisition counterpart of the flywheel strategy in document 38.
+
+
+## 17. Operational acquisition topology
+
+Production acquisition is source-scoped. JurisNexo does not use one workflow that acquires multiple courts and then performs normalization, linking, or semantic ingestion in the same orchestration.
+
+The current operational shape is:
+
+```text
+official source
+    -> source-specific discovery/inventory
+    -> source-specific certification
+    -> immutable artifact acquisition
+    -> source-specific reconciliation
+
+later, independently
+    -> corpus registration / normalization
+    -> structure and extraction pipeline
+    -> semantic enrichment
+```
+
+For the current SCJ decisions corpus, the production workflow is `.github/workflows/scj-1994-full-storage-backfill.yml` (legacy filename; its runtime scope is dynamically discovered SCJ official decisions, not a hard-coded 1994+ contract).
+
+Rules for production acquisition:
+
+- one court/source family per production backfill workflow;
+- acquisition must not silently expand into another court;
+- acquisition must not require semantic normalization to finish successfully;
+- PostgreSQL corpus registration, source-document linking, segmentation, OCR normalization, and legal-semantic enrichment are separate downstream concerns;
+- a future TC acquisition path must have its own workflow and source-specific inventory/reconciliation contract rather than being appended to the SCJ workflow;
+- cross-source scheduled orchestration may be introduced later only when the individual source pipelines are independently proven and there is a demonstrated operational need.
+
+This separation keeps recovery, provenance, source drift, manifests, and failures attributable to one source boundary at a time.
