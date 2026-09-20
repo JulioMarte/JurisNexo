@@ -26,7 +26,7 @@ env:
   EXPECTED_BUCKET_SHA256: '02ab33707c72f445f70f400f18e089c00328ff19bbd5c306a93eeee1ffe2101f'
 
 jobs:
-  discover-years:
+  discover_years:
     if: inputs.confirm_production == 'RUN'
     name: Discover official SCJ decision years
     runs-on: ubuntu-24.04
@@ -69,7 +69,7 @@ jobs:
             scj-year-discovery.log
 
   inventory:
-    needs: discover-years
+    needs: discover_years
     name: Inventory decisions year ${{ matrix.year }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -77,7 +77,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix:
-        year: ${{ fromJSON(needs.discover-years.outputs.active_years) }}
+        year: ${{ fromJSON(needs.discover_years.outputs.active_years) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -111,7 +111,7 @@ jobs:
 
   certify:
     name: Certify 1994+ acquisition inventory
-    needs: [discover-years, inventory]
+    needs: [discover_years, inventory]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
