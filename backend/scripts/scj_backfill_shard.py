@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -31,6 +33,30 @@ from jurisnexo.corpus.artifact_catalog import PostgresOfficialArtifactCatalog
 from jurisnexo.corpus.artifact_inventory import PostgresRegisteredArtifactInventory
 
 SCJ_PORTAL = "https://consultasentenciascj.poderjudicial.gob.do/"
+_STOP_SIGNAL: str | None = None
+
+
+def _capture_stop_signal(signum: int, _frame: object) -> None:
+    global _STOP_SIGNAL
+    try:
+        _STOP_SIGNAL = signal.Signals(signum).name
+    except ValueError:
+        _STOP_SIGNAL = str(signum)
+
+
+def _install_signal_handlers() -> None:
+    signal.signal(signal.SIGTERM, _capture_stop_signal)
+    signal.signal(signal.SIGINT, _capture_stop_signal)
+
+
+def _inventory_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 REQUIRED_ENV = (
     "DATABASE_URL",
     "SCJ_INVENTORY_FILE",
@@ -159,6 +185,7 @@ def assigned_candidates(
 
 
 def main() -> int:
+    _install_signal_handlers()
     require_environment()
     shard_index = int(os.environ["SCJ_BACKFILL_SHARD_INDEX"])
     shard_count = int(os.environ["SCJ_BACKFILL_SHARD_COUNT"])
@@ -169,16 +196,39 @@ def main() -> int:
     configure_telemetry(shard_index=shard_index, shard_count=shard_count)
     tracer = trace.get_tracer("jurisnexo.scj.backfill")
     object_store = build_s3_object_store()
+    inventory_path = Path(os.environ["SCJ_INVENTORY_FILE"])
+    inventory_sha256 = _inventory_sha256(inventory_path)
     recovery_journal = AcquisitionRecoveryJournal(output_dir / "recovery-checkpoint.jsonl")
     recovery_mirror = S3RecoveryCheckpointMirror(
         object_store=object_store,
-        object_key=f"_checkpoints/scj/official-corpus/shard-{shard_index:03d}.jsonl",
+        object_key=(
+            "_checkpoints/scj/official-corpus/"
+            f"{inventory_sha256}/shard-{shard_index:03d}.jsonl"
+        ),
+        checkpoint_identity=f"scj:official-corpus:{inventory_sha256}:{shard_index}:{shard_count}",
     )
     if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
-        recovery_mirror.load_if_present(recovery_journal)
+        try:
+            recovery_mirror.load_if_present(recovery_journal)
+        except Exception as exc:
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is not None:
+                interruption = {
+                    "status": "RUN_INTERRUPTED",
+                    "cause": infrastructure_failure.kind,
+                    "phase": "checkpoint_restore",
+                    "retryable": infrastructure_failure.retryable,
+                    "resumable": True,
+                }
+                (output_dir / f"backfill-{shard_index:02d}-interruption.json").write_text(
+                    json.dumps(interruption, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                return 75
+            raise
     fetcher = BoundedHttpFetcher(allowed_hosts=OFFICIAL_SOURCE_HOSTS)
     candidates = assigned_candidates(
-        inventory_path=Path(os.environ["SCJ_INVENTORY_FILE"]),
+        inventory_path=inventory_path,
         shard_index=shard_index,
         shard_count=shard_count,
     )
