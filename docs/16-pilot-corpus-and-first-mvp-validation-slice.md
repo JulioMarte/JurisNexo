@@ -2,13 +2,23 @@
 
 ## 1. Purpose
 
-JurisNexo already has a useful body of Supreme Court source material available in the Supabase project used for the product. This materially changes the first implementation milestone: the MVP does not need to begin by discovering an abstract sample corpus. It can begin by proving the complete ingestion and retrieval path against real Dominican Supreme Court material that is already available.
+JurisNexo already has useful Supreme Court source material available in the Supabase project used for the product. This materially changes the first implementation milestone: the MVP does not need to begin with an abstract sample corpus. It can prove the complete ingestion and retrieval path against real Dominican Supreme Court material that is already available.
 
-This document defines the initial pilot corpus, what it is allowed to prove, what it does not prove, and the order in which the corpus should expand.
+This document defines the **deep-validation pilot**, what it is allowed to prove, what it does not prove, and how it coexists with broader source discovery/acquisition.
+
+The canonical corpus strategy is defined in `38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`:
+
+```text
+broad, cheap, provenance-preserving discoverability
+        +
+selective, evidence-backed semantic depth
+```
+
+The pilot is deliberately narrow because validation needs a controlled fixture. That does **not** mean the broader corpus must remain undiscovered, unacquired or unsearchable until the pilot is complete.
 
 ## 2. Current available source material
 
-As of the initial inventory, Supabase Storage contains approximately:
+As of the initial inventory, Supabase Storage contained approximately:
 
 - 34 PDF files under the Supreme Court collection;
 - approximately 243.84 MB of source PDFs;
@@ -16,28 +26,19 @@ As of the initial inventory, Supabase Storage contains approximately:
 - recent compilations for 2022, 2023, 2024, and early 2025;
 - older annual or volume-based compilations for multiple prior years.
 
-The available files include, among others:
+These files are source artifacts, not yet by themselves a trustworthy normalized legal corpus, and this historical inventory is not a claim about the complete official SCJ publication universe.
 
-- `Principales_Decisiones_enero_abril_2025.pdf`;
-- `Principales_Decisiones_enero_abril_2024.pdf`;
-- `Principales_Decisiones_mayo_agosto_2024.pdf`;
-- `Principales-Decisiones-septiembre-diciembre-2024.pdf`;
-- corresponding recent Supreme Court compilations for 2023 and 2022;
-- historical principal-decision/sentence compilations reaching back to approximately 2005.
+The broader acquisition system should reconcile official source surfaces independently of this pilot inventory and measure discovered, downloadable, acquired, searchable, unresolved and missing material.
 
-These files are source artifacts, not yet a trustworthy normalized legal corpus.
+## 3. First canonical deep-validation artifact
 
-At inventory time, the existing application-level tables such as `sources` and `chunks` did not contain an ingested corpus. This is useful: the MVP can exercise the new ingestion architecture from source artifact to searchable evidence rather than inheriting undocumented transformations.
-
-## 3. First canonical pilot artifact
-
-The first ingestion fixture should be:
+The first deep-ingestion fixture remains:
 
 ```text
 Suprema Corte PDF/Principales_Decisiones_enero_abril_2025.pdf
 ```
 
-This should be treated as an immutable source artifact and retained byte-for-byte.
+It should be treated as an immutable source artifact and retained byte-for-byte.
 
 It is intentionally a compilation rather than assuming one PDF equals one judicial decision.
 
@@ -47,17 +48,17 @@ It is intentionally a compilation rather than assuming one PDF equals one judici
 physical PDF artifact != canonical judicial case
 ```
 
-A source PDF may contain multiple judicial decisions. One judicial decision may also later be observed through multiple physical artifacts, mirrors, editions, or filenames.
+A source PDF may contain multiple judicial decisions. One judicial decision may later be observed through multiple physical artifacts, mirrors, editions, filenames, collections or raw citations.
 
 The data model and ingestion implementation must preserve this distinction from the first production-quality test.
 
-## 4. Expected ingestion transformation
+## 4. Expected deep-ingestion transformation
 
 The first vertical ingestion path should prove:
 
 ```text
-Supabase Storage PDF
-        -> register immutable source artifact
+source artifact
+        -> register immutable artifact
         -> calculate cryptographic content hash
         -> extract page-preserving text
         -> detect extraction/OCR quality
@@ -68,51 +69,34 @@ Supabase Storage PDF
         -> associate each case with exact artifact pages
         -> create page/passage records
         -> extract explicit legal citations where reliable
-        -> build lexical search representation
-        -> build configured semantic embeddings
-        -> quality checks
+        -> build search representations
+        -> quality/audit gates
         -> searchable corpus generation
 ```
 
 No stage is allowed to destroy the ability to trace normalized text back to the original artifact and page.
 
-## 5. Decision-boundary detection is a first-class MVP problem
+This full audited path is not required before every broader source artifact can be discovered or acquired. Cheap breadth may stop at the strongest trustworthy state available and record unresolved work explicitly.
 
-The first source is a compilation. Therefore the ingestion pipeline must not simply chunk the complete PDF as one document and call it a case.
+## 5. Decision-boundary detection is a first-class deep-ingestion problem
+
+The first source is a compilation. Therefore the deep-ingestion pipeline must not simply chunk the complete PDF as one document and call it a case.
 
 The pipeline must attempt to identify individual judicial decisions and their page spans.
 
-Candidate signals may include:
-
-- court/chamber headings;
-- decision or sentence identifiers;
-- dates;
-- case/expediente identifiers;
-- parties;
-- repeated formal opening patterns;
-- dispositive sections;
-- table-of-contents information when present;
-- layout and page transitions.
+Candidate signals may include court/chamber headings, decision identifiers, dates, expediente identifiers, parties, formal opening patterns, dispositive sections, table-of-contents information, layout and page transitions.
 
 Boundary detection may use deterministic parsing, model-assisted extraction, or both, but its result must be persisted with provenance and confidence.
 
-When a boundary is uncertain, the system must mark it as requiring review rather than fabricate precision.
+When a boundary is uncertain, the system must mark it for review rather than fabricate precision.
 
 ## 6. Canonical identity versus artifact identity
 
-For every candidate decision, JurisNexo should attempt to produce a stable canonical identity using available fields such as:
+For every candidate decision, JurisNexo should attempt to produce a stable canonical identity using available fields such as court, chamber/sala, decision number, expediente/docket number, decision date, parties/title and source-specific identifiers.
 
-- court;
-- chamber/sala;
-- decision number;
-- expediente/docket number;
-- decision date;
-- parties/title where available;
-- source-specific identifiers.
+The physical artifact remains separately identifiable by checksum and source/storage locator.
 
-The physical artifact remains separately identifiable by its checksum and storage locator.
-
-This allows:
+This permits:
 
 ```text
 canonical case
@@ -122,143 +106,108 @@ canonical case
 
 without falsely creating two independent cases.
 
+Canonical identity is useful to both tracks: the deep pilot tests it rigorously, while broader source/citation observations provide additional evidence for resolving identities over time.
+
 ## 7. Real duplicate evidence already exists
 
-The current Storage inventory already contains at least two pairs of files whose object metadata indicates identical content despite different filenames.
+The initial Storage inventory contained duplicate-content files under different filenames. This means deduplication is not merely a theoretical concern.
 
-Examples observed during inventory include duplicate-content variants for:
-
-- the first 2024 period;
-- the September-December / third-period 2024 compilation.
-
-This means deduplication is not merely a theoretical future concern.
-
-### Requirement
-
-The ingestion pipeline must calculate its own cryptographic content hash and must not rely solely on filenames or storage-provider object metadata for canonical deduplication.
+The ingestion pipeline must calculate its own cryptographic content hash and must not rely solely on filenames or storage-provider metadata.
 
 If two artifacts contain exactly the same bytes:
 
-- retain their observed source/storage identities when useful for provenance;
+- retain distinct observed source/storage identities when useful for provenance;
 - identify the duplicate-content relationship;
-- avoid processing the same bytes repeatedly unless explicitly requested;
+- avoid unnecessary repeated processing;
 - never create duplicate canonical judicial decisions merely because filenames differ.
 
 Provider ETags may be retained as acquisition metadata, but JurisNexo's own content hash is authoritative for exact-byte deduplication.
 
-## 8. Pilot corpus expansion order
+## 8. Pilot depth and corpus breadth are separate axes
 
-Do not ingest all available historical files immediately merely because they exist.
+The old interpretation of corpus expansion as one serial sequence is retired.
 
-The recommended sequence is:
+### Track A — deep-validation / intelligence seed
 
-### Stage A — one compilation
+Start by proving the early-2025 Principales compilation end to end. Then deepen additional SCJ Principales material and high-signal decisions according to the promotion policy in document 38.
 
-Ingest only the early-2025 Supreme Court compilation.
+Early 2024/2023 compilations remain useful adjacent fixtures because they exercise additional layouts, years and retrieval questions.
 
-Objectives:
+Deep work includes expensive or semantically risky operations such as:
 
-- validate parser quality;
-- validate page preservation;
-- validate decision-boundary detection;
-- validate canonical case extraction;
-- expose OCR or formatting problems;
-- validate idempotent re-ingestion;
-- construct the first search/evaluation fixture.
+- robust segmentation/auditing;
+- legal issues and propositions;
+- material factual structure;
+- contextual treatment;
+- human/model verification;
+- high-confidence evidence construction.
 
-### Stage B — one complete recent year plus adjacent period
+### Track B — broad official-source corpus
 
-After Stage A passes manual quality review, expand to the recent 2024 and 2023 compilations.
+In parallel, JurisNexo may discover, acquire and make broader SCJ material cheaply searchable as source reliability permits.
 
-Recommended target set:
+Breadth work is useful for:
+
+- coverage measurement;
+- canonical identity resolution;
+- exact/reference retrieval;
+- adverse-authority search;
+- backward/forward citation traversal;
+- identifying candidates worth deep normalization.
+
+Broad material must preserve provenance and uncertainty, but it does not need complete semantic enrichment before it becomes useful.
+
+### Important distinction
 
 ```text
-2025 Jan-Apr
-2024 Jan-Apr
-2024 May-Aug
-2024 Sep-Dec
-2023 Jan-Apr
-2023 May-Aug
-2023 Sep-Dec
+narrow pilot != narrow total corpus
+broad acquisition != deep legal understanding
 ```
 
-This produces a compact but temporally meaningful recent corpus and is more useful for product experiments than indiscriminately importing twenty years immediately.
-
-### Stage C — controlled historical expansion
-
-Only after ingestion and retrieval metrics are stable should JurisNexo expand systematically into older Supreme Court compilations.
-
-Historical expansion should be driven by:
-
-- benchmark gaps;
-- lawyer research needs;
-- matter/domain coverage;
-- missing precedent chains;
-- corpus freshness/coverage goals;
-- processing quality.
+The system should do both jobs without conflating them.
 
 ## 9. Two independent MVP proofs
 
-The first corpus must support two distinct categories of validation.
-
-### 9.1 Ingestion proof
+### 9.1 Deep-ingestion proof
 
 Question:
 
 > Can JurisNexo reliably transform a real Supreme Court compilation into canonical, page-traceable, searchable judicial decisions?
 
-Success requires evidence that:
-
-- the artifact is immutable and hashed;
-- pages are preserved;
-- individual decisions are not conflated;
-- case metadata is acceptably extracted;
-- uncertain identities/boundaries are explicitly represented;
-- repeat ingestion is idempotent;
-- duplicate artifacts do not become duplicate cases;
-- normalized text can always be traced to source pages.
+Success requires evidence that artifacts are immutable and hashed, pages are preserved, decisions are not conflated, metadata is acceptably extracted, uncertainty is explicit, repeat ingestion is idempotent, duplicates do not become duplicate cases, and normalized text remains traceable to source pages.
 
 ### 9.2 Product/retrieval proof
 
 Question:
 
-> Given a real legal research question whose relevant authorities are present in the pilot corpus, can JurisNexo find the material decisions, including adverse authority, and provide auditable evidence?
+> Given a real legal research question and the corpus actually available to the run, can JurisNexo find material decisions, including adverse authority, and provide auditable evidence while disclosing material corpus limitations?
 
 Success requires:
 
 - a manually reviewed seed benchmark;
-- known relevant cases for each test question where possible;
-- retrieval Recall@K and nDCG measurements;
+- known relevant cases where possible;
+- Recall@K and nDCG measurements;
 - Critical Miss Rate measurement;
 - adverse-authority recall where applicable;
-- exact citation/evidence page verification;
-- documented retrieval configuration and corpus generation.
+- exact evidence-page verification;
+- documented retrieval configuration and corpus generation;
+- explicit searched-corpus/coverage boundaries.
 
-Successful PDF parsing alone is not MVP success.
+Successful parsing or embedding generation alone is not MVP success.
 
-Successful vector embedding generation alone is not MVP success.
+## 10. Initial benchmark creation
 
-## 10. Initial benchmark creation from the pilot corpus
+Once the first deeply processed decisions have been manually inspected, create an initial diagnostic benchmark of approximately 10–20 legal questions grounded in material whose relevance can actually be reviewed.
 
-Once Stage A decisions have been manually inspected, create an initial benchmark of approximately 10-20 legal questions grounded in material actually present in the pilot corpus.
-
-The questions should include variation such as:
-
-- exact legal-reference lookup;
-- doctrinal/legal-principle search;
-- fact-pattern similarity;
-- supporting authority;
-- adverse or limiting authority;
-- citation-chain discovery;
-- date/chamber constraints.
+Questions should vary across exact-reference lookup, doctrinal search, fact-pattern similarity, supporting authority, adverse/limiting authority, citation-chain discovery and date/chamber constraints.
 
 The benchmark must not be generated entirely by the same model that will be evaluated without human review. A legal reviewer should establish or validate relevant authorities and material evidence.
 
-The first benchmark is diagnostic rather than statistically definitive. Its purpose is to expose architecture failures early.
+This diagnostic set can later grow into the Golden Precedent Set described in document 38.
 
 ## 11. Retrieval experiments enabled by the pilot
 
-The same frozen corpus generation should be used to compare:
+Use frozen/versioned corpus generations to compare at least:
 
 ```text
 lexical only
@@ -267,22 +216,15 @@ lexical + semantic + RRF
 lexical + semantic + RRF + reranker
 ```
 
-Additional experiments may compare:
-
-- passage-level versus case-level semantic representations;
-- general multilingual versus legal-specific embeddings;
-- candidate limits;
-- chunking/passaging strategies;
-- query decomposition;
-- citation expansion.
+Additional experiments may compare passage-level versus case-level representations, embeddings, candidate limits, passaging strategies, query decomposition and citation expansion.
 
 Every experiment must use versioned retrieval profiles so results can be reproduced.
 
 ## 12. Storage policy
 
-The currently observed `docs-sentencia` bucket is suitable as an existing source-material location for the pilot, but bucket structure for the product must preserve data-class boundaries.
+Existing source storage can serve as acquisition input, but product storage must preserve data-class boundaries.
 
-Recommended target logical separation:
+Recommended logical separation:
 
 ```text
 public-legal-sources/
@@ -298,47 +240,42 @@ private-generated-reports/
 
 Public jurisprudential sources and private tenant documents must never share an access policy merely for convenience.
 
-A currently public source bucket does not establish the access policy for future tenant uploads or generated reports.
-
 ## 13. What is already ready
 
 The project has already removed several bootstrap uncertainties:
 
 - a functioning Supabase project exists;
-- PostgreSQL is available;
-- Supabase Storage is available;
-- a nontrivial Supreme Court source collection already exists;
-- recent and historical source material is present;
+- PostgreSQL and Storage are available;
+- a nontrivial SCJ seed collection exists;
+- recent and historical source material is available;
 - real duplicate-content cases exist for exercising deduplication;
-- product, architecture, tenancy, research, evidence, benchmark, stack, CI, Docker, and deployment contracts are documented.
+- product, architecture, tenancy, research, evidence, benchmark, stack, CI, Docker, deployment and corpus-strategy contracts are documented.
 
 This materially reduces startup friction.
 
 ## 14. What is not yet ready
 
-The existence of the PDFs must not be confused with having a legal corpus.
+The existence of source files must not be confused with having a trustworthy legal corpus.
 
-The following remain unproven until implemented and measured:
+The following remain empirical risks until implemented and measured:
 
-- quality of text extraction from these specific SCJ PDFs;
+- text/OCR quality across source families;
 - page-number fidelity;
 - decision-boundary detection;
 - canonical identity accuracy;
 - citation extraction/resolution accuracy;
-- OCR requirements;
 - chunk/passaging quality;
-- embedding quality for Dominican Spanish jurisprudence;
-- retrieval recall;
+- embedding/retrieval quality for Dominican Spanish jurisprudence;
 - adverse-authority retrieval;
 - research-agent correctness;
 - report claim/evidence verification;
-- corpus completeness relative to the official SCJ publication universe.
+- actual coverage relative to official publication surfaces.
 
 These are substantive product risks, not implementation details.
 
 ## 15. First vertical slice Definition of Done
 
-The first real JurisNexo vertical slice is complete only when one selected Supreme Court compilation can travel through the complete path:
+The first deep JurisNexo vertical slice is complete only when one selected Supreme Court compilation can travel through:
 
 ```text
 immutable source artifact
@@ -347,7 +284,7 @@ immutable source artifact
     -> decision segmentation
     -> canonical cases
     -> searchable passages
-    -> lexical + semantic retrieval baseline
+    -> retrieval baseline
     -> benchmark legal question
     -> relevant case retrieval
     -> bounded case analysis
@@ -355,27 +292,20 @@ immutable source artifact
     -> auditable research report
 ```
 
-Additionally:
+Additionally, rerunning ingestion must not create duplicate logical records; duplicate source files are identified; a manually reviewed segmentation sample is correct; retrieval metrics are recorded; report evidence resolves to original pages; and known limitations are surfaced.
 
-- rerunning ingestion does not create duplicate logical records;
-- duplicate source files are identified;
-- at least a manually reviewed sample of segmented decisions is correct;
-- retrieval metrics are recorded;
-- all report evidence resolves to original source pages;
-- known limitations are surfaced rather than hidden.
-
-Only after this Definition of Done should corpus volume become a primary implementation goal.
+This Definition of Done gates confidence in **deep processing**. It does not prohibit parallel broad source inventory, acquisition or cheap searchability.
 
 ## 16. Governing principle
 
-The source collection gives JurisNexo a meaningful head start, but it is raw material rather than finished product infrastructure.
+The source collection gives JurisNexo a meaningful head start, but it is raw material rather than finished intelligence.
 
-The immediate objective is not:
+The immediate deep-validation objective is:
 
-> ingest as many PDFs as possible.
+> prove that JurisNexo can transform real Dominican judicial source material into trustworthy, reproducible, searchable legal evidence and use that evidence correctly.
 
-It is:
+At the same time, broader official material can be inventoried, acquired and made searchable cheaply enough to improve coverage, citation traversal and adverse-authority discovery.
 
-> prove that JurisNexo can transform real Dominican judicial source material into trustworthy, reproducible, searchable legal evidence and use that evidence to answer a narrow research question correctly.
+The combined rule is:
 
-Once that is reliable, adding the remaining source collection becomes an incremental corpus operation rather than an architectural experiment.
+> **validate depth narrowly; expand trustworthy breadth cheaply; deepen selectively according to legal/research value.**
