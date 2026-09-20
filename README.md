@@ -77,6 +77,10 @@ The prompts are execution aids. Accepted repository documentation remains author
 
 See [`docs/`](./docs/) for product scope, architecture, research runtime, data model, validation strategy, security, and roadmap.
 
+Key current strategy document:
+
+- `docs/38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md` — canonical corpus/product flywheel, Principales seed strategy, citation-first expansion, selective deep normalization, benchmark/failure flywheel, and explicit non-goals.
+
 Key documents for the current agent architecture:
 
 - `docs/13-agent-runtime-and-multi-agent-orchestration.md` — runtime, roles, handoffs, guardrails, evidence, and research-agent architecture;
