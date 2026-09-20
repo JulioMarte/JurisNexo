@@ -143,7 +143,8 @@ class S3RecoveryCheckpointMirror:
                 return False
             raise
         payload = response["Body"].read()
-        metadata = response.get("Metadata") or {}
+        response_mapping = _mapping(response) or {}
+        metadata = _mapping(response_mapping.get("Metadata")) or {}
         expected_digest = str(metadata.get("sha256") or "")
         actual_digest = hashlib.sha256(payload).hexdigest()
         if not expected_digest:
