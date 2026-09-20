@@ -78,6 +78,9 @@ def test_scj_corpus_backfill_discovers_source_scope_and_preserves_no_locator_rec
     assert "fromJSON(needs.discover_years.outputs.active_years)" in workflow
     assert "SCJ_YEAR: ${{ matrix.year }}" in workflow
     assert "persist_scj_certified_inventory.py" in workflow
+    assert "name: Validate production S3 write access" in workflow
+    assert "needs: storage-smoke" in workflow
+    assert workflow.index("  storage-smoke:") < workflow.index("  discover_years:")
     assert "SCJ_YEAR_DISCOVERY_DIR: ${{ runner.temp }}/scj-year-discovery" in workflow
     assert (
         "SCJ_YEAR_DISCOVERY_OUTPUT: "
