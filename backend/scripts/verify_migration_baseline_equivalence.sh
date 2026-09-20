@@ -8,13 +8,15 @@ PRE_BASELINE_COMMIT="${PRE_BASELINE_COMMIT:-998398d275081590a229f90eebb53f9abf1b
 OLD_DIR="$(mktemp -d)"
 OLD_REPO="$OLD_DIR/pre-baseline"
 OLD_PROJECT="jurisnexo-prebaseline-check"
-NEW_PROJECT="jurisnexo-baseline-check"\nBASELINE_ONLY_DIR="$OLD_DIR/baseline-only"
+NEW_PROJECT="jurisnexo-baseline-check"
+BASELINE_ONLY_DIR="$OLD_DIR/baseline-only"
 ARTIFACT_DIR="${BASELINE_EQUIVALENCE_OUTPUT:-$ROOT/.artifacts/baseline-equivalence}"
 
 cleanup() {
   docker compose -p "$OLD_PROJECT" -f "$OLD_REPO/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   docker compose -p "$NEW_PROJECT" -f "$BASELINE_ONLY_DIR/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
-  git worktree remove --force "$OLD_REPO" >/dev/null 2>&1 || true\n  rm -rf "$BASELINE_ONLY_DIR"
+  git worktree remove --force "$OLD_REPO" >/dev/null 2>&1 || true
+  rm -rf "$BASELINE_ONLY_DIR"
   rm -rf "$OLD_DIR"
 }
 trap cleanup EXIT
