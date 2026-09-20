@@ -7,6 +7,7 @@ import pytest
 from jurisnexo.acquisition.s3_object_store import S3RuntimeSettings
 from jurisnexo.acquisition.s3_smoke import (
     SMOKE_PREFIX,
+    main,
     run_s3_storage_smoke,
     smoke_object_key,
 )
@@ -166,3 +167,39 @@ def test_storage_smoke_retries_retryable_transport_failure() -> None:
     assert result.cleaned_up is True
     assert client.calls == ["put", "put", "head", "list", "delete"]
     assert client.objects == {}
+
+
+
+class FakeCapacityError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("storage cap exceeded")
+        self.response = {
+            "Error": {
+                "Code": "AccessDenied",
+                "Message": (
+                    "Cannot upload files, storage cap exceeded. "
+                    "See the Caps & Alerts page to increase your cap."
+                ),
+            },
+            "ResponseMetadata": {"HTTPStatusCode": 403},
+        }
+
+
+def test_storage_smoke_main_reports_capacity_interruption_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_smoke(*, run_id: str | None = None) -> object:
+        _ = run_id
+        raise FakeCapacityError()
+
+    monkeypatch.setattr(
+        "jurisnexo.acquisition.s3_smoke.run_s3_storage_smoke",
+        fail_smoke,
+    )
+
+    assert main() == 75
+    captured = capsys.readouterr()
+    assert '"kind": "storage_capacity_exceeded"' in captured.err
+    assert '"code": "AccessDenied"' in captured.err
+    assert "Traceback" not in captured.err
