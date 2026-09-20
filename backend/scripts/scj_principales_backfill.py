@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import time
 import traceback
 from datetime import UTC, datetime
@@ -31,6 +32,20 @@ from jurisnexo.acquisition.s3_object_store import S3ObjectStore, build_s3_object
 OUT = Path(os.environ.get("SCJ_PRINCIPALES_BACKFILL_OUTPUT", "scj-principales-backfill-output"))
 EXPECTED_COUNT = int(os.environ.get("SCJ_PRINCIPALES_EXPECTED_COUNT", "36"))
 MAX_ATTEMPTS = int(os.environ.get("SCJ_PRINCIPALES_ITEM_ATTEMPTS", "3"))
+_STOP_SIGNAL: str | None = None
+
+
+def _capture_stop_signal(signum: int, _frame: object) -> None:
+    global _STOP_SIGNAL
+    try:
+        _STOP_SIGNAL = signal.Signals(signum).name
+    except ValueError:
+        _STOP_SIGNAL = str(signum)
+
+
+def _install_signal_handlers() -> None:
+    signal.signal(signal.SIGTERM, _capture_stop_signal)
+    signal.signal(signal.SIGINT, _capture_stop_signal)
 
 
 def _event(name: str, **payload: object) -> None:
@@ -168,6 +183,7 @@ def _acquire_one(
 
 
 def main() -> int:
+    _install_signal_handlers()
     if EXPECTED_COUNT < 1:
         raise ValueError("SCJ_PRINCIPALES_EXPECTED_COUNT must be positive")
     if MAX_ATTEMPTS < 1:
@@ -186,10 +202,27 @@ def main() -> int:
     recovery_journal = AcquisitionRecoveryJournal(OUT / "recovery-checkpoint.jsonl")
     recovery_mirror = S3RecoveryCheckpointMirror(
         object_store=store,
-        object_key="_checkpoints/scj/principales-sentencias/full.jsonl",
+        object_key=f"_checkpoints/scj/principales-sentencias/{ingestion_id}/full.jsonl",
+        checkpoint_identity=f"scj:principales-sentencias:{ingestion_id}",
     )
     if not recovery_journal.path.exists() or recovery_journal.path.stat().st_size == 0:
-        recovery_mirror.load_if_present(recovery_journal)
+        try:
+            recovery_mirror.load_if_present(recovery_journal)
+        except Exception as exc:
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is not None:
+                _write_json(
+                    OUT / "interruption.json",
+                    {
+                        "status": "RUN_INTERRUPTED",
+                        "cause": infrastructure_failure.kind,
+                        "phase": "checkpoint_restore",
+                        "retryable": infrastructure_failure.retryable,
+                        "resumable": True,
+                    },
+                )
+                return 75
+            raise
     manifest = AcquisitionRunManifestBuilder(
         source="scj",
         scope="principales-sentencias",
@@ -205,6 +238,19 @@ def main() -> int:
             candidates = _discover(fetcher)
             total = len(candidates)
             for index, candidate in enumerate(candidates, start=1):
+                if _STOP_SIGNAL is not None:
+                    _write_json(
+                        OUT / "interruption.json",
+                        {
+                            "status": "RUN_INTERRUPTED",
+                            "cause": "runner_signal",
+                            "phase": "acquisition",
+                            "retryable": True,
+                            "signal": _STOP_SIGNAL,
+                            "resumable": True,
+                        },
+                    )
+                    return 75
                 try:
                     recovered = recovery_journal.get(
                         source_identifier=candidate.source_identifier,
@@ -318,7 +364,23 @@ def main() -> int:
                         error=str(exc),
                     )
 
-        stored_manifest = manifest.commit(object_store=store)
+        try:
+            stored_manifest = manifest.commit(object_store=store)
+        except Exception as exc:
+            infrastructure_failure = classify_infrastructure_error(exc)
+            if infrastructure_failure is None:
+                raise
+            _write_json(
+                OUT / "interruption.json",
+                {
+                    "status": "RUN_INTERRUPTED",
+                    "cause": infrastructure_failure.kind,
+                    "phase": "manifest_commit",
+                    "retryable": infrastructure_failure.retryable,
+                    "resumable": True,
+                },
+            )
+            return 75
         (OUT / "run-manifest.json").write_bytes(
             stored_manifest.manifest.canonical_bytes()
         )
@@ -367,6 +429,21 @@ def main() -> int:
             return 1
         return 0
     except Exception as exc:
+        infrastructure_failure = classify_infrastructure_error(exc)
+        if infrastructure_failure is not None:
+            _write_json(
+                OUT / "interruption.json",
+                {
+                    "status": "RUN_INTERRUPTED",
+                    "cause": infrastructure_failure.kind,
+                    "phase": "runtime",
+                    "retryable": infrastructure_failure.retryable,
+                    "resumable": True,
+                    "recorded_failure_count": len(failures),
+                    "completed_artifact_count": len(artifacts),
+                },
+            )
+            return 75
         _write_json(
             OUT / "failure.json",
             {
