@@ -96,4 +96,5 @@ Key documents for the current agent architecture:
 Key documents for post-acquisition normalization:
 
 - `docs/39-document-normalization-and-derived-artifacts.md` — source/derived-artifact provenance and normalization persistence contract;
-- `docs/40-document-normalization-pipeline-v2-handoff.md` — detailed implementation sequence for Principales-first Docling/OCR normalization, JEV shadow quality routing, VLM verification, reconciliation, and promotion gates.
+- `docs/41-universal-legal-document-normalization-control-plane-v3-handoff.md` — current implementation handoff for the source-agnostic normalization control plane built on Docling/Tika with replaceable OCR/JEV/VLM capabilities;
+- `docs/40-document-normalization-pipeline-v2-handoff.md` — retained V2 quality/provenance rationale, partially superseded by V3.
