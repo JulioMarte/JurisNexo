@@ -30,7 +30,7 @@ PENDING
   -> READY
 ```
 
-Optional OCR/rendering work may occur while preparing the workspace or during agent investigation and should be represented as child-stage attempts/events when it is not itself a business gate.
+Optional OCR/rendering work may occur while preparing the workspace or during agent investigation and should be represented as child-stage attempts/events when it is not itself a business gate.\n\nOfficial-corpus acquisition closes before document normalization begins. A closed immutable acquisition manifest may seed a separate durable normalization run that records its manifest digest, pipeline/configuration identity and per-source outcomes. OCR, Docling and vision failures therefore do not retroactively invalidate successful source acquisition.
 
 Review alternatives may include:
 
