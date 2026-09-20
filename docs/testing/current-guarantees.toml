@@ -459,7 +459,7 @@ risk = ["provenance", "legal_quality", "architecture", "operations"]
 
 [[guarantees]]
 id = "INV-ACQUISITION-RECOVERY-001"
-statement = "Large official-corpus acquisition shards persist incremental recovery evidence outside ephemeral runner state and separately from the final immutable run-manifest namespace, distinguish global infrastructure interruptions from document-level outcomes, and may resume stored observations only after verifying the referenced content-addressed object still matches recorded integrity metadata."
+statement = "Large official-corpus acquisition shards persist incremental recovery evidence outside ephemeral runner state and separately from the final immutable run-manifest namespace, scope remote checkpoints to an explicit snapshot/run identity, verify checkpoint payload integrity and identity before restore, distinguish global infrastructure interruptions from document-level outcomes, handle normal termination signals through controlled interruption state, and may resume stored observations only after verifying the referenced content-addressed object still matches recorded integrity metadata."
 severity = "high"
 classification = "HARD"
 required_evidence = ["invariant", "contract", "integration"]
