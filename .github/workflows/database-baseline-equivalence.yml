@@ -1,0 +1,36 @@
+name: Database baseline equivalence
+
+on:
+  pull_request:
+    branches:
+      - development
+    paths:
+      - "backend/migrations/**"
+      - "backend/src/jurisnexo/db_dump_normalizer.py"
+      - "backend/scripts/verify_migration_baseline_equivalence.sh"
+      - ".github/workflows/database-baseline-equivalence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  equivalence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild historical and consolidated databases
+        run: bash backend/scripts/verify_migration_baseline_equivalence.sh
+
+      - name: Upload equivalence evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-baseline-equivalence
+          if-no-files-found: warn
+          retention-days: 30
+          path: .artifacts/baseline-equivalence/**
