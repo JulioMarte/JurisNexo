@@ -20,6 +20,13 @@ class RunSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class RunItemCheckpoint:
+    item_id: str
+    status: str
+    normalized_artifact_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunItemSnapshot:
     source_artifact_id: str
     status: str
@@ -130,23 +137,101 @@ class PostgresNormalizationLedger:
         pipeline_version: str,
         config_sha256: str,
     ) -> str | None:
+        """Return only a resolved evidence artifact, never the structural candidate."""
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                select d.derived_artifact_id::text
-                from corpus.artifact_derivations d
-                where d.scope_id=%s
-                  and d.source_artifact_id=%s
-                  and d.derivation_type='normalize'
-                  and d.pipeline_version=%s
-                  and d.config_sha256=%s
-                order by d.created_at desc
+                select resolved.derived_artifact_id::text
+                from corpus.artifact_derivations structural
+                join corpus.artifact_derivations resolved
+                  on resolved.scope_id=structural.scope_id
+                 and resolved.parent_derived_artifact_id=structural.derived_artifact_id
+                join corpus.derived_artifacts artifact
+                  on artifact.scope_id=resolved.scope_id
+                 and artifact.id=resolved.derived_artifact_id
+                where structural.scope_id=%s
+                  and structural.source_artifact_id=%s
+                  and structural.derivation_type='normalize'
+                  and structural.pipeline_version=%s
+                  and structural.config_sha256=%s
+                  and resolved.derivation_type='resolve_evidence_text'
+                  and resolved.pipeline_version=%s
+                  and resolved.config_sha256=%s
+                  and artifact.artifact_kind='resolved-evidence-text'
+                order by resolved.created_at desc
                 limit 1
                 """,
-                (scope_id, source_artifact_id, pipeline_version, config_sha256),
+                (
+                    scope_id,
+                    source_artifact_id,
+                    pipeline_version,
+                    config_sha256,
+                    pipeline_version,
+                    config_sha256,
+                ),
             )
             row = cursor.fetchone()
             return str(row[0]) if row is not None else None
+
+    def validate_resume_run(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        manifest_sha256: str,
+        pipeline_version: str,
+        config_sha256: str,
+    ) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select status, input_manifest_sha256, pipeline_version, config_sha256
+                from corpus.normalization_runs
+                where scope_id=%s and id=%s
+                """,
+                (scope_id, run_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            status = str(row[0])
+            if status != 'running':
+                raise RuntimeError(
+                    f"normalization run {run_id} is not resumable from status {status}"
+                )
+            expected = (manifest_sha256, pipeline_version, config_sha256)
+            actual = (str(row[1]), str(row[2]), str(row[3]))
+            if actual != expected:
+                raise RuntimeError(
+                    "resume request does not match run manifest/pipeline/config identity"
+                )
+
+    def item_checkpoint(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        source_artifact_id: str,
+    ) -> RunItemCheckpoint | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select id::text, status, normalized_artifact_id::text
+                from corpus.normalization_run_items
+                where scope_id=%s and run_id=%s and source_artifact_id=%s
+                """,
+                (scope_id, run_id, source_artifact_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return RunItemCheckpoint(
+                item_id=str(row[0]),
+                status=str(row[1]),
+                normalized_artifact_id=(
+                    str(row[2]) if row[2] is not None else None
+                ),
+            )
 
     def register_derived_artifact(
         self,
