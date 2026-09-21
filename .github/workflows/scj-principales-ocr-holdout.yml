@@ -1,0 +1,63 @@
+name: SCJ Principales OCR calibration and holdout
+
+on:
+  pull_request:
+    branches:
+      - development
+    paths:
+      - "benchmark/normalization/evaluate_scj_principales_ocr_holdout.py"
+      - "backend/src/jurisnexo/normalization/gold.py"
+      - ".github/workflows/scj-principales-ocr-holdout.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-principales-ocr-holdout-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  holdout:
+    if: contains(github.event.pull_request.labels.*.name, 'normalization-holdout')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      SCJ_NORMALIZATION_HOLDOUT_CASES: "6"
+      SCJ_NORMALIZATION_HOLDOUT_MIN_REFERENCE_CHARS: "800"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install isolated OCR benchmark runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend \
+            "boto3==1.43.93" \
+            "docling==2.129.0" \
+            "pypdfium2==5.13.0" \
+            "pillow==12.3.0"
+
+      - name: Run source-derived calibration and holdout
+        env:
+          SCJ_NORMALIZATION_HOLDOUT_OUTPUT: ${{ runner.temp }}/ocr-holdout/results.json
+        run: |
+          python benchmark/normalization/evaluate_scj_principales_ocr_holdout.py
+
+      - name: Preserve holdout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-principales-ocr-holdout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ocr-holdout/**
+          if-no-files-found: warn
+          retention-days: 30
