@@ -346,10 +346,9 @@ def test_concurrent_opposite_lineage_edges_cannot_create_cycle(
             with psycopg.connect(
                 os.environ["DATABASE_URL"],
                 autocommit=True,
-            ) as concurrent:
-                with concurrent.cursor() as cursor:
-                    barrier.wait(timeout=10)
-                    cursor.execute(
+            ) as concurrent, concurrent.cursor() as cursor:
+                barrier.wait(timeout=10)
+                cursor.execute(
                         """
                         insert into corpus.artifact_derivations
                             (parent_derived_artifact_id, derived_artifact_id,
