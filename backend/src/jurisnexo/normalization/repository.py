@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 import psycopg
+from psycopg.types.json import Json
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +204,7 @@ class PostgresNormalizationLedger:
                     engine_version,
                     pipeline_version,
                     config_sha256,
-                    psycopg.types.json.Json(parameters or {}),
+                    Json(parameters or {}),
                 ),
             )
             return artifact_id
@@ -267,7 +268,7 @@ class PostgresNormalizationLedger:
                     engine_version,
                     pipeline_version,
                     config_sha256,
-                    psycopg.types.json.Json(parameters or {}),
+                    Json(parameters or {}),
                 ),
             )
             return artifact_id
@@ -302,7 +303,7 @@ class PostgresNormalizationLedger:
                     run_item_id,
                     artifact_id,
                     observation_kind,
-                    psycopg.types.json.Json(payload),
+                    Json(payload),
                     status,
                     provider,
                     model,
