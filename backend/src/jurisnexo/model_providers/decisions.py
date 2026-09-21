@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
-DecisionQuestion = dict[str, Any]
-DecisionAnswer = dict[str, Any]
+from jurisnexo.model_providers.contracts import JsonObject
+
+DecisionQuestion = JsonObject
+DecisionAnswer = JsonObject
 
 
 @dataclass(frozen=True, slots=True)
