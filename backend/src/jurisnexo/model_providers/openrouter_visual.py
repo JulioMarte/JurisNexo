@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -90,9 +90,12 @@ class OpenRouterVisualModelProvider:
             ) from exc
 
         try:
-            body = cast(dict[str, Any], json.loads(raw))
-            choices = cast(list[dict[str, Any]], body["choices"])
-            message = cast(dict[str, Any], choices[0]["message"])
+            body = _json_object(raw)
+            choices_raw = body["choices"]
+            if not isinstance(choices_raw, list) or not choices_raw:
+                raise TypeError("choices is not a non-empty list")
+            choice = _json_object_value(choices_raw[0], "choice")
+            message = _json_object_value(choice["message"], "message")
             content = message["content"]
             if not isinstance(content, str):
                 raise TypeError("message content is not text")
@@ -103,7 +106,11 @@ class OpenRouterVisualModelProvider:
             ) from exc
 
         usage_raw = body.get("usage")
-        usage = usage_raw if isinstance(usage_raw, dict) else {}
+        usage = (
+            cast(dict[str, object], usage_raw)
+            if isinstance(usage_raw, dict)
+            else {}
+        )
         model = str(body.get("model") or self.model)
         response_id = body.get("id")
         return StructuredGenerationResult(
@@ -136,3 +143,14 @@ def _float_or_none(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _json_object(raw: bytes) -> dict[str, object]:
+    loaded: object = json.loads(raw)
+    return _json_object_value(loaded, "response")
+
+
+def _json_object_value(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} is not an object")
+    return cast(dict[str, object], value)
