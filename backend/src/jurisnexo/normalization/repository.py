@@ -386,7 +386,7 @@ class PostgresNormalizationLedger:
                             then clock_timestamp()
                         else finished_at
                     end
-                where scope_id=%s and id=%s
+                where scope_id=%s and id=%s and status='reconciling'
                 """,
                 (
                     status,
@@ -422,6 +422,93 @@ class PostgresNormalizationLedger:
             row = cursor.fetchone()
             assert row is not None
             return RunSummary(*(int(value) for value in row))
+
+    def mark_reconciling(self, *, scope_id: str, run_id: str) -> RunSummary:
+        summary = self.summarize_run(scope_id=scope_id, run_id=run_id)
+        if summary.pending_count or summary.running_count:
+            raise RuntimeError("normalization run still has unfinished items")
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                update corpus.normalization_runs
+                set status='reconciling',
+                    normalized_count=%s,
+                    review_required_count=%s,
+                    failed_count=%s,
+                    skipped_count=%s
+                where scope_id=%s and id=%s and status='running'
+                """,
+                (
+                    summary.normalized_count,
+                    summary.review_required_count,
+                    summary.failed_count,
+                    summary.skipped_count,
+                    scope_id,
+                    run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("run is not eligible for reconciliation")
+        return summary
+
+    def fail_run(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        reason: str,
+    ) -> None:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                update corpus.normalization_runs
+                set status='failed',
+                    finished_at=clock_timestamp(),
+                    metadata=metadata || jsonb_build_object('failure_reason', %s)
+                where scope_id=%s and id=%s
+                  and status not in ('succeeded','completed_with_errors','cancelled')
+                """,
+                (reason[:2000], scope_id, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("run cannot transition to failed")
+
+    def persist_manifest(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        sha256: str,
+        storage_locator: str,
+        byte_size: int,
+        summary: RunSummary,
+    ) -> str:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into corpus.normalization_manifests
+                    (scope_id, run_id, sha256, storage_locator, byte_size,
+                     selected_count, normalized_count, review_required_count,
+                     failed_count, skipped_count)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                returning id::text
+                """,
+                (
+                    scope_id,
+                    run_id,
+                    sha256,
+                    storage_locator,
+                    byte_size,
+                    summary.selected_count,
+                    summary.normalized_count,
+                    summary.review_required_count,
+                    summary.failed_count,
+                    summary.skipped_count,
+                ),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            return str(row[0])
 
     def close_run(self, *, scope_id: str, run_id: str) -> RunSummary:
         summary = self.summarize_run(scope_id=scope_id, run_id=run_id)
