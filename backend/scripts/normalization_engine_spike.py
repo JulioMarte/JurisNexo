@@ -323,7 +323,13 @@ def main() -> int:
 
     required = [item for item in results if item.name != "corrupt-pdf"]
     corrupt = next(item for item in results if item.name == "corrupt-pdf")
-    structural_ok = all(\n        item.detected_media_type and item.docling_success for item in required\n    )\n    fidelity_ok = all(item.token_coverage == 1.0 for item in required)\n    corrupt_rejected = not corrupt.docling_success\n    return 0 if structural_ok and fidelity_ok and corrupt_rejected else 1\n
+    structural_ok = all(
+        item.detected_media_type and item.docling_success for item in required
+    )
+    fidelity_ok = all(item.token_coverage == 1.0 for item in required)
+    corrupt_rejected = not corrupt.docling_success
+    return 0 if structural_ok and fidelity_ok and corrupt_rejected else 1
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
