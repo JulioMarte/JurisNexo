@@ -31,7 +31,8 @@ def upgrade() -> None:
                     'text_quality_judge',
                     'visual_verification',
                     'human_review',
-                    'sentinel_selection'
+                    'sentinel_selection',
+                    'reuse_validation'
                 )),
             page_index integer CHECK (page_index IS NULL OR page_index >= 0),
             locator jsonb NOT NULL DEFAULT '{}'::jsonb
