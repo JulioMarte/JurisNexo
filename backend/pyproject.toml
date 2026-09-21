@@ -18,6 +18,10 @@ dependencies = [
 jurisnexo-db-bootstrap = "jurisnexo.entrypoints.cli.database_bootstrap:main"
 
 [dependency-groups]
+normalization = [
+    "docling==2.129.0",
+]
+
 dev = [
     "pyright>=1.1.400,<2",
     "pytest>=8.4,<10",
