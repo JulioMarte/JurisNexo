@@ -23,7 +23,13 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
 
 
 def _scope(cursor: psycopg.Cursor[Any]) -> Any:
-    cursor.execute("insert into corpus.scopes (visibility) values ('public') returning id")
+    cursor.execute(
+        """
+        insert into corpus.scopes (visibility, organization_id)
+        values ('private', gen_random_uuid())
+        returning id
+        """
+    )
     row = cursor.fetchone()
     assert row is not None
     return row[0]
