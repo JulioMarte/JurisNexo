@@ -36,10 +36,18 @@ class ReconciliationReport:
 
 def reconcile_normalization(snapshot: ReconciliationSnapshot) -> ReconciliationReport:
     return ReconciliationReport(
-        missing_run_items=tuple(sorted(snapshot.planned_source_ids - snapshot.run_item_source_ids)),
-        unexpected_run_items=tuple(sorted(snapshot.run_item_source_ids - snapshot.planned_source_ids)),
-        missing_lineage=tuple(sorted(snapshot.referenced_artifact_ids - snapshot.lineage_artifact_ids)),
-        missing_storage=tuple(sorted(snapshot.referenced_artifact_ids - snapshot.storage_artifact_ids)),
+        missing_run_items=tuple(
+            sorted(snapshot.planned_source_ids - snapshot.run_item_source_ids)
+        ),
+        unexpected_run_items=tuple(
+            sorted(snapshot.run_item_source_ids - snapshot.planned_source_ids)
+        ),
+        missing_lineage=tuple(
+            sorted(snapshot.referenced_artifact_ids - snapshot.lineage_artifact_ids)
+        ),
+        missing_storage=tuple(
+            sorted(snapshot.referenced_artifact_ids - snapshot.storage_artifact_ids)
+        ),
         missing_quality_reports=tuple(
             sorted(snapshot.planned_source_ids - snapshot.quality_report_source_ids)
         ),
