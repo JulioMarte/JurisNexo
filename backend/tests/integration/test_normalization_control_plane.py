@@ -6,8 +6,8 @@ from collections.abc import Iterator
 from typing import Any
 
 import psycopg
-from psycopg import sql
 import pytest
+from psycopg import sql
 
 pytestmark = [
     pytest.mark.integration,
