@@ -77,8 +77,44 @@ def upgrade() -> None:
         scope_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'::uuid
             REFERENCES corpus.scopes(id),
         run_id uuid NOT NULL,
-        artifact_id uuid NOT NULL,
-        sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+        sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}
+        selected_count integer NOT NULL CHECK (selected_count >= 0),
+        normalized_count integer NOT NULL CHECK (normalized_count >= 0),
+        review_required_count integer NOT NULL CHECK (review_required_count >= 0),
+        failed_count integer NOT NULL CHECK (failed_count >= 0),
+        skipped_count integer NOT NULL CHECK (skipped_count >= 0),
+        published_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (scope_id, id),
+        UNIQUE (scope_id, run_id),
+        FOREIGN KEY (scope_id, run_id)
+            REFERENCES corpus.normalization_runs(scope_id, id)
+    );
+
+    CREATE INDEX normalization_observations_run_item_idx
+        ON corpus.normalization_observations(scope_id, run_item_id, observation_kind, created_at);
+    CREATE INDEX normalization_observations_artifact_idx
+        ON corpus.normalization_observations(scope_id, artifact_id)
+        WHERE artifact_id IS NOT NULL;
+
+    CREATE TRIGGER normalization_observations_immutable
+    BEFORE UPDATE OR DELETE ON corpus.normalization_observations
+    FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
+
+    CREATE TRIGGER normalization_corrections_immutable
+    BEFORE UPDATE OR DELETE ON corpus.normalization_corrections
+    FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
+
+    CREATE TRIGGER normalization_manifests_immutable
+    BEFORE UPDATE OR DELETE ON corpus.normalization_manifests
+    FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
+    """)
+
+
+def downgrade() -> None:
+    raise RuntimeError("Normalization evidence is intentionally non-destructive.")
+),
+        storage_locator text NOT NULL UNIQUE CHECK (btrim(storage_locator) <> ''),
+        byte_size bigint NOT NULL CHECK (byte_size >= 0),
         selected_count integer NOT NULL CHECK (selected_count >= 0),
         normalized_count integer NOT NULL CHECK (normalized_count >= 0),
         review_required_count integer NOT NULL CHECK (review_required_count >= 0),
