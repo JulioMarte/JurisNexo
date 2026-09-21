@@ -212,14 +212,13 @@ class NormalizationExecutor:
                 run_id=run_id,
                 source_artifact_id=source_artifact_id,
             )
-            if checkpoint is not None:
-                if checkpoint.status in {
-                    "normalized",
-                    "quality_review_required",
-                    "failed",
-                    "skipped",
-                }:
-                    continue
+            if checkpoint is not None and checkpoint.status in {
+                "normalized",
+                "quality_review_required",
+                "failed",
+                "skipped",
+            }:
+                continue
 
             item_id = self.ledger.ensure_item(
                 scope_id=scope_id,
