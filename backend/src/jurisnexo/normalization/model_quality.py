@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from jurisnexo.model_providers.contracts import JsonObject, StructuredGenerationResult
-from jurisnexo.normalization.judges import StructuredTextQualityJudge
+from jurisnexo.normalization.contracts import TextQualityJudge
 from jurisnexo.normalization.provider_policy import (
     ProviderPolicy,
     enforce_provider_policy,
@@ -58,7 +58,7 @@ class CorrectionWriter(Protocol):
 
 @dataclass(slots=True)
 class ShadowTextQualityService:
-    judge: StructuredTextQualityJudge
+    judge: TextQualityJudge
     writer: ObservationWriter
     provider_policy: ProviderPolicy
 
