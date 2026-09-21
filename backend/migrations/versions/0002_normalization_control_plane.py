@@ -61,41 +61,71 @@ def upgrade() -> None:
         )
     );
 
-    CREATE FUNCTION corpus.reject_derived_artifact_cycle()
-    RETURNS trigger LANGUAGE plpgsql AS $$
-    DECLARE cycle_found boolean;
+    CREATE TABLE corpus.artifact_derivation_paths (
+        scope_id uuid NOT NULL REFERENCES corpus.scopes(id),
+        ancestor_artifact_id uuid NOT NULL,
+        descendant_artifact_id uuid NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (scope_id, ancestor_artifact_id, descendant_artifact_id),
+        CHECK (ancestor_artifact_id <> descendant_artifact_id),
+        FOREIGN KEY (scope_id, ancestor_artifact_id)
+            REFERENCES corpus.derived_artifacts(scope_id, id),
+        FOREIGN KEY (scope_id, descendant_artifact_id)
+            REFERENCES corpus.derived_artifacts(scope_id, id)
+    );
+
+    CREATE UNIQUE INDEX artifact_derivation_paths_unordered_pair_key
+        ON corpus.artifact_derivation_paths(
+            scope_id,
+            LEAST(ancestor_artifact_id, descendant_artifact_id),
+            GREATEST(ancestor_artifact_id, descendant_artifact_id)
+        );
+
+    CREATE FUNCTION corpus.record_derived_artifact_paths()
+    RETURNS trigger LANGUAGE plpgsql AS $
     BEGIN
         IF NEW.parent_derived_artifact_id IS NULL THEN
             RETURN NEW;
         END IF;
 
-        WITH RECURSIVE descendants(id) AS (
-            SELECT d.derived_artifact_id
-            FROM corpus.artifact_derivations d
-            WHERE d.scope_id = NEW.scope_id
-              AND d.parent_derived_artifact_id = NEW.derived_artifact_id
+        INSERT INTO corpus.artifact_derivation_paths (
+            scope_id,
+            ancestor_artifact_id,
+            descendant_artifact_id
+        )
+        SELECT NEW.scope_id, ancestors.id, descendants.id
+        FROM (
+            SELECT NEW.parent_derived_artifact_id AS id
             UNION
-            SELECT d.derived_artifact_id
-            FROM corpus.artifact_derivations d
-            JOIN descendants p ON d.parent_derived_artifact_id = p.id
-            WHERE d.scope_id = NEW.scope_id
-        )
-        SELECT EXISTS (
-            SELECT 1 FROM descendants WHERE id = NEW.parent_derived_artifact_id
-        )
-        INTO cycle_found;
+            SELECT path.ancestor_artifact_id
+            FROM corpus.artifact_derivation_paths path
+            WHERE path.scope_id = NEW.scope_id
+              AND path.descendant_artifact_id = NEW.parent_derived_artifact_id
+        ) AS ancestors
+        CROSS JOIN (
+            SELECT NEW.derived_artifact_id AS id
+            UNION
+            SELECT path.descendant_artifact_id
+            FROM corpus.artifact_derivation_paths path
+            WHERE path.scope_id = NEW.scope_id
+              AND path.ancestor_artifact_id = NEW.derived_artifact_id
+        ) AS descendants
+        ON CONFLICT (
+            scope_id,
+            ancestor_artifact_id,
+            descendant_artifact_id
+        ) DO NOTHING;
 
-        IF cycle_found THEN
+        RETURN NEW;
+    EXCEPTION
+        WHEN unique_violation OR check_violation THEN
             RAISE EXCEPTION 'derived artifact lineage cannot contain cycles'
                 USING ERRCODE='23514';
-        END IF;
-        RETURN NEW;
-    END $$;
+    END $;
 
-    CREATE TRIGGER artifact_derivations_no_cycle
-    BEFORE INSERT OR UPDATE OF scope_id, parent_derived_artifact_id, derived_artifact_id
-    ON corpus.artifact_derivations
-    FOR EACH ROW EXECUTE FUNCTION corpus.reject_derived_artifact_cycle();
+    CREATE TRIGGER artifact_derivations_record_paths
+    AFTER INSERT ON corpus.artifact_derivations
+    FOR EACH ROW EXECUTE FUNCTION corpus.record_derived_artifact_paths();
 
     CREATE TABLE corpus.normalization_runs (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -184,6 +214,10 @@ def upgrade() -> None:
 
     CREATE TRIGGER artifact_derivations_immutable
     BEFORE UPDATE OR DELETE ON corpus.artifact_derivations
+    FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
+
+    CREATE TRIGGER artifact_derivation_paths_immutable
+    BEFORE UPDATE OR DELETE ON corpus.artifact_derivation_paths
     FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
     """)
 
