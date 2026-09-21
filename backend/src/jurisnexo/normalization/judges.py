@@ -49,7 +49,7 @@ class StructuredTextQualityJudge:
             prompt=prompt,
             json_schema=schema,
             max_output_tokens=500,
-            thinking_level="low",
+            thinking_level="none",
         )
         value = result.value
         reasons_raw = value.get("reasons", [])
