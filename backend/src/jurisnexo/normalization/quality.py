@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import cast
 
 _REPLACEMENT = "\ufffd"
 _CRITICAL_PATTERN = re.compile(
@@ -61,7 +62,7 @@ def assess_text_quality(text: str) -> DeterministicQualityReport:
 
 def extract_text_from_structural_json(payload: bytes) -> str:
     try:
-        document = json.loads(payload)
+        document: object = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise ValueError("structural artifact is not valid JSON") from exc
 
@@ -69,13 +70,14 @@ def extract_text_from_structural_json(payload: bytes) -> str:
 
     def visit(node: object) -> None:
         if isinstance(node, dict):
-            for key, child in node.items():
+            mapping = cast(dict[object, object], node)
+            for key, child in mapping.items():
                 if key == "text" and isinstance(child, str):
                     parts.append(child)
                 else:
                     visit(child)
         elif isinstance(node, list):
-            for child in node:
+            for child in cast(list[object], node):
                 visit(child)
 
     visit(document)
