@@ -167,6 +167,20 @@ def upgrade() -> None:
         ON corpus.normalization_runs(scope_id, input_manifest_sha256, requested_at DESC);
     CREATE INDEX normalization_run_items_run_status_idx
         ON corpus.normalization_run_items(scope_id, run_id, status);
+
+    CREATE FUNCTION corpus.reject_immutable_normalization_mutation()
+    RETURNS trigger LANGUAGE plpgsql AS $
+    BEGIN
+        RAISE EXCEPTION '% is immutable', TG_TABLE_NAME USING ERRCODE='55000';
+    END $;
+
+    CREATE TRIGGER derived_artifacts_immutable
+    BEFORE UPDATE OR DELETE ON corpus.derived_artifacts
+    FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
+
+    CREATE TRIGGER artifact_derivations_immutable
+    BEFORE UPDATE OR DELETE ON corpus.artifact_derivations
+    FOR EACH ROW EXECUTE FUNCTION corpus.reject_immutable_normalization_mutation();
     """)
 
 
