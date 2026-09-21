@@ -11,11 +11,15 @@ from jurisnexo.normalization.contracts import FormatInspection, NormalizedDocume
 
 @dataclass(slots=True)
 class DoclingStructuralNormalizer:
-    """Docling v2 adapter using an in-memory DocumentStream.
+    """Docling adapter with PDF-aware OCR routing.
 
-    Imports are dynamic so ordinary JurisNexo runtime/CI does not need the
-    heavyweight normalization dependency unless this adapter is selected.
+    The adapter stays source-agnostic. Jurisdiction/source configuration may
+    supply OCR language tags such as ("iso:es",) without leaking that policy
+    into the normalization contract.
     """
+
+    ocr_language_tags: tuple[str, ...] = ()
+    pdf_aware_ocr: bool = True
 
     def normalize(
         self,
@@ -24,20 +28,58 @@ class DoclingStructuralNormalizer:
         *,
         filename: str | None = None,
     ) -> NormalizedDocument:
-        del inspection
         try:
             converter_module = importlib.import_module("docling.document_converter")
             base_models = importlib.import_module("docling.datamodel.base_models")
+            pipeline_module = importlib.import_module(
+                "docling.datamodel.pipeline_options"
+            )
             docling_package = importlib.import_module("docling")
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Docling is required for structural normalization; install the normalization group"
+                "Docling is required for structural normalization; "
+                "install the normalization runtime"
             ) from exc
 
         converter_cls: Any = converter_module.DocumentConverter
         stream_cls: Any = base_models.DocumentStream
-        converter = converter_cls()
-        stream = stream_cls(name=filename or "document.bin", stream=io.BytesIO(source))
+        converter: Any
+        ocr_policy = "not_applicable"
+
+        if inspection.media_type == "application/pdf":
+            input_format: Any = base_models.InputFormat
+            pdf_format_option: Any = converter_module.PdfFormatOption
+            pdf_pipeline_options: Any = pipeline_module.PdfPipelineOptions
+            ocr_mode: Any = pipeline_module.OcrMode
+
+            pipeline_options = pdf_pipeline_options()
+            pipeline_options.do_ocr = True
+            if self.pdf_aware_ocr:
+                pipeline_options.ocr_options.mode = (
+                    ocr_mode.PDF_AWARE_LAYOUT_REGIONS
+                )
+                ocr_policy = "pdf_aware_layout_regions"
+            else:
+                ocr_policy = str(pipeline_options.ocr_options.mode)
+            if self.ocr_language_tags:
+                pipeline_options.ocr_options.lang = list(
+                    self.ocr_language_tags
+                )
+
+            converter = converter_cls(
+                format_options={
+                    input_format.PDF: pdf_format_option(
+                        pipeline_options=pipeline_options
+                    )
+                }
+            )
+        else:
+            converter = converter_cls()
+
+        stream = stream_cls(
+            name=filename or "document.bin",
+            stream=io.BytesIO(source),
+        )
         result: Any = converter.convert(stream)
         exported: dict[str, Any] = result.document.export_to_dict()
         payload = json.dumps(
@@ -52,5 +94,9 @@ class DoclingStructuralNormalizer:
             payload=payload,
             engine="docling",
             engine_version=str(version) if version is not None else None,
-            metadata={"schema": "DoclingDocument-v2"},
+            metadata={
+                "schema": "DoclingDocument-v2",
+                "ocr_policy": ocr_policy,
+                "ocr_language_tags": list(self.ocr_language_tags),
+            },
         )
