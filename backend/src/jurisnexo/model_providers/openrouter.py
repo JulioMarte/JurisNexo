@@ -96,7 +96,8 @@ class OpenRouterStructuredModelProvider:
             choices_raw = body["choices"]
             if not isinstance(choices_raw, list) or not choices_raw:
                 raise TypeError("choices is not a non-empty list")
-            choice = _json_object_value(choices_raw[0], "choice")
+            choices = cast(list[object], choices_raw)
+            choice = _json_object_value(choices[0], "choice")
             message = _json_object_value(choice["message"], "message")
             content = message["content"]
             if not isinstance(content, str):
