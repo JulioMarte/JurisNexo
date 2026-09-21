@@ -41,7 +41,8 @@ class StructuredTextQualityJudge:
         }
         prompt = (
             "Evaluate whether the candidate transcription is faithful enough for legal evidence. "
-            "Do not infer missing legal text. Focus on materially wrong or missing tokens, numbers, "
+            "Do not infer missing legal text. Focus on materially wrong or missing tokens, "
+            "numbers, "
             "dates, names, citations and article/law references.\n\n"
             f"Context: {context}\n\nCandidate text:\n{text}"
         )
