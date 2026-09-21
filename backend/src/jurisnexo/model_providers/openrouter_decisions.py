@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -83,13 +83,14 @@ class OpenRouterDecisionProvider:
             ) from exc
 
         try:
-            body = cast(dict[str, Any], json.loads(raw))
+            body = _json_object(raw)
             answers_raw = body["answers"]
             if not isinstance(answers_raw, dict):
                 raise TypeError("answers is not an object")
+            typed_answers = cast(dict[object, object], answers_raw)
             answers = {
-                str(key): cast(dict[str, Any], value)
-                for key, value in answers_raw.items()
+                str(key): cast(dict[str, object], value)
+                for key, value in typed_answers.items()
                 if isinstance(value, dict)
             }
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -98,7 +99,11 @@ class OpenRouterDecisionProvider:
             ) from exc
 
         usage_raw = body.get("usage")
-        usage = usage_raw if isinstance(usage_raw, dict) else {}
+        usage = (
+            cast(dict[str, object], usage_raw)
+            if isinstance(usage_raw, dict)
+            else {}
+        )
         effective_model = str(body.get("model") or self.model)
         response_id = body.get("id")
         return DecisionResult(
@@ -130,3 +135,10 @@ def _float_or_none(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _json_object(raw: bytes) -> dict[str, object]:
+    loaded: object = json.loads(raw)
+    if not isinstance(loaded, dict):
+        raise TypeError("response is not an object")
+    return cast(dict[str, object], loaded)
