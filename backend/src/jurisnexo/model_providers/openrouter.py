@@ -106,6 +106,7 @@ class OpenRouterStructuredModelProvider:
         usage_map = usage_raw if isinstance(usage_raw, dict) else {}
         model = body.get("model")
         response_id = body.get("id")
+        provider_raw = body.get("provider")
         return StructuredGenerationResult(
             value=value,
             provider=self.provider_name,
@@ -118,6 +119,11 @@ class OpenRouterStructuredModelProvider:
                 thinking_tokens=_reasoning_tokens(usage_map),
                 total_tokens=_int_or_none(usage_map.get("total_tokens")),
             ),
+            cost_usd=_float_or_none(usage_map.get("cost")),
+            provider_metadata={
+                "routed_provider": str(provider_raw) if provider_raw else "",
+                "requested_model": self.model,
+            },
         )
 
 
@@ -136,3 +142,11 @@ def _reasoning_tokens(usage: dict[str, Any]) -> int | None:
     if not isinstance(details, dict):
         return None
     return _int_or_none(details.get("reasoning_tokens"))
+
+
+def _float_or_none(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
