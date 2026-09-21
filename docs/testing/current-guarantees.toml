@@ -489,3 +489,20 @@ severity = "high"
 classification = "CONTROLLED"
 required_evidence = ["fitness", "contract"]
 risk = ["architecture", "operations"]
+
+
+[[guarantees]]
+id = "INV-NORMALIZATION-RECONCILIATION-001"
+statement = "A normalization run cannot become terminal-success merely because workers finished; closure requires fail-closed reconciliation of the deterministic work plan, durable run items, derived-artifact lineage, object-storage presence and required quality evidence, followed by publication and persistence of an immutable normalization manifest."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "adversarial"]
+risk = ["provenance", "operations", "legal_quality"]
+
+[[guarantees]]
+id = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+statement = "Technical normalization preserves source-derived observations and corrections as append-only evidence; resolved evidence text is an explicit derived representation distinct from search-normalized text, and model or visual-verifier output cannot silently overwrite primary-source truth."
+severity = "critical"
+classification = "HARD"
+required_evidence = ["invariant", "integration", "contract"]
+risk = ["provenance", "legal_quality", "architecture"]
