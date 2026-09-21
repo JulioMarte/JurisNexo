@@ -18,6 +18,15 @@ class RunSummary:
     running_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class RunReconciliationState:
+    run_item_source_ids: frozenset[str]
+    referenced_artifact_ids: frozenset[str]
+    lineage_artifact_ids: frozenset[str]
+    artifact_storage_keys: dict[str, str]
+    quality_report_source_ids: frozenset[str]
+
+
 @dataclass(slots=True)
 class PostgresNormalizationLedger:
     connection: psycopg.Connection[Any]
@@ -422,6 +431,78 @@ class PostgresNormalizationLedger:
             row = cursor.fetchone()
             assert row is not None
             return RunSummary(*(int(value) for value in row))
+
+    def reconciliation_state(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+    ) -> RunReconciliationState:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    i.source_artifact_id::text,
+                    i.normalized_artifact_id::text,
+                    exists (
+                        select 1
+                        from corpus.normalization_observations o
+                        where o.scope_id=i.scope_id
+                          and o.run_item_id=i.id
+                          and o.observation_kind='deterministic_qa'
+                    ) as has_quality
+                from corpus.normalization_run_items i
+                where i.scope_id=%s and i.run_id=%s
+                """,
+                (scope_id, run_id),
+            )
+            rows = cursor.fetchall()
+
+            run_sources = frozenset(str(row[0]) for row in rows)
+            referenced = frozenset(
+                str(row[1]) for row in rows if row[1] is not None
+            )
+            quality_sources = frozenset(
+                str(row[0]) for row in rows if bool(row[2])
+            )
+
+            if not referenced:
+                return RunReconciliationState(
+                    run_item_source_ids=run_sources,
+                    referenced_artifact_ids=frozenset(),
+                    lineage_artifact_ids=frozenset(),
+                    artifact_storage_keys={},
+                    quality_report_source_ids=quality_sources,
+                )
+
+            cursor.execute(
+                """
+                select d.derived_artifact_id::text
+                from corpus.artifact_derivations d
+                where d.scope_id=%s
+                  and d.derived_artifact_id = any(%s::uuid[])
+                """,
+                (scope_id, list(referenced)),
+            )
+            lineage = frozenset(str(row[0]) for row in cursor.fetchall())
+
+            cursor.execute(
+                """
+                select id::text, storage_locator
+                from corpus.derived_artifacts
+                where scope_id=%s and id = any(%s::uuid[])
+                """,
+                (scope_id, list(referenced)),
+            )
+            storage = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
+
+        return RunReconciliationState(
+            run_item_source_ids=run_sources,
+            referenced_artifact_ids=referenced,
+            lineage_artifact_ids=lineage,
+            artifact_storage_keys=storage,
+            quality_report_source_ids=quality_sources,
+        )
 
     def mark_reconciling(self, *, scope_id: str, run_id: str) -> RunSummary:
         summary = self.summarize_run(scope_id=scope_id, run_id=run_id)
