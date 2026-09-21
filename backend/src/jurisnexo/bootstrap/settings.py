@@ -20,6 +20,36 @@ class PostgresSettings(BaseSettings):
     sslmode: str = "require"
 
 
+class OpenRouterSettings(BaseSettings):
+    """Optional hosted-model gateway settings.
+
+    The API key is deliberately optional so deterministic CI and offline workers
+    do not require provider credentials merely to start.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPENROUTER_",
+        extra="ignore",
+        str_strip_whitespace=True,
+    )
+
+    api_key: SecretStr | None = None
+    base_url: str = "https://openrouter.ai/api/v1"
+
+
+class NormalizationModelSettings(BaseSettings):
+    """Model aliases used by normalization/evaluation policy."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="JURISNEXO_OPENROUTER_",
+        extra="ignore",
+        str_strip_whitespace=True,
+    )
+
+    jev_model: str = "~typesafe/jev-latest"
+    deepseek_model: str = "~deepseek/deepseek-v4-flash-latest"
+
+
 class RuntimeSettings(BaseSettings):
     """Process-level settings that are safe to consume only from composition roots."""
 
@@ -57,3 +87,13 @@ def get_postgres_settings() -> PostgresSettings:
 @lru_cache
 def get_runtime_settings() -> RuntimeSettings:
     return RuntimeSettings()
+
+
+@lru_cache
+def get_openrouter_settings() -> OpenRouterSettings:
+    return OpenRouterSettings()
+
+
+@lru_cache
+def get_normalization_model_settings() -> NormalizationModelSettings:
+    return NormalizationModelSettings()
