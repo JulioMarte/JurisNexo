@@ -21,7 +21,7 @@ from jurisnexo.normalization.recovery import (
 
 @dataclass
 class _MemoryObjectStore:
-    objects: dict[str, bytes] = field(default_factory=dict)
+    objects: dict[str, bytes] = field(default_factory=lambda: {})
 
     def exists(self, key: str) -> bool:
         return key in self.objects
