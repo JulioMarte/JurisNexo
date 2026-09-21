@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -56,3 +57,26 @@ def assess_text_quality(text: str) -> DeterministicQualityReport:
         legal_critical_span_count=critical_spans,
         risk_flags=tuple(flags),
     )
+
+
+def extract_text_from_structural_json(payload: bytes) -> str:
+    try:
+        document = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError("structural artifact is not valid JSON") from exc
+
+    parts: list[str] = []
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if key == "text" and isinstance(child, str):
+                    parts.append(child)
+                else:
+                    visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(document)
+    return "\n".join(parts)
