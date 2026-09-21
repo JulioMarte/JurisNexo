@@ -289,16 +289,15 @@ def test_observations_corrections_and_manifest_are_append_only(
         correction = cursor.fetchone()
         assert correction is not None
 
-        manifest_artifact = _derived(cursor, "3")
         cursor.execute(
             """
             insert into corpus.normalization_manifests
-                (run_id, artifact_id, sha256, selected_count, normalized_count,
-                 review_required_count, failed_count, skipped_count)
-            values (%s, %s, %s, 1, 1, 0, 0, 0)
+                (run_id, sha256, storage_locator, byte_size, selected_count,
+                 normalized_count, review_required_count, failed_count, skipped_count)
+            values (%s, %s, 's3://manifests/normalization/run.json', 123, 1, 1, 0, 0, 0)
             returning id
             """,
-            (run, manifest_artifact, "4" * 64),
+            (run, "4" * 64),
         )
         manifest = cursor.fetchone()
         assert manifest is not None
