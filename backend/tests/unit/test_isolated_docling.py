@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.isolated_docling import (
     IsolatedDoclingStructuralNormalizer,
     sanitized_worker_environment,
@@ -33,14 +34,11 @@ def test_isolated_worker_rejects_unbounded_inputs_before_spawning() -> None:
     try:
         normalizer.normalize(
             b"12345",
-            inspection=type(
-                "Inspection",
-                (),
-                {
-                    "media_type": "application/pdf",
-                    "detected_format": "application/pdf",
-                },
-            )(),
+            inspection=FormatInspection(
+                media_type="application/pdf",
+                detected_format="application/pdf",
+                metadata={},
+            ),
             filename="fixture.pdf",
         )
     except ValueError as exc:
