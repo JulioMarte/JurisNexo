@@ -15,6 +15,7 @@ class TextQualityDecision:
     model: str
     input_tokens: int | None
     output_tokens: int | None
+    cost_usd: float | None
 
 
 @dataclass(slots=True)
@@ -63,6 +64,7 @@ class StructuredTextQualityJudge:
             model=result.model,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            cost_usd=result.cost_usd,
         )
         return {
             "pass_text": decision.pass_text,
@@ -72,4 +74,5 @@ class StructuredTextQualityJudge:
             "model": decision.model,
             "input_tokens": decision.input_tokens,
             "output_tokens": decision.output_tokens,
+            "cost_usd": decision.cost_usd,
         }
