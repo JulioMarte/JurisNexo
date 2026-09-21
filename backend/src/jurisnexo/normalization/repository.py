@@ -19,12 +19,21 @@ class RunSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class RunItemSnapshot:
+    source_artifact_id: str
+    status: str
+    normalized_artifact_id: str | None
+    quality_state: str
+
+
+@dataclass(frozen=True, slots=True)
 class RunReconciliationState:
     run_item_source_ids: frozenset[str]
     referenced_artifact_ids: frozenset[str]
     lineage_artifact_ids: frozenset[str]
     artifact_storage_keys: dict[str, str]
     quality_report_source_ids: frozenset[str]
+    items: tuple[RunItemSnapshot, ...]
 
 
 @dataclass(slots=True)
@@ -444,6 +453,7 @@ class PostgresNormalizationLedger:
                 select
                     i.source_artifact_id::text,
                     i.normalized_artifact_id::text,
+                    i.status,
                     exists (
                         select 1
                         from corpus.normalization_observations o
@@ -463,7 +473,20 @@ class PostgresNormalizationLedger:
                 str(row[1]) for row in rows if row[1] is not None
             )
             quality_sources = frozenset(
-                str(row[0]) for row in rows if bool(row[2])
+                str(row[0]) for row in rows if bool(row[3])
+            )
+            item_snapshots = tuple(
+                RunItemSnapshot(
+                    source_artifact_id=str(row[0]),
+                    normalized_artifact_id=(
+                        str(row[1]) if row[1] is not None else None
+                    ),
+                    status=str(row[2]),
+                    quality_state=(
+                        "reported" if bool(row[3]) else "missing"
+                    ),
+                )
+                for row in rows
             )
 
             if not referenced:
@@ -473,6 +496,7 @@ class PostgresNormalizationLedger:
                     lineage_artifact_ids=frozenset(),
                     artifact_storage_keys={},
                     quality_report_source_ids=quality_sources,
+                    items=item_snapshots,
                 )
 
             cursor.execute(
@@ -502,6 +526,7 @@ class PostgresNormalizationLedger:
             lineage_artifact_ids=lineage,
             artifact_storage_keys=storage,
             quality_report_source_ids=quality_sources,
+            items=item_snapshots,
         )
 
     def mark_reconciling(self, *, scope_id: str, run_id: str) -> RunSummary:
