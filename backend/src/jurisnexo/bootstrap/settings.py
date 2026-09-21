@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -47,7 +48,8 @@ class NormalizationModelSettings(BaseSettings):
     )
 
     jev_model: str = "~typesafe/jev-latest"
-    deepseek_model: str = "deepseek/deepseek-v4-flash-0731"
+    deepseek_model: str = "deepseek/deepseek-v4.1-flash"
+    deepseek_reasoning_effort: Literal["high", "xhigh"] = "high"
     visual_model: str | None = None
 
 
