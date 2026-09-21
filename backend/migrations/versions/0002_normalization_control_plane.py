@@ -137,7 +137,7 @@ def upgrade() -> None:
         config_sha256 text NOT NULL CHECK (config_sha256 ~ '^[0-9a-f]{64}$'),
         status text NOT NULL DEFAULT 'queued'
             CHECK (status IN (
-                'queued','running','reconciling','succeeded','completed_with_errors','failed','cancelled'
+                'queued','running','reconciling','succeeded',\n                'completed_with_errors','failed','cancelled'
             )),
         requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
         started_at timestamptz,
