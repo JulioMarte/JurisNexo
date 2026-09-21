@@ -54,7 +54,7 @@ def test_lineage_requires_exactly_one_parent_kind(connection: psycopg.Connection
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         source = _source(cursor, "a")
         derived = _derived(cursor, "b")
-        with pytest.raises(psycopg.errors.CheckViolation):
+        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
             cursor.execute(
                 """
                 insert into corpus.artifact_derivations
@@ -63,7 +63,7 @@ def test_lineage_requires_exactly_one_parent_kind(connection: psycopg.Connection
                 """,
                 (derived, "c" * 64),
             )
-        with pytest.raises(psycopg.errors.CheckViolation):
+        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
             cursor.execute(
                 """
                 insert into corpus.artifact_derivations
@@ -100,7 +100,7 @@ def test_lineage_rejects_transitive_cycle(connection: psycopg.Connection[Any]) -
             """,
             (first, second, "3" * 64, second, third, "3" * 64),
         )
-        with pytest.raises(psycopg.errors.CheckViolation):
+        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
             cursor.execute(
                 """
                 insert into corpus.artifact_derivations
@@ -136,7 +136,7 @@ def test_run_is_manifest_scoped_and_item_is_idempotent_per_source(
             """,
             (run[0], source),
         )
-        with pytest.raises(psycopg.errors.UniqueViolation):
+        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.UniqueViolation):
             cursor.execute(
                 """
                 insert into corpus.normalization_run_items (run_id, source_artifact_id)
@@ -160,7 +160,7 @@ def test_normalized_item_requires_output_artifact(connection: psycopg.Connection
         )
         run = cursor.fetchone()
         assert run is not None
-        with pytest.raises(psycopg.errors.CheckViolation):
+        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
             cursor.execute(
                 """
                 insert into corpus.normalization_run_items (run_id, source_artifact_id, status)
