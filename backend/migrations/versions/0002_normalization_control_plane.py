@@ -82,7 +82,7 @@ def upgrade() -> None:
         );
 
     CREATE FUNCTION corpus.record_derived_artifact_paths()
-    RETURNS trigger LANGUAGE plpgsql AS $
+    RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
         IF NEW.parent_derived_artifact_id IS NULL THEN
             RETURN NEW;
@@ -121,7 +121,7 @@ def upgrade() -> None:
         WHEN unique_violation OR check_violation THEN
             RAISE EXCEPTION 'derived artifact lineage cannot contain cycles'
                 USING ERRCODE='23514';
-    END $;
+    END $$;
 
     CREATE TRIGGER artifact_derivations_record_paths
     AFTER INSERT ON corpus.artifact_derivations
@@ -203,10 +203,10 @@ def upgrade() -> None:
         ON corpus.normalization_run_items(scope_id, run_id, status);
 
     CREATE FUNCTION corpus.reject_immutable_normalization_mutation()
-    RETURNS trigger LANGUAGE plpgsql AS $
+    RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
         RAISE EXCEPTION '% is immutable', TG_TABLE_NAME USING ERRCODE='55000';
-    END $;
+    END $$;
 
     CREATE TRIGGER derived_artifacts_immutable
     BEFORE UPDATE OR DELETE ON corpus.derived_artifacts
