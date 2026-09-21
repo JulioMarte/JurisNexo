@@ -39,6 +39,24 @@ class NormalizationLedger(Protocol):
         status: str = "pending",
     ) -> str: ...
 
+    def validate_resume_run(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        manifest_sha256: str,
+        pipeline_version: str,
+        config_sha256: str,
+    ) -> None: ...
+
+    def item_checkpoint(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        source_artifact_id: str,
+    ) -> object | None: ...
+
     def find_reusable_artifact(
         self,
         *,
@@ -150,15 +168,26 @@ class NormalizationExecutor:
         plan: NormalizationPlan,
         scope_id: str,
         manifest_locator: str,
+        resume_run_id: str | None = None,
     ) -> ExecutionResult:
-        run_id = self.ledger.create_run(
-            scope_id=scope_id,
-            manifest_locator=manifest_locator,
-            manifest_sha256=plan.manifest_sha256,
-            pipeline_version=self.pipeline_version,
-            config_sha256=self.config_sha256,
-            selected_count=plan.selected_count,
-        )
+        if resume_run_id is None:
+            run_id = self.ledger.create_run(
+                scope_id=scope_id,
+                manifest_locator=manifest_locator,
+                manifest_sha256=plan.manifest_sha256,
+                pipeline_version=self.pipeline_version,
+                config_sha256=self.config_sha256,
+                selected_count=plan.selected_count,
+            )
+        else:
+            self.ledger.validate_resume_run(
+                scope_id=scope_id,
+                run_id=resume_run_id,
+                manifest_sha256=plan.manifest_sha256,
+                pipeline_version=self.pipeline_version,
+                config_sha256=self.config_sha256,
+            )
+            run_id = resume_run_id
         normalized = 0
         reused = 0
         review_required = 0
@@ -174,6 +203,21 @@ class NormalizationExecutor:
                 scope_id=scope_id,
                 sha256=planned.source_sha256,
             )
+            checkpoint = self.ledger.item_checkpoint(
+                scope_id=scope_id,
+                run_id=run_id,
+                source_artifact_id=source_artifact_id,
+            )
+            if checkpoint is not None:
+                status = getattr(checkpoint, "status", None)
+                if status in {
+                    "normalized",
+                    "quality_review_required",
+                    "failed",
+                    "skipped",
+                }:
+                    continue
+
             item_id = self.ledger.ensure_item(
                 scope_id=scope_id,
                 run_id=run_id,
