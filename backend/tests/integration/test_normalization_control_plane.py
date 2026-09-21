@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import psycopg
+from psycopg import sql
 import pytest
 
 pytestmark = [
@@ -230,7 +231,7 @@ def test_derived_artifacts_and_lineage_are_immutable(
                 connection.transaction(force_rollback=True),
                 pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
             ):
-                cursor.execute(statement, (value,))
+                cursor.execute(sql.SQL(statement), (value,))
 
 
 def test_run_item_is_idempotent_per_source(connection: psycopg.Connection[Any]) -> None:
@@ -318,7 +319,7 @@ def test_observations_corrections_and_manifest_are_append_only(
                 connection.transaction(force_rollback=True),
                 pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
             ):
-                cursor.execute(f"delete from corpus.{table} where id=%s", (identifier,))
+                cursor.execute(\n                    sql.SQL("delete from corpus.{} where id=%s").format(\n                        sql.Identifier(table)\n                    ),\n                    (identifier,),\n                )
 
 
 
