@@ -190,6 +190,70 @@ class PostgresNormalizationLedger:
             )
             return artifact_id
 
+    def register_child_derived_artifact(
+        self,
+        *,
+        scope_id: str,
+        parent_artifact_id: str,
+        sha256: str,
+        artifact_kind: str,
+        mime_type: str,
+        byte_size: int,
+        storage_locator: str,
+        engine: str,
+        engine_version: str | None,
+        pipeline_version: str,
+        config_sha256: str,
+        derivation_type: str,
+        parameters: dict[str, object] | None = None,
+    ) -> str:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into corpus.derived_artifacts
+                    (scope_id, sha256, artifact_kind, mime_type, byte_size, storage_locator)
+                values (%s, %s, %s, %s, %s, %s)
+                on conflict (scope_id, sha256, artifact_kind) do nothing
+                returning id::text
+                """,
+                (scope_id, sha256, artifact_kind, mime_type, byte_size, storage_locator),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    select id::text
+                    from corpus.derived_artifacts
+                    where scope_id=%s and sha256=%s and artifact_kind=%s
+                    """,
+                    (scope_id, sha256, artifact_kind),
+                )
+                row = cursor.fetchone()
+            assert row is not None
+            artifact_id = str(row[0])
+            cursor.execute(
+                """
+                insert into corpus.artifact_derivations
+                    (scope_id, parent_derived_artifact_id, derived_artifact_id,
+                     derivation_type, engine, engine_version, pipeline_version,
+                     config_sha256, parameters)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                on conflict do nothing
+                """,
+                (
+                    scope_id,
+                    parent_artifact_id,
+                    artifact_id,
+                    derivation_type,
+                    engine,
+                    engine_version,
+                    pipeline_version,
+                    config_sha256,
+                    psycopg.types.json.Json(parameters or {}),
+                ),
+            )
+            return artifact_id
+
     def record_observation(
         self,
         *,
