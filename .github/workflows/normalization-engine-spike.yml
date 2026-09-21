@@ -33,7 +33,7 @@ jobs:
 
       - name: Start pinned Apache Tika
         run: |
-          docker run --detach --rm             --name jurisnexo-tika             --publish 9998:9998             apache/tika:4.0.0.0-full
+          docker run --detach --rm             --name jurisnexo-tika             --publish 9998:9998             apache/tika:4.0.0-1-full
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:9998/version >/dev/null; then
               exit 0
