@@ -25,9 +25,13 @@ def classify_normalization_error(exc: Exception) -> NormalizationFailure:
     haystack = f"{name} {message}"
 
     if any(token in haystack for token in ("unsupported", "encrypted", "corrupt")):
-        return NormalizationFailure("permanent_document", type(exc).__name__, False, str(exc)[:1000])
+        return NormalizationFailure(
+            "permanent_document", type(exc).__name__, False, str(exc)[:1000]
+        )
     if any(token in haystack for token in ("quality_review", "unresolved", "poor ocr")):
-        return NormalizationFailure("quality_review", type(exc).__name__, False, str(exc)[:1000])
+        return NormalizationFailure(
+            "quality_review", type(exc).__name__, False, str(exc)[:1000]
+        )
     if any(
         token in haystack
         for token in ("429", "rate limit", "timeout", "temporar", "connection reset", "503")
