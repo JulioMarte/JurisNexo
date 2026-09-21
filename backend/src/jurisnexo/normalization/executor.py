@@ -16,6 +16,10 @@ class SourceByteReader(Protocol):
     def read(self, key: str) -> bytes: ...
 
 
+class ItemCheckpoint(Protocol):
+    status: str
+
+
 class NormalizationLedger(Protocol):
     def create_run(
         self,
@@ -55,7 +59,7 @@ class NormalizationLedger(Protocol):
         scope_id: str,
         run_id: str,
         source_artifact_id: str,
-    ) -> object | None: ...
+    ) -> ItemCheckpoint | None: ...
 
     def find_reusable_artifact(
         self,
@@ -209,8 +213,7 @@ class NormalizationExecutor:
                 source_artifact_id=source_artifact_id,
             )
             if checkpoint is not None:
-                status = getattr(checkpoint, "status", None)
-                if status in {
+                if checkpoint.status in {
                     "normalized",
                     "quality_review_required",
                     "failed",
