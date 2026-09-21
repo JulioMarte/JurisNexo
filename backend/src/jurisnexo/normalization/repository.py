@@ -136,13 +136,22 @@ class PostgresNormalizationLedger:
                 insert into corpus.derived_artifacts
                     (scope_id, sha256, artifact_kind, mime_type, byte_size, storage_locator)
                 values (%s, %s, %s, %s, %s, %s)
-                on conflict (scope_id, sha256, artifact_kind)
-                do update set sha256=excluded.sha256
+                on conflict (scope_id, sha256, artifact_kind) do nothing
                 returning id::text
                 """,
                 (scope_id, sha256, artifact_kind, mime_type, byte_size, storage_locator),
             )
             row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    """
+                    select id::text
+                    from corpus.derived_artifacts
+                    where scope_id=%s and sha256=%s and artifact_kind=%s
+                    """,
+                    (scope_id, sha256, artifact_kind),
+                )
+                row = cursor.fetchone()
             assert row is not None
             artifact_id = str(row[0])
             cursor.execute(
