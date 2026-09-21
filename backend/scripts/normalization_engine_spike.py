@@ -36,9 +36,9 @@ class SpikeResult:
 
 
 CASES = (
-    FixtureCase("born-digital-pdf", "born-digital.pdf", ("Artículo", "12", "Ley", "1"), True),
+    FixtureCase("born-digital-pdf", "born-digital.pdf", ("Articulo", "12", "Ley", "1"), True),
     FixtureCase("scanned-pdf", "scanned.pdf", ("ART", "12", "LEY", "1"), True),
-    FixtureCase("mixed-pdf", "mixed.pdf", ("Artículo", "12", "LEY", "1"), True),
+    FixtureCase("mixed-pdf", "mixed.pdf", ("Articulo", "12", "LEY", "1"), True),
     FixtureCase("docx", "sample.docx", ("Artículo", "12", "Ley", "1"), True),
     FixtureCase("rtf", "sample.rtf", ("Artículo", "12", "Ley", "1"), True),
     FixtureCase("html", "sample.html", ("Artículo", "12", "Ley", "1"), True),
@@ -323,10 +323,7 @@ def main() -> int:
 
     required = [item for item in results if item.name != "corrupt-pdf"]
     corrupt = next(item for item in results if item.name == "corrupt-pdf")
-    structural_ok = all(item.detected_media_type for item in required)
-    corrupt_rejected = not corrupt.docling_success
-    return 0 if structural_ok and corrupt_rejected else 1
-
+    structural_ok = all(\n        item.detected_media_type and item.docling_success for item in required\n    )\n    fidelity_ok = all(item.token_coverage == 1.0 for item in required)\n    corrupt_rejected = not corrupt.docling_success\n    return 0 if structural_ok and fidelity_ok and corrupt_rejected else 1\n
 
 if __name__ == "__main__":
     raise SystemExit(main())
