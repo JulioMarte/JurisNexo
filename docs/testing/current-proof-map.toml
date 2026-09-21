@@ -422,3 +422,44 @@ evidence = ["contract"]
 guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 missing_evidence = ["integration"]
 reason = "The source-agnostic boundary and provider-neutral contracts are implemented, but universality is not proven until the same normalization core successfully processes a materially different second legal source."
+
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-LINEAGE-001"
+path = "backend/tests/integration/test_normalization_control_plane.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-RECONCILIATION-001"
+path = "backend/tests/unit/test_normalization_finalization.py"
+evidence = ["invariant", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_control_plane_primitives.py"
+evidence = ["contract"]
+
+[[proofs]]
+guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+path = "backend/tests/architecture/test_normalization_source_agnostic.py"
+evidence = ["fitness"]
+
+[[gaps]]
+guarantee = "INV-NORMALIZATION-LINEAGE-001"
+missing_evidence = ["adversarial"]
+reason = "Single-transaction acyclicity, immutability and scope isolation are covered, but concurrent opposite-edge insertion has not yet been proven impossible under independent PostgreSQL transactions."
+
+[[gaps]]
+guarantee = "INV-NORMALIZATION-RECONCILIATION-001"
+missing_evidence = ["integration"]
+reason = "Fail-closed finalization is covered with deterministic doubles and the persistence primitives use real PostgreSQL, but the complete finalizer -> PostgreSQL -> S3-compatible object-store path still needs one integrated execution proof."
+
+[[gaps]]
+guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+missing_evidence = ["contract"]
+reason = "The generic boundary is structurally enforced; universality still requires measured execution of the same normalization core on a materially different second legal source."
+
+[[gaps]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+missing_evidence = ["integration"]
+reason = "Evidence/search separation and append-only database structures exist, but live JEV and visual-verifier observations remain unbenchmarked until provider credentials and a benchmark-selected visual model are supplied."
