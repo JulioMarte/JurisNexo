@@ -98,7 +98,10 @@ def test_error_classifier_separates_document_retryable_and_systemic_failures() -
         "permanent_document"
     )
     assert classify_normalization_error(RuntimeError("HTTP 429 rate limit")).retryable
-    assert classify_normalization_error(RuntimeError("invalid credentials")).failure_class == "systemic"
+    assert (
+        classify_normalization_error(RuntimeError("invalid credentials")).failure_class
+        == "systemic"
+    )
 
 
 def test_text_quality_judge_uses_provider_contract_without_becoming_ground_truth() -> None:
