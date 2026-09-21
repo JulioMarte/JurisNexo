@@ -64,6 +64,24 @@ class NormalizationLedger(Protocol):
         parameters: dict[str, object] | None = None,
     ) -> str: ...
 
+    def register_child_derived_artifact(
+        self,
+        *,
+        scope_id: str,
+        parent_artifact_id: str,
+        sha256: str,
+        artifact_kind: str,
+        mime_type: str,
+        byte_size: int,
+        storage_locator: str,
+        engine: str,
+        engine_version: str | None,
+        pipeline_version: str,
+        config_sha256: str,
+        derivation_type: str,
+        parameters: dict[str, object] | None = None,
+    ) -> str: ...
+
     def record_observation(
         self,
         *,
@@ -237,10 +255,37 @@ class NormalizationExecutor:
                     )
                     review_required += 1
                 else:
+                    resolved_payload = text.encode("utf-8")
+                    resolved_stored = store_derived_artifact(
+                        object_store=self.derived_store,
+                        payload=resolved_payload,
+                        content_type="text/plain; charset=utf-8",
+                        artifact_kind="resolved-evidence-text",
+                        pipeline_version=self.pipeline_version,
+                        metadata={
+                            "source_sha256": planned.source_sha256,
+                            "parent_artifact_id": artifact_id,
+                        },
+                    )
+                    resolved_artifact_id = self.ledger.register_child_derived_artifact(
+                        scope_id=scope_id,
+                        parent_artifact_id=artifact_id,
+                        sha256=resolved_stored.sha256,
+                        artifact_kind=resolved_stored.artifact_kind,
+                        mime_type=resolved_stored.content_type,
+                        byte_size=resolved_stored.byte_count,
+                        storage_locator=resolved_stored.object_key,
+                        engine="jurisnexo-resolver",
+                        engine_version=None,
+                        pipeline_version=self.pipeline_version,
+                        config_sha256=self.config_sha256,
+                        derivation_type="resolve_evidence_text",
+                        parameters={"policy": "deterministic-native-structural-text"},
+                    )
                     self.ledger.mark_normalized(
                         scope_id=scope_id,
                         item_id=item_id,
-                        normalized_artifact_id=artifact_id,
+                        normalized_artifact_id=resolved_artifact_id,
                     )
                     normalized += 1
                 self.circuit_breaker.record_success()
