@@ -16,7 +16,7 @@ cleanup() {
   docker compose -p "$OLD_PROJECT" -f "$OLD_REPO/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   docker compose -p "$NEW_PROJECT" -f "$BASELINE_ONLY_DIR/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   git worktree remove --force "$OLD_REPO" >/dev/null 2>&1 || true
-  rm -rf "$BASELINE_ONLY_DIR"
+  git worktree remove --force "$BASELINE_ONLY_DIR" >/dev/null 2>&1 || true
   rm -rf "$OLD_DIR"
 }
 trap cleanup EXIT
