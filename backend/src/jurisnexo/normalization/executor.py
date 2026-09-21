@@ -187,6 +187,18 @@ class NormalizationExecutor:
                 config_sha256=self.config_sha256,
             )
             if reusable is not None:
+                self.ledger.record_observation(
+                    scope_id=scope_id,
+                    run_item_id=item_id,
+                    artifact_id=reusable,
+                    observation_kind="reuse_validation",
+                    payload={
+                        "reused_artifact_id": reusable,
+                        "pipeline_version": self.pipeline_version,
+                        "config_sha256": self.config_sha256,
+                    },
+                    status="accepted",
+                )
                 self.ledger.mark_normalized(
                     scope_id=scope_id,
                     item_id=item_id,
