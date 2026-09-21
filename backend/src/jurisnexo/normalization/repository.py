@@ -386,7 +386,7 @@ class PostgresNormalizationLedger:
                             then clock_timestamp()
                         else finished_at
                     end
-                where scope_id=%s and id=%s and status='reconciling'
+                where scope_id=%s and id=%s
                 """,
                 (
                     status,
@@ -529,7 +529,7 @@ class PostgresNormalizationLedger:
                     failed_count=%s,
                     skipped_count=%s,
                     finished_at=clock_timestamp()
-                where scope_id=%s and id=%s
+                where scope_id=%s and id=%s and status='reconciling'
                 """,
                 (
                     status,
