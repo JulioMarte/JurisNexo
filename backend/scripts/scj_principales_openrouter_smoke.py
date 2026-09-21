@@ -14,9 +14,9 @@ from jurisnexo.bootstrap.settings import (
     get_openrouter_settings,
 )
 from jurisnexo.model_providers.openrouter import OpenRouterStructuredModelProvider
+from jurisnexo.model_providers.openrouter_decisions import OpenRouterDecisionProvider
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.contracts import FormatInspection
-from jurisnexo.normalization.judges import StructuredTextQualityJudge
 from jurisnexo.normalization.quality import (
     assess_text_quality,
     extract_text_from_structural_json,
@@ -50,6 +50,17 @@ class ModelObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedCase:
+    record_id: str
+    object_key: str
+    source_sha256: str
+    source_bytes: int
+    normalized_chars: int
+    excerpt: str
+    deterministic_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SmokeCase:
     object_key: str
     source_sha256: str
@@ -57,7 +68,7 @@ class SmokeCase:
     normalized_chars: int
     excerpt_chars: int
     deterministic_flags: tuple[str, ...]
-    jev: ModelObservation
+    jev_answers: dict[str, Any]
     deepseek: ModelObservation
 
 
@@ -81,7 +92,7 @@ def _deepseek_schema() -> dict[str, Any]:
     }
 
 
-def _observation(
+def _deepseek_observation(
     result: Any,
     *,
     latency_ms: int,
@@ -126,6 +137,119 @@ def _listed_principales_keys(store: Any) -> tuple[str, ...]:
     return tuple(sorted(keys))
 
 
+def _prepare_cases(
+    *,
+    store: Any,
+    normalizer: DoclingStructuralNormalizer,
+    object_keys: tuple[str, ...],
+) -> tuple[PreparedCase, ...]:
+    prepared: list[PreparedCase] = []
+    for index, object_key in enumerate(object_keys):
+        response = store.client.get_object(
+            Bucket=store.config.bucket,
+            Key=object_key,
+        )
+        source = response["Body"].read()
+        if not isinstance(source, bytes):
+            source = bytes(source)
+        source_sha256 = hashlib.sha256(source).hexdigest()
+        normalized = normalizer.normalize(
+            source,
+            FormatInspection(
+                media_type="application/pdf",
+                detected_format="application/pdf",
+                metadata={},
+            ),
+            filename=object_key.rsplit("/", 1)[-1],
+        )
+        text = extract_text_from_structural_json(normalized.payload)
+        excerpt = text[:TEXT_LIMIT]
+        deterministic = assess_text_quality(excerpt)
+        prepared.append(
+            PreparedCase(
+                record_id=f"case_{index + 1}",
+                object_key=object_key,
+                source_sha256=source_sha256,
+                source_bytes=len(source),
+                normalized_chars=len(text),
+                excerpt=excerpt,
+                deterministic_flags=deterministic.risk_flags,
+            )
+        )
+    return tuple(prepared)
+
+
+def _jev_questions(cases: tuple[PreparedCase, ...]) -> dict[str, dict[str, Any]]:
+    questions: dict[str, dict[str, Any]] = {}
+    for item in cases:
+        prefix = item.record_id
+        questions[f"{prefix}__transcription_quality"] = {
+            "type": "choice",
+            "instructions": (
+                f'For the record with id "{prefix}", classify whether the normalized '
+                "legal text is usable as evidence. Judge transcription fidelity only, "
+                "not the legal merits."
+            ),
+            "criteria": {
+                "acceptable": (
+                    "Text appears materially faithful and readable; no visible pattern "
+                    "suggests missing or corrupted legally important content."
+                ),
+                "material_error": (
+                    "Text shows likely corruption, omissions, broken numbering, or "
+                    "damage that could change legally important meaning."
+                ),
+                "uncertain": (
+                    "The excerpt does not provide enough evidence to confidently choose "
+                    "acceptable or material_error."
+                ),
+            },
+        }
+        questions[f"{prefix}__legal_critical_damage"] = {
+            "type": "noul",
+            "instructions": (
+                f'For the record with id "{prefix}", decide whether transcription '
+                "damage appears to affect legally critical tokens."
+            ),
+            "true_when": (
+                "Damage appears to affect names, dates, case numbers, article/law "
+                "numbers, monetary amounts, citations, holdings, or dispositive text."
+            ),
+            "false_when": (
+                "No such legally critical transcription damage is apparent."
+            ),
+        }
+        questions[f"{prefix}__needs_visual_review"] = {
+            "type": "noul",
+            "instructions": (
+                f'For the record with id "{prefix}", decide whether comparison against '
+                "the original rendered page is warranted before accepting the text."
+            ),
+            "true_when": (
+                "There is material uncertainty, suspicious corruption, or legally "
+                "critical ambiguity that text-only checks cannot safely resolve."
+            ),
+            "false_when": (
+                "The normalized text is sufficiently clear that visual escalation is "
+                "not warranted."
+            ),
+        }
+    return questions
+
+
+def _answers_for_case(
+    answers: dict[str, dict[str, Any]],
+    *,
+    record_id: str,
+) -> dict[str, Any]:
+    prefix = f"{record_id}__"
+    return {
+        key.removeprefix(prefix): value
+        for key, value in answers.items()
+        if key.startswith(prefix)
+    }
+
+
 def main() -> int:
     if LIMIT < 1 or LIMIT > 2:
         raise ValueError(
@@ -148,17 +272,15 @@ def main() -> int:
     models = get_normalization_model_settings()
     api_key = openrouter.api_key.get_secret_value()
 
-    jev_provider = OpenRouterStructuredModelProvider(
+    jev_provider = OpenRouterDecisionProvider(
         api_key=api_key,
         model=models.jev_model,
-        base_url=openrouter.base_url,
     )
     deepseek_provider = OpenRouterStructuredModelProvider(
         api_key=api_key,
         model=models.deepseek_model,
         base_url=openrouter.base_url,
     )
-    jev = StructuredTextQualityJudge(jev_provider)
     normalizer = DoclingStructuralNormalizer()
     store = build_s3_object_store()
 
@@ -168,78 +290,33 @@ def main() -> int:
             f"expected at least {LIMIT} Principales PDFs in S3, found {len(all_keys)}"
         )
 
+    prepared = _prepare_cases(
+        store=store,
+        normalizer=normalizer,
+        object_keys=all_keys[:LIMIT],
+    )
+
+    jev_started = time.perf_counter()
+    jev_result = jev_provider.decide(
+        state_description=(
+            "Each record is a normalized text excerpt from an official SCJ "
+            "Principales sentence. Decisions concern transcription quality only."
+        ),
+        records=tuple(
+            {"id": item.record_id, "record": item.excerpt}
+            for item in prepared
+        ),
+        questions=_jev_questions(prepared),
+    )
+    jev_latency_ms = int((time.perf_counter() - jev_started) * 1000)
+    running_cost = jev_result.cost_usd or 0.0
+    if running_cost > MAX_COST_USD:
+        raise RuntimeError(
+            f"live smoke exceeded cost cap after JEV: ${running_cost:.6f}"
+        )
+
     results: list[SmokeCase] = []
-    running_cost = 0.0
-    for object_key in all_keys[:LIMIT]:
-        response = store.client.get_object(
-            Bucket=store.config.bucket,
-            Key=object_key,
-        )
-        source = response["Body"].read()
-        if not isinstance(source, bytes):
-            source = bytes(source)
-        source_sha256 = hashlib.sha256(source).hexdigest()
-
-        normalized = normalizer.normalize(
-            source,
-            FormatInspection(
-                media_type="application/pdf",
-                detected_format="application/pdf",
-                metadata={},
-            ),
-            filename=object_key.rsplit("/", 1)[-1],
-        )
-        text = extract_text_from_structural_json(normalized.payload)
-        excerpt = text[:TEXT_LIMIT]
-        deterministic = assess_text_quality(excerpt)
-
-        jev_raw = jev.judge(
-            excerpt,
-            context={
-                "source": "SCJ",
-                "collection": "principales-sentencias",
-                "object_key": object_key,
-                "mode": "shadow-router-smoke",
-                "deterministic_risk_flags": list(
-                    deterministic.risk_flags
-                ),
-            },
-        )
-        jev_observation = ModelObservation(
-            model=str(jev_raw["model"]),
-            provider=str(jev_raw["provider"]),
-            input_tokens=(
-                int(jev_raw["input_tokens"])
-                if isinstance(jev_raw.get("input_tokens"), int)
-                else None
-            ),
-            output_tokens=(
-                int(jev_raw["output_tokens"])
-                if isinstance(jev_raw.get("output_tokens"), int)
-                else None
-            ),
-            thinking_tokens=None,
-            cost_usd=(
-                float(jev_raw["cost_usd"])
-                if isinstance(jev_raw.get("cost_usd"), (int, float))
-                else None
-            ),
-            latency_ms=0,
-            requested_reasoning_effort="n/a",
-            value={
-                "pass_text": bool(jev_raw["pass_text"]),
-                "material_error_probability": float(
-                    jev_raw["material_error_probability"]
-                ),
-                "reasons": list(jev_raw["reasons"]),
-            },
-        )
-        running_cost += jev_observation.cost_usd or 0.0
-        if running_cost > MAX_COST_USD:
-            raise RuntimeError(
-                f"live smoke exceeded cost cap after JEV: ${running_cost:.6f}"
-            )
-
+    for item in prepared:
         deepseek_started = time.perf_counter()
         deepseek_result = deepseek_provider.generate_structured(
             prompt=(
@@ -249,7 +326,7 @@ def main() -> int:
                 "fragmented words, or materially suspicious omissions. Do not "
                 "evaluate the legal merits. Return whether this excerpt should "
                 "be escalated for human/visual review.\n\nExcerpt:\n"
-                + excerpt
+                + item.excerpt
             ),
             json_schema=_deepseek_schema(),
             max_output_tokens=1200,
@@ -258,7 +335,7 @@ def main() -> int:
         deepseek_latency_ms = int(
             (time.perf_counter() - deepseek_started) * 1000
         )
-        deepseek_observation = _observation(
+        deepseek_observation = _deepseek_observation(
             deepseek_result,
             latency_ms=deepseek_latency_ms,
             reasoning_effort=models.deepseek_reasoning_effort,
@@ -268,26 +345,40 @@ def main() -> int:
             raise RuntimeError(
                 f"live smoke exceeded cost cap after DeepSeek: ${running_cost:.6f}"
             )
-
         results.append(
             SmokeCase(
-                object_key=object_key,
-                source_sha256=source_sha256,
-                source_bytes=len(source),
-                normalized_chars=len(text),
-                excerpt_chars=len(excerpt),
-                deterministic_flags=deterministic.risk_flags,
-                jev=jev_observation,
+                object_key=item.object_key,
+                source_sha256=item.source_sha256,
+                source_bytes=item.source_bytes,
+                normalized_chars=item.normalized_chars,
+                excerpt_chars=len(item.excerpt),
+                deterministic_flags=item.deterministic_flags,
+                jev_answers=_answers_for_case(
+                    jev_result.answers,
+                    record_id=item.record_id,
+                ),
                 deepseek=deepseek_observation,
             )
         )
 
+    jev_batch = ModelObservation(
+        model=jev_result.model,
+        provider=jev_result.provider,
+        input_tokens=jev_result.usage.input_tokens,
+        output_tokens=jev_result.usage.output_tokens,
+        thinking_tokens=None,
+        cost_usd=jev_result.cost_usd,
+        latency_ms=jev_latency_ms,
+        requested_reasoning_effort="decisions",
+        value={"answers": jev_result.answers},
+    )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "scj",
         "collection": "principales-sentencias",
         "case_count": len(results),
-        "model_call_count": len(results) * 2,
+        "model_call_count": 1 + len(results),
+        "jev_batch": asdict(jev_batch),
         "deepseek_model": models.deepseek_model,
         "deepseek_reasoning_effort": models.deepseek_reasoning_effort,
         "text_char_limit_per_case": TEXT_LIMIT,
