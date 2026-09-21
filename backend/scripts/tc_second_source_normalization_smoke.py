@@ -38,7 +38,7 @@ def main() -> int:
         artifact.content,
         filename=artifact.filename,
     )
-    normalized = DoclingStructuralNormalizer().normalize(
+    normalized = DoclingStructuralNormalizer(ocr_language_tags=("iso:es",)).normalize(
         artifact.content,
         inspection,
         filename=artifact.filename,
