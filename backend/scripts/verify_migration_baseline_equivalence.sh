@@ -16,7 +16,6 @@ cleanup() {
   docker compose -p "$OLD_PROJECT" -f "$OLD_REPO/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   docker compose -p "$NEW_PROJECT" -f "$BASELINE_ONLY_DIR/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   git worktree remove --force "$OLD_REPO" >/dev/null 2>&1 || true
-  git worktree remove --force "$BASELINE_ONLY_DIR" >/dev/null 2>&1 || true
   rm -rf "$OLD_DIR"
 }
 trap cleanup EXIT
@@ -52,7 +51,11 @@ dump_data() {
 echo "==> Rebuilding historical database from $PRE_BASELINE_COMMIT"
 run_stack "$OLD_PROJECT" "$OLD_REPO/compose.yaml"
 
-echo "==> Rebuilding current database from consolidated baseline"
+echo "==> Rebuilding consolidated baseline without post-baseline migrations"
+mkdir -p "$BASELINE_ONLY_DIR"
+git archive HEAD | tar -x -C "$BASELINE_ONLY_DIR"
+find "$BASELINE_ONLY_DIR/backend/migrations/versions" -maxdepth 1 -type f \
+  ! -name "0001_jurisnexo_baseline.py" -delete
 run_stack "$NEW_PROJECT" "$BASELINE_ONLY_DIR/compose.yaml"
 
 OLD_SCHEMA="$ARTIFACT_DIR/pre-baseline.schema.sql"
@@ -84,7 +87,7 @@ if ! diff -u "$OLD_DATA_NORM" "$NEW_DATA_NORM" > "$ARTIFACT_DIR/data.diff"; then
 fi
 
 echo "==> Verifying Alembic control-table hardening"
-for pair in "$OLD_PROJECT|$OLD_REPO/compose.yaml" "$NEW_PROJECT|$ROOT/compose.yaml"; do
+for pair in "$OLD_PROJECT|$OLD_REPO/compose.yaml" "$NEW_PROJECT|$BASELINE_ONLY_DIR/compose.yaml"; do
   project="${pair%%|*}"
   compose_file="${pair#*|}"
   value="$(
