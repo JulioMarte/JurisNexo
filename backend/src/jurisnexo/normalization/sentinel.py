@@ -23,7 +23,7 @@ def select_sentinel_sample(
     threshold = int(rate * (2**256 - 1))
     for item in candidates:
         material = (
-            f"{seed}\n{item.stratum}\n{item.source_artifact_id}\n{item.page_id}".encode("utf-8")
+            f"{seed}\n{item.stratum}\n{item.source_artifact_id}\n{item.page_id}".encode()
         )
         value = int.from_bytes(hashlib.sha256(material).digest(), "big")
         if value <= threshold:
