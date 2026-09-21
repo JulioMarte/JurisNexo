@@ -316,6 +316,38 @@ class PostgresNormalizationLedger:
             assert row is not None
             return str(row[0])
 
+    def record_correction(
+        self,
+        *,
+        scope_id: str,
+        observation_id: str,
+        verifier_observation_id: str | None,
+        replacement_text: str,
+        rationale: str | None,
+        status: str = "proposed",
+    ) -> str:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into corpus.normalization_corrections
+                    (scope_id, observation_id, verifier_observation_id,
+                     replacement_text, rationale, status)
+                values (%s, %s, %s, %s, %s, %s)
+                returning id::text
+                """,
+                (
+                    scope_id,
+                    observation_id,
+                    verifier_observation_id,
+                    replacement_text,
+                    rationale,
+                    status,
+                ),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            return str(row[0])
+
     def mark_running(self, *, scope_id: str, item_id: str) -> None:
         self._transition(
             scope_id=scope_id,
