@@ -22,15 +22,16 @@ class ProviderPolicy:
         is_public: bool,
         redacted: bool,
     ) -> bool:
-        if self.permitted_document_classes and document_class not in self.permitted_document_classes:
+        if (
+            self.permitted_document_classes
+            and document_class not in self.permitted_document_classes
+        ):
             return False
         if is_public:
             return self.allow_public_documents
         if not self.allow_private_documents:
             return False
-        if self.require_redaction_for_private and not redacted:
-            return False
-        return True
+        return not self.require_redaction_for_private or redacted
 
 
 def enforce_provider_policy(
