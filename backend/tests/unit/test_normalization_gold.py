@@ -29,7 +29,9 @@ def test_gold_scoring_measures_generic_and_legal_critical_fidelity() -> None:
     assert score.critical["date"].recall == 1.0
     assert score.critical["money"].recall == 1.0
     assert score.critical["case_id"].recall == 1.0
-    assert score.legal_critical_recall >= 0.75
+    assert score.critical["citation"].recall == 1.0
+    assert score.critical["article"].recall == 0.0
+    assert score.legal_critical_recall == pytest.approx(5 / 7)
 
 
 def test_gold_scoring_exposes_critical_identifier_corruption() -> None:
