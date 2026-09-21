@@ -1,0 +1,59 @@
+name: SCJ Principales visual verifier smoke
+
+on:
+  pull_request:
+    branches:
+      - development
+    paths:
+      - "backend/scripts/scj_principales_visual_smoke.py"
+      - "backend/src/jurisnexo/model_providers/openrouter_visual.py"
+      - ".github/workflows/scj-principales-visual-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-principales-visual-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual-smoke:
+    if: contains(github.event.pull_request.labels.*.name, 'live-visual-smoke')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      JURISNEXO_OPENROUTER_VISUAL_MODEL: "deepseek/deepseek-v4.1-flash"
+      SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.005"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install bounded visual runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+
+      - name: Run two-call visual verification benchmark
+        env:
+          SCJ_PRINCIPALES_VISUAL_OUTPUT: ${{ runner.temp }}/principales-visual
+        run: python backend/scripts/scj_principales_visual_smoke.py
+
+      - name: Preserve visual benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-principales-visual-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/principales-visual/**
+          if-no-files-found: warn
+          retention-days: 30
