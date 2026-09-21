@@ -45,7 +45,10 @@ def upgrade() -> None:
         parameters jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(parameters) = 'object'),
         created_at timestamptz NOT NULL DEFAULT now(),
         CHECK (num_nonnulls(source_artifact_id, parent_derived_artifact_id) = 1),
-        CHECK (parent_derived_artifact_id IS NULL OR parent_derived_artifact_id <> derived_artifact_id),
+        CHECK (
+            parent_derived_artifact_id IS NULL
+            OR parent_derived_artifact_id <> derived_artifact_id
+        ),
         FOREIGN KEY (scope_id, source_artifact_id)
             REFERENCES corpus.source_artifacts(scope_id, id),
         FOREIGN KEY (scope_id, parent_derived_artifact_id)
