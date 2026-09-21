@@ -459,7 +459,10 @@ class PostgresNormalizationLedger:
                         from corpus.normalization_observations o
                         where o.scope_id=i.scope_id
                           and o.run_item_id=i.id
-                          and o.observation_kind='deterministic_qa'
+                          and o.observation_kind in (
+                              'deterministic_qa',
+                              'reuse_validation'
+                          )
                     ) as has_quality
                 from corpus.normalization_run_items i
                 where i.scope_id=%s and i.run_id=%s
