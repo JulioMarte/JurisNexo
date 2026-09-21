@@ -6,9 +6,12 @@ on:
     branches:
       - development
     paths:
-      - "backend/src/jurisnexo/normalization/**"
       - "backend/scripts/normalization_engine_spike.py"
       - ".github/workflows/normalization-engine-spike.yml"
+
+concurrency:
+  group: normalization-engine-spike-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
