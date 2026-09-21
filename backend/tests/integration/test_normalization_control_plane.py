@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -312,3 +313,79 @@ def test_observations_corrections_and_manifest_are_append_only(
                 pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
             ):
                 cursor.execute(f"delete from corpus.{table} where id=%s", (identifier,))
+
+
+
+@pytest.mark.adversarial
+def test_concurrent_opposite_lineage_edges_cannot_create_cycle(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.cursor() as cursor:
+        source = _source(cursor, "5")
+        first = _derived(cursor, "6")
+        second = _derived(cursor, "7")
+        cursor.execute(
+            """
+            insert into corpus.artifact_derivations
+                (source_artifact_id, derived_artifact_id, derivation_type,
+                 engine, pipeline_version, config_sha256)
+            values
+                (%s, %s, 'normalize', 'fixture', 'v1', %s),
+                (%s, %s, 'normalize', 'fixture', 'v1', %s)
+            """,
+            (source, first, "8" * 64, source, second, "8" * 64),
+        )
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def insert_edge(parent: Any, child: Any) -> None:
+        outcome: str
+        try:
+            with psycopg.connect(
+                os.environ["DATABASE_URL"],
+                autocommit=True,
+            ) as concurrent:
+                with concurrent.cursor() as cursor:
+                    barrier.wait(timeout=10)
+                    cursor.execute(
+                        """
+                        insert into corpus.artifact_derivations
+                            (parent_derived_artifact_id, derived_artifact_id,
+                             derivation_type, engine, pipeline_version,
+                             config_sha256)
+                        values (%s, %s, 'transform', 'fixture', 'v1', %s)
+                        """,
+                        (parent, child, "9" * 64),
+                    )
+            outcome = "committed"
+        except psycopg.errors.CheckViolation:
+            outcome = "rejected"
+        with lock:
+            outcomes.append(outcome)
+
+    first_thread = threading.Thread(target=insert_edge, args=(first, second))
+    second_thread = threading.Thread(target=insert_edge, args=(second, first))
+    first_thread.start()
+    second_thread.start()
+    first_thread.join(timeout=20)
+    second_thread.join(timeout=20)
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert sorted(outcomes) == ["committed", "rejected"]
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select count(*)
+            from corpus.artifact_derivation_paths
+            where ancestor_artifact_id in (%s, %s)
+              and descendant_artifact_id in (%s, %s)
+            """,
+            (first, second, first, second),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == 1
