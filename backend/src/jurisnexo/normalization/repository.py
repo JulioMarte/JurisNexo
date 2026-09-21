@@ -22,6 +22,21 @@ class RunSummary:
 class PostgresNormalizationLedger:
     connection: psycopg.Connection[Any]
 
+    def resolve_source_artifact_id(self, *, scope_id: str, sha256: str) -> str:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select id::text
+                from corpus.source_artifacts
+                where scope_id=%s and sha256=%s
+                """,
+                (scope_id, sha256),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise KeyError(f"source artifact not registered for sha256={sha256}")
+            return str(row[0])
+
     def create_run(
         self,
         *,
