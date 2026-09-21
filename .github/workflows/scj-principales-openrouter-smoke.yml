@@ -17,7 +17,8 @@ concurrency:
 
 jobs:
   smoke:
-    name: Two Principales / four model calls max
+    if: contains(github.event.pull_request.labels.*.name, 'live-provider-smoke')
+    name: Two Principales / three model calls max
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
