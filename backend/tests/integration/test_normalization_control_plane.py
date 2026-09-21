@@ -21,49 +21,110 @@ def connection() -> Iterator[psycopg.Connection[Any]]:
         yield conn
 
 
-def _source(cursor: psycopg.Cursor[Any], char: str) -> Any:
+def _scope(cursor: psycopg.Cursor[Any]) -> Any:
+    cursor.execute("insert into corpus.scopes (visibility) values ('public') returning id")
+    row = cursor.fetchone()
+    assert row is not None
+    return row[0]
+
+
+def _source(cursor: psycopg.Cursor[Any], char: str, *, scope_id: Any | None = None) -> Any:
     cursor.execute(
         """
-        insert into corpus.source_artifacts (sha256, mime_type, byte_size)
-        values (%s, 'application/pdf', 1)
+        insert into corpus.source_artifacts (scope_id, sha256, mime_type, byte_size)
+        values (coalesce(%s, '00000000-0000-0000-0000-000000000001'::uuid),
+                %s, 'application/pdf', 1)
         returning id
         """,
-        (char * 64,),
+        (scope_id, char * 64),
     )
     row = cursor.fetchone()
     assert row is not None
     return row[0]
 
 
-def _derived(cursor: psycopg.Cursor[Any], char: str) -> Any:
+def _derived(cursor: psycopg.Cursor[Any], char: str, *, scope_id: Any | None = None) -> Any:
     cursor.execute(
         """
         insert into corpus.derived_artifacts
-            (sha256, artifact_kind, mime_type, byte_size, storage_locator)
-        values (%s, 'docling_json', 'application/json', 2, %s)
+            (scope_id, sha256, artifact_kind, mime_type, byte_size, storage_locator)
+        values (coalesce(%s, '00000000-0000-0000-0000-000000000001'::uuid),
+                %s, 'docling_json', 'application/json', 2, %s)
         returning id
         """,
-        (char * 64, f"s3://derived/{char * 64}.json"),
+        (scope_id, char * 64, f"s3://derived/{char * 64}.json"),
     )
     row = cursor.fetchone()
     assert row is not None
     return row[0]
 
 
-def test_lineage_requires_exactly_one_parent_kind(connection: psycopg.Connection[Any]) -> None:
+def _run(
+    cursor: psycopg.Cursor[Any],
+    char: str,
+    *,
+    scope_id: Any | None = None,
+) -> Any:
+    cursor.execute(
+        """
+        insert into corpus.normalization_runs
+            (scope_id, input_manifest_locator, input_manifest_sha256,
+             pipeline_version, config_sha256)
+        values (coalesce(%s, '00000000-0000-0000-0000-000000000001'::uuid),
+                %s, %s, 'v1', %s)
+        returning id
+        """,
+        (scope_id, f"s3://manifests/{char}.json", char * 64, char * 64),
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    return row[0]
+
+
+def _run_item(
+    cursor: psycopg.Cursor[Any],
+    *,
+    run_id: Any,
+    source_artifact_id: Any,
+    scope_id: Any | None = None,
+) -> Any:
+    cursor.execute(
+        """
+        insert into corpus.normalization_run_items
+            (scope_id, run_id, source_artifact_id)
+        values (coalesce(%s, '00000000-0000-0000-0000-000000000001'::uuid), %s, %s)
+        returning id
+        """,
+        (scope_id, run_id, source_artifact_id),
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    return row[0]
+
+
+def test_lineage_requires_exactly_one_parent_kind(
+    connection: psycopg.Connection[Any],
+) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         source = _source(cursor, "a")
         derived = _derived(cursor, "b")
-        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
+        with (
+            connection.transaction(force_rollback=True),
+            pytest.raises(psycopg.errors.CheckViolation),
+        ):
             cursor.execute(
                 """
                 insert into corpus.artifact_derivations
-                    (derived_artifact_id, derivation_type, engine, pipeline_version, config_sha256)
+                    (derived_artifact_id, derivation_type, engine,
+                     pipeline_version, config_sha256)
                 values (%s, 'normalize', 'fixture', 'v1', %s)
                 """,
                 (derived, "c" * 64),
             )
-        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
+        with (
+            connection.transaction(force_rollback=True),
+            pytest.raises(psycopg.errors.CheckViolation),
+        ):
             cursor.execute(
                 """
                 insert into corpus.artifact_derivations
@@ -100,7 +161,10 @@ def test_lineage_rejects_transitive_cycle(connection: psycopg.Connection[Any]) -
             """,
             (first, second, "3" * 64, second, third, "3" * 64),
         )
-        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
+        with (
+            connection.transaction(force_rollback=True),
+            pytest.raises(psycopg.errors.CheckViolation),
+        ):
             cursor.execute(
                 """
                 insert into corpus.artifact_derivations
@@ -112,59 +176,140 @@ def test_lineage_rejects_transitive_cycle(connection: psycopg.Connection[Any]) -
             )
 
 
-def test_run_is_manifest_scoped_and_item_is_idempotent_per_source(
+def test_lineage_cannot_cross_scope(connection: psycopg.Connection[Any]) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        other_scope = _scope(cursor)
+        source = _source(cursor, "5")
+        derived = _derived(cursor, "6", scope_id=other_scope)
+        with (
+            connection.transaction(force_rollback=True),
+            pytest.raises(psycopg.errors.ForeignKeyViolation),
+        ):
+            cursor.execute(
+                """
+                insert into corpus.artifact_derivations
+                    (scope_id, source_artifact_id, derived_artifact_id,
+                     derivation_type, engine, pipeline_version, config_sha256)
+                values (%s, %s, %s, 'normalize', 'fixture', 'v1', %s)
+                """,
+                (other_scope, source, derived, "7" * 64),
+            )
+
+
+def test_derived_artifacts_and_lineage_are_immutable(
     connection: psycopg.Connection[Any],
 ) -> None:
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
-        source = _source(cursor, "5")
-        cursor.execute(
-            """
-            insert into corpus.normalization_runs
-                (input_manifest_locator, input_manifest_sha256, pipeline_version, config_sha256,
-                 selected_count)
-            values ('s3://manifests/run.json', %s, 'v1', %s, 1)
-            returning id
-            """,
-            ("6" * 64, "7" * 64),
-        )
-        run = cursor.fetchone()
-        assert run is not None
-        cursor.execute(
-            """
-            insert into corpus.normalization_run_items (run_id, source_artifact_id)
-            values (%s, %s)
-            """,
-            (run[0], source),
-        )
-        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.UniqueViolation):
-            cursor.execute(
-                """
-                insert into corpus.normalization_run_items (run_id, source_artifact_id)
-                values (%s, %s)
-                """,
-                (run[0], source),
-            )
-
-
-def test_normalized_item_requires_output_artifact(connection: psycopg.Connection[Any]) -> None:
-    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         source = _source(cursor, "8")
+        derived = _derived(cursor, "9")
         cursor.execute(
             """
-            insert into corpus.normalization_runs
-                (input_manifest_locator, input_manifest_sha256, pipeline_version, config_sha256)
-            values ('s3://manifests/run2.json', %s, 'v1', %s)
+            insert into corpus.artifact_derivations
+                (source_artifact_id, derived_artifact_id, derivation_type, engine,
+                 pipeline_version, config_sha256)
+            values (%s, %s, 'normalize', 'fixture', 'v1', %s)
             returning id
             """,
-            ("9" * 64, "a" * 64),
+            (source, derived, "a" * 64),
         )
-        run = cursor.fetchone()
-        assert run is not None
-        with connection.transaction(force_rollback=True), pytest.raises(psycopg.errors.CheckViolation):
+        derivation = cursor.fetchone()
+        assert derivation is not None
+
+        for statement, value in (
+            ("update corpus.derived_artifacts set mime_type='text/plain' where id=%s", derived),
+            ("delete from corpus.artifact_derivations where id=%s", derivation[0]),
+        ):
+            with (
+                connection.transaction(force_rollback=True),
+                pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
+            ):
+                cursor.execute(statement, (value,))
+
+
+def test_run_item_is_idempotent_per_source(connection: psycopg.Connection[Any]) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        source = _source(cursor, "b")
+        run = _run(cursor, "c")
+        _run_item(cursor, run_id=run, source_artifact_id=source)
+        with (
+            connection.transaction(force_rollback=True),
+            pytest.raises(psycopg.errors.UniqueViolation),
+        ):
+            _run_item(cursor, run_id=run, source_artifact_id=source)
+
+
+def test_normalized_item_requires_output_artifact(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        source = _source(cursor, "d")
+        run = _run(cursor, "e")
+        with (
+            connection.transaction(force_rollback=True),
+            pytest.raises(psycopg.errors.CheckViolation),
+        ):
             cursor.execute(
                 """
-                insert into corpus.normalization_run_items (run_id, source_artifact_id, status)
+                insert into corpus.normalization_run_items
+                    (run_id, source_artifact_id, status)
                 values (%s, %s, 'normalized')
                 """,
-                (run[0], source),
+                (run, source),
             )
+
+
+def test_observations_corrections_and_manifest_are_append_only(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        source = _source(cursor, "f")
+        run = _run(cursor, "1")
+        item = _run_item(cursor, run_id=run, source_artifact_id=source)
+        artifact = _derived(cursor, "2")
+        cursor.execute(
+            """
+            insert into corpus.normalization_observations
+                (run_item_id, artifact_id, observation_kind, payload, status)
+            values (%s, %s, 'ocr_text', '{"text":"texto"}'::jsonb, 'accepted')
+            returning id
+            """,
+            (item, artifact),
+        )
+        observation = cursor.fetchone()
+        assert observation is not None
+        cursor.execute(
+            """
+            insert into corpus.normalization_corrections
+                (observation_id, replacement_text, status)
+            values (%s, 'texto corregido', 'accepted')
+            returning id
+            """,
+            (observation[0],),
+        )
+        correction = cursor.fetchone()
+        assert correction is not None
+
+        manifest_artifact = _derived(cursor, "3")
+        cursor.execute(
+            """
+            insert into corpus.normalization_manifests
+                (run_id, artifact_id, sha256, selected_count, normalized_count,
+                 review_required_count, failed_count, skipped_count)
+            values (%s, %s, %s, 1, 1, 0, 0, 0)
+            returning id
+            """,
+            (run, manifest_artifact, "4" * 64),
+        )
+        manifest = cursor.fetchone()
+        assert manifest is not None
+
+        for table, identifier in (
+            ("normalization_observations", observation[0]),
+            ("normalization_corrections", correction[0]),
+            ("normalization_manifests", manifest[0]),
+        ):
+            with (
+                connection.transaction(force_rollback=True),
+                pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
+            ):
+                cursor.execute(f"delete from corpus.{table} where id=%s", (identifier,))
