@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol
 
 from jurisnexo.acquisition.official_corpus import ObjectStore
@@ -96,7 +97,7 @@ class NormalizationLedger(Protocol):
         model_version: str | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
-        cost_usd: object | None = None,
+        cost_usd: Decimal | None = None,
     ) -> str: ...
 
     def mark_running(self, *, scope_id: str, item_id: str) -> None: ...
@@ -118,7 +119,9 @@ class NormalizationLedger(Protocol):
         error_message: str,
     ) -> None: ...
 
-    def close_run(self, *, scope_id: str, run_id: str) -> object: ...
+    def mark_reconciling(self, *, scope_id: str, run_id: str) -> object: ...
+
+    def fail_run(self, *, scope_id: str, run_id: str, reason: str) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,10 +302,21 @@ class NormalizationExecutor:
                     error_message=failure.detail,
                 )
                 failed += 1
-                if failure.failure_class == "systemic":
-                    self.circuit_breaker.ensure_closed()
+                if failure.failure_class == "systemic" and self.circuit_breaker.open:
+                    self.ledger.fail_run(
+                        scope_id=scope_id,
+                        run_id=run_id,
+                        reason=failure.detail,
+                    )
+                    return ExecutionResult(
+                        run_id=run_id,
+                        normalized=normalized,
+                        reused=reused,
+                        review_required=review_required,
+                        failed=failed,
+                    )
 
-        self.ledger.close_run(scope_id=scope_id, run_id=run_id)
+        self.ledger.mark_reconciling(scope_id=scope_id, run_id=run_id)
         return ExecutionResult(
             run_id=run_id,
             normalized=normalized,
