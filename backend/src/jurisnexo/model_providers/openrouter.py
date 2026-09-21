@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -92,9 +92,12 @@ class OpenRouterStructuredModelProvider:
             raise ModelProviderError(f"OpenRouter transport error: {exc.reason}") from exc
 
         try:
-            body = cast(dict[str, Any], json.loads(raw))
-            choices = cast(list[dict[str, Any]], body["choices"])
-            message = cast(dict[str, Any], choices[0]["message"])
+            body = _json_object(raw)
+            choices_raw = body["choices"]
+            if not isinstance(choices_raw, list) or not choices_raw:
+                raise TypeError("choices is not a non-empty list")
+            choice = _json_object_value(choices_raw[0], "choice")
+            message = _json_object_value(choice["message"], "message")
             content = message["content"]
             if not isinstance(content, str):
                 raise TypeError("message content is not text")
@@ -103,7 +106,11 @@ class OpenRouterStructuredModelProvider:
             raise ModelProviderError("OpenRouter returned an invalid structured response") from exc
 
         usage_raw = body.get("usage")
-        usage_map = usage_raw if isinstance(usage_raw, dict) else {}
+        usage_map = (
+            cast(dict[str, object], usage_raw)
+            if isinstance(usage_raw, dict)
+            else {}
+        )
         model = body.get("model")
         response_id = body.get("id")
         provider_raw = body.get("provider")
@@ -137,11 +144,12 @@ def _int_or_none(value: object) -> int | None:
     return None
 
 
-def _reasoning_tokens(usage: dict[str, Any]) -> int | None:
+def _reasoning_tokens(usage: dict[str, object]) -> int | None:
     details = usage.get("completion_tokens_details")
     if not isinstance(details, dict):
         return None
-    return _int_or_none(details.get("reasoning_tokens"))
+    typed_details = cast(dict[str, object], details)
+    return _int_or_none(typed_details.get("reasoning_tokens"))
 
 
 def _float_or_none(value: object) -> float | None:
@@ -150,3 +158,14 @@ def _float_or_none(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _json_object(raw: bytes) -> dict[str, object]:
+    loaded: object = json.loads(raw)
+    return _json_object_value(loaded, "response")
+
+
+def _json_object_value(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} is not an object")
+    return cast(dict[str, object], value)
