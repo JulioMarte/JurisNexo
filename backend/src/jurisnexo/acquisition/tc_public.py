@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -36,6 +36,24 @@ class _PdfLinkParser(HTMLParser):
                 self.hrefs.append(value)
 
 
+def _canonical_pdf_candidate(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.path.casefold().endswith(".pdf"):
+        return url
+
+    query = parse_qs(parsed.query)
+    embedded = query.get("file")
+    if not embedded:
+        return None
+    candidate = unquote(embedded[0])
+    candidate_parsed = urlparse(candidate)
+    if candidate_parsed.scheme not in {"http", "https"}:
+        return None
+    if not candidate_parsed.path.casefold().endswith(".pdf"):
+        return None
+    return candidate
+
+
 def discover_tc_pdf_url(
     *,
     detail_html: str,
@@ -44,21 +62,32 @@ def discover_tc_pdf_url(
 ) -> str:
     parser = _PdfLinkParser()
     parser.feed(detail_html)
-    candidates = tuple(
-        dict.fromkeys(urljoin(detail_url, href) for href in parser.hrefs)
-    )
+
+    canonical = []
+    for href in parser.hrefs:
+        resolved = urljoin(detail_url, href)
+        pdf_url = _canonical_pdf_candidate(resolved)
+        if pdf_url is not None:
+            canonical.append(pdf_url)
+    candidates = tuple(dict.fromkeys(canonical))
+
     if expected_filename is not None:
+        expected = expected_filename.casefold()
         exact = tuple(
-            url for url in candidates
-            if url.casefold().endswith(expected_filename.casefold())
+            url
+            for url in candidates
+            if urlparse(url).path.rsplit("/", 1)[-1].casefold() == expected
         )
         if len(exact) == 1:
             return exact[0]
         if len(exact) > 1:
-            raise ValueError("TC detail page exposes duplicate matching PDF links")
+            raise ValueError(
+                "TC detail page exposes multiple distinct PDFs with the expected filename"
+            )
+
     if len(candidates) != 1:
         raise ValueError(
-            f"expected one TC decision PDF link, found {len(candidates)}"
+            f"expected one canonical TC decision PDF, found {len(candidates)}"
         )
     return candidates[0]
 
