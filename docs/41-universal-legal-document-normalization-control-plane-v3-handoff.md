@@ -522,6 +522,16 @@ Quality remains multi-dimensional; no single opaque score determines trust.
 
 ---
 
+### DeepSeek V4.1 Flash reasoning policy
+
+The current DeepSeek challenger is `deepseek/deepseek-v4.1-flash`.
+
+- Default reasoning effort: `high`.
+- `xhigh` is reserved for explicit high-vs-max comparison runs.
+- The same benchmark cases and decision contract must be used when comparing efforts.
+- Persist requested/effective model, effort, input tokens, output tokens, reasoning tokens, latency and provider-reported cost.
+- Do not promote `xhigh` merely because it is more expensive or produces more reasoning tokens; promotion requires measured quality benefit on JurisNexo legal-document tasks.
+
 ## 14. JEV role
 
 Keep the V2 policy.
