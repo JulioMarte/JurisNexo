@@ -319,7 +319,12 @@ def test_observations_corrections_and_manifest_are_append_only(
                 connection.transaction(force_rollback=True),
                 pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
             ):
-                cursor.execute(\n                    sql.SQL("delete from corpus.{} where id=%s").format(\n                        sql.Identifier(table)\n                    ),\n                    (identifier,),\n                )
+                cursor.execute(
+                    sql.SQL("delete from corpus.{} where id=%s").format(
+                        sql.Identifier(table)
+                    ),
+                    (identifier,),
+                )
 
 
 
