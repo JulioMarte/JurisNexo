@@ -28,4 +28,9 @@ def select_sentinel_sample(
         value = int.from_bytes(hashlib.sha256(material).digest(), "big")
         if value <= threshold:
             selected.append(item)
-    return tuple(sorted(selected, key=lambda item: (item.stratum, item.source_artifact_id, item.page_id)))
+    return tuple(
+        sorted(
+            selected,
+            key=lambda item: (item.stratum, item.source_artifact_id, item.page_id),
+        )
+    )
