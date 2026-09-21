@@ -6,7 +6,7 @@ from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from jurisnexo.model_providers.contracts import ModelProviderError
+from jurisnexo.model_providers.contracts import JsonObject, ModelProviderError
 from jurisnexo.model_providers.decisions import (
     DecisionQuestion,
     DecisionResult,
@@ -89,7 +89,7 @@ class OpenRouterDecisionProvider:
                 raise TypeError("answers is not an object")
             typed_answers = cast(dict[object, object], answers_raw)
             answers = {
-                str(key): cast(dict[str, object], value)
+                str(key): cast(JsonObject, value)
                 for key, value in typed_answers.items()
                 if isinstance(value, dict)
             }
