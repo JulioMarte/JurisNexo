@@ -139,6 +139,7 @@ def upgrade() -> None:
         started_at timestamptz,
         finished_at timestamptz,
         created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (scope_id, id),
         UNIQUE (scope_id, run_id, source_artifact_id),
         CHECK (status <> 'normalized' OR normalized_artifact_id IS NOT NULL),
         CHECK ((error_code IS NULL) = (error_message IS NULL)),
