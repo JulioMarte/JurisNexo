@@ -281,7 +281,7 @@ def main() -> int:
         model=models.deepseek_model,
         base_url=openrouter.base_url,
     )
-    normalizer = DoclingStructuralNormalizer()
+    normalizer = DoclingStructuralNormalizer(ocr_language_tags=("iso:es",))
     store = build_s3_object_store()
 
     all_keys = _listed_principales_keys(store)
