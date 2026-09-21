@@ -47,7 +47,7 @@ class NormalizationModelSettings(BaseSettings):
     )
 
     jev_model: str = "~typesafe/jev-latest"
-    deepseek_model: str = "~deepseek/deepseek-v4-flash-latest"
+    deepseek_model: str = "deepseek/deepseek-v4-flash-0731"
     visual_model: str | None = None
 
 
