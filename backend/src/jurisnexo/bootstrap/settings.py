@@ -36,6 +36,7 @@ class OpenRouterSettings(BaseSettings):
 
     api_key: SecretStr | None = None
     base_url: str = "https://openrouter.ai/api/v1"
+    decisions_base_url: str = "https://openrouter.ai/api/alpha"
 
 
 class NormalizationModelSettings(BaseSettings):
