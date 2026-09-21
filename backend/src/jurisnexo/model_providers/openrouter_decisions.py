@@ -83,42 +83,15 @@ class OpenRouterDecisionProvider:
             ) from exc
 
         try:
-            body = _json_object(raw)
-            answers_raw = body["answers"]
-            if not isinstance(answers_raw, dict):
-                raise TypeError("answers is not an object")
-            typed_answers = cast(dict[object, object], answers_raw)
-            answers = {
-                str(key): cast(JsonObject, value)
-                for key, value in typed_answers.items()
-                if isinstance(value, dict)
-            }
+            return parse_openrouter_decision_response(
+                raw,
+                requested_model=self.model,
+                provider=self.provider_name,
+            )
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ModelProviderError(
                 "OpenRouter decisions returned an invalid response"
             ) from exc
-
-        usage_raw = body.get("usage")
-        usage = (
-            cast(dict[str, object], usage_raw)
-            if isinstance(usage_raw, dict)
-            else {}
-        )
-        effective_model = str(body.get("model") or self.model)
-        response_id = body.get("id")
-        return DecisionResult(
-            answers=answers,
-            provider=self.provider_name,
-            model=effective_model,
-            model_version=effective_model,
-            response_id=str(response_id) if response_id else None,
-            usage=DecisionUsage(
-                input_tokens=_int_or_none(usage.get("prompt_tokens")),
-                output_tokens=_int_or_none(usage.get("completion_tokens")),
-                total_tokens=_int_or_none(usage.get("total_tokens")),
-            ),
-            cost_usd=_float_or_none(usage.get("cost")),
-        )
 
 
 def _int_or_none(value: object) -> int | None:
@@ -142,3 +115,46 @@ def _json_object(raw: bytes) -> dict[str, object]:
     if not isinstance(loaded, dict):
         raise TypeError("response is not an object")
     return cast(dict[str, object], loaded)
+
+
+
+def parse_openrouter_decision_response(
+    raw: bytes,
+    *,
+    requested_model: str,
+    provider: str = "openrouter",
+) -> DecisionResult:
+    body = _json_object(raw)
+    answers_raw = body["answers"]
+    if not isinstance(answers_raw, dict):
+        raise TypeError("answers is not an object")
+    typed_answers = cast(dict[object, object], answers_raw)
+    answers = {
+        str(key): cast(JsonObject, value)
+        for key, value in typed_answers.items()
+        if isinstance(value, dict)
+    }
+    if len(answers) != len(typed_answers):
+        raise TypeError("every decision answer must be an object")
+
+    usage_raw = body.get("usage")
+    usage = (
+        cast(dict[str, object], usage_raw)
+        if isinstance(usage_raw, dict)
+        else {}
+    )
+    effective_model = str(body.get("model") or requested_model)
+    response_id = body.get("id")
+    return DecisionResult(
+        answers=answers,
+        provider=provider,
+        model=effective_model,
+        model_version=effective_model,
+        response_id=str(response_id) if response_id else None,
+        usage=DecisionUsage(
+            input_tokens=_int_or_none(usage.get("prompt_tokens")),
+            output_tokens=_int_or_none(usage.get("completion_tokens")),
+            total_tokens=_int_or_none(usage.get("total_tokens")),
+        ),
+        cost_usd=_float_or_none(usage.get("cost")),
+    )
