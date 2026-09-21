@@ -21,6 +21,20 @@ _SENSITIVE_ENV_NAMES = {
 }
 
 
+def sanitized_worker_environment(
+    environment: dict[str, str],
+) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in environment.items()
+        if key not in _SENSITIVE_ENV_NAMES
+        and not any(
+            key.startswith(prefix)
+            for prefix in _SENSITIVE_ENV_PREFIXES
+        )
+    }
+
+
 @dataclass(slots=True)
 class IsolatedDoclingStructuralNormalizer:
     timeout_seconds: float = 180.0
@@ -73,15 +87,7 @@ class IsolatedDoclingStructuralNormalizer:
             for language in self.ocr_language_tags:
                 command.extend(("--ocr-language", language))
 
-            environment = {
-                key: value
-                for key, value in os.environ.items()
-                if key not in _SENSITIVE_ENV_NAMES
-                and not any(
-                    key.startswith(prefix)
-                    for prefix in _SENSITIVE_ENV_PREFIXES
-                )
-            }
+            environment = sanitized_worker_environment(dict(os.environ))
             try:
                 completed = subprocess.run(
                     command,
