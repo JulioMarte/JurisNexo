@@ -63,7 +63,7 @@ def discover_tc_pdf_url(
     parser = _PdfLinkParser()
     parser.feed(detail_html)
 
-    canonical = []
+    canonical: list[str] = []
     for href in parser.hrefs:
         resolved = urljoin(detail_url, href)
         pdf_url = _canonical_pdf_candidate(resolved)
