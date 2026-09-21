@@ -18,9 +18,11 @@ def test_normalization_model_policy_defaults_to_moving_cost_first_aliases(
 ) -> None:
     monkeypatch.delenv("JURISNEXO_OPENROUTER_JEV_MODEL", raising=False)
     monkeypatch.delenv("JURISNEXO_OPENROUTER_DEEPSEEK_MODEL", raising=False)
+    monkeypatch.delenv("JURISNEXO_OPENROUTER_DEEPSEEK_REASONING_EFFORT", raising=False)
     settings = NormalizationModelSettings()
     assert settings.jev_model == "~typesafe/jev-latest"
-    assert settings.deepseek_model == "~deepseek/deepseek-v4-flash-latest"
+    assert settings.deepseek_model == "deepseek/deepseek-v4.1-flash"
+    assert settings.deepseek_reasoning_effort == "high"
 
 
 def test_live_provider_rejects_missing_secret_before_network() -> None:
