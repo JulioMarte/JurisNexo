@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,10 @@ class ModelObservation:
     provider: str
     input_tokens: int | None
     output_tokens: int | None
+    thinking_tokens: int | None
     cost_usd: float | None
+    latency_ms: int
+    requested_reasoning_effort: str
     value: dict[str, Any]
 
 
@@ -77,13 +81,21 @@ def _deepseek_schema() -> dict[str, Any]:
     }
 
 
-def _observation(result: Any) -> ModelObservation:
+def _observation(
+    result: Any,
+    *,
+    latency_ms: int,
+    reasoning_effort: str,
+) -> ModelObservation:
     return ModelObservation(
         model=result.model,
         provider=result.provider,
         input_tokens=result.usage.input_tokens,
         output_tokens=result.usage.output_tokens,
+        thinking_tokens=result.usage.thinking_tokens,
         cost_usd=result.cost_usd,
+        latency_ms=latency_ms,
+        requested_reasoning_effort=reasoning_effort,
         value=dict(result.value),
     )
 
@@ -206,11 +218,14 @@ def main() -> int:
                 if isinstance(jev_raw.get("output_tokens"), int)
                 else None
             ),
+            thinking_tokens=None,
             cost_usd=(
                 float(jev_raw["cost_usd"])
                 if isinstance(jev_raw.get("cost_usd"), (int, float))
                 else None
             ),
+            latency_ms=0,
+            requested_reasoning_effort="n/a",
             value={
                 "pass_text": bool(jev_raw["pass_text"]),
                 "material_error_probability": float(
@@ -225,6 +240,7 @@ def main() -> int:
                 f"live smoke exceeded cost cap after JEV: ${running_cost:.6f}"
             )
 
+        deepseek_started = time.perf_counter()
         deepseek_result = deepseek_provider.generate_structured(
             prompt=(
                 "You are a conservative extraction-quality challenger. Inspect "
@@ -236,10 +252,17 @@ def main() -> int:
                 + excerpt
             ),
             json_schema=_deepseek_schema(),
-            max_output_tokens=220,
-            thinking_level="none",
+            max_output_tokens=1200,
+            thinking_level=models.deepseek_reasoning_effort,
         )
-        deepseek_observation = _observation(deepseek_result)
+        deepseek_latency_ms = int(
+            (time.perf_counter() - deepseek_started) * 1000
+        )
+        deepseek_observation = _observation(
+            deepseek_result,
+            latency_ms=deepseek_latency_ms,
+            reasoning_effort=models.deepseek_reasoning_effort,
+        )
         running_cost += deepseek_observation.cost_usd or 0.0
         if running_cost > MAX_COST_USD:
             raise RuntimeError(
@@ -265,6 +288,8 @@ def main() -> int:
         "collection": "principales-sentencias",
         "case_count": len(results),
         "model_call_count": len(results) * 2,
+        "deepseek_model": models.deepseek_model,
+        "deepseek_reasoning_effort": models.deepseek_reasoning_effort,
         "text_char_limit_per_case": TEXT_LIMIT,
         "max_cost_usd": MAX_COST_USD,
         "observed_cost_usd": running_cost,
