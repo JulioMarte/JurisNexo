@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from jurisnexo.model_providers.decisions import DecisionResult, DecisionUsage
+from jurisnexo.model_providers.contracts import JsonObject
+from jurisnexo.model_providers.decisions import DecisionQuestion, DecisionResult, DecisionUsage
 from jurisnexo.normalization.decision_batching import (
     DecisionBatchPolicy,
     DecisionRecord,
@@ -27,11 +28,11 @@ class _FakeDecisionProvider:
         *,
         state_description: str,
         records: tuple[dict[str, str], ...],
-        questions: dict[str, dict[str, object]],
+        questions: dict[str, DecisionQuestion],
     ) -> DecisionResult:
         del state_description
         self.calls += 1
-        answers: dict[str, dict[str, object]] = {}
+        answers: dict[str, JsonObject] = {}
         for record in records:
             record_id = record["id"]
             answers[f"{record_id}__transcription_quality"] = {
