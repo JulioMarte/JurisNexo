@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Protocol
 
 from jurisnexo.acquisition.official_corpus import ObjectStore
@@ -114,12 +113,7 @@ class NormalizationLedger(Protocol):
         observation_kind: str,
         payload: dict[str, object],
         status: str = "candidate",
-        provider: str | None = None,
-        model: str | None = None,
-        model_version: str | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cost_usd: Decimal | None = None,
+        model_call_id: str | None = None,
     ) -> str: ...
 
     def mark_running(self, *, scope_id: str, item_id: str) -> None: ...
