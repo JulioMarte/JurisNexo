@@ -35,8 +35,8 @@ def test_batch_planner_keeps_headroom_below_32k_context() -> None:
     )
     policy = DecisionBatchPolicy(
         max_context_tokens=32_000,
-        target_total_tokens=24_000,
-        reserved_instruction_tokens=4_000,
+        target_total_tokens=12_000,
+        reserved_instruction_tokens=2_000,
         max_records_per_batch=20,
     )
 
