@@ -36,7 +36,7 @@ class _FakeClaimProvider:
         for record in records:
             record_id = record["id"]
             if record_id.endswith("supported"):
-                distribution: JsonObject = {
+                distribution: dict[str, float] = {
                     "supported": 0.95,
                     "contradicted": 0.03,
                     "insufficient": 0.02,
