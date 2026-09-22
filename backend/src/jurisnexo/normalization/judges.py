@@ -5,11 +5,14 @@ from typing import Any, cast
 
 from jurisnexo.model_providers.contracts import (
     JsonObject,
-    JsonValue,
     ModelProvider,
     ModelProviderError,
 )
 from jurisnexo.model_providers.decisions import DecisionProvider
+from jurisnexo.normalization.jev_answers import (
+    choice_probability,
+    noul_probability,
+)
 from jurisnexo.normalization.jev_quality import build_text_quality_questions
 
 
@@ -122,11 +125,11 @@ class DecisionTextQualityJudge:
             f"{record_id}__needs_visual_review",
         )
 
-        acceptable = _choice_probability(quality, "acceptable")
-        material_error = _choice_probability(quality, "material_error")
-        uncertain = _choice_probability(quality, "uncertain")
-        critical_probability = _noul_probability(critical)
-        visual_probability = _noul_probability(visual)
+        acceptable = choice_probability(quality, "acceptable")
+        material_error = choice_probability(quality, "material_error")
+        uncertain = choice_probability(quality, "uncertain")
+        critical_probability = noul_probability(critical)
+        visual_probability = noul_probability(visual)
 
         reasons: list[str] = []
         if material_error >= 0.5:
@@ -184,7 +187,7 @@ def _required_answer(
     return answer
 
 
-def _choice_probability(answer: JsonObject, option: str) -> float:
+def choice_probability(answer: JsonObject, option: str) -> float:
     raw_choice = answer.get("choice")
     if not isinstance(raw_choice, dict):
         raise ModelProviderError("choice answer is not an object")
@@ -192,7 +195,7 @@ def _choice_probability(answer: JsonObject, option: str) -> float:
     return _probability(choice.get(option), f"choice.{option}")
 
 
-def _noul_probability(answer: JsonObject) -> float:
+def noul_probability(answer: JsonObject) -> float:
     return _probability(answer.get("noul"), "noul")
 
 
