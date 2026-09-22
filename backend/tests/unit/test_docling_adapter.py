@@ -88,10 +88,13 @@ def test_image_input_uses_full_page_spanish_ocr(monkeypatch: Any) -> None:
         "docling.datamodel.pipeline_options": pipeline_module,
         "docling": docling_package,
     }
+    def fake_import_module(name: str) -> object:
+        return modules[name]
+
     monkeypatch.setattr(
         adapter.importlib,
         "import_module",
-        lambda name: modules[name],
+        fake_import_module,
     )
 
     result = DoclingStructuralNormalizer(
