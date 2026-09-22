@@ -26,6 +26,9 @@ def test_gold_scoring_measures_generic_and_legal_critical_fidelity() -> None:
     assert score.character_error_rate > 0
     assert score.word_error_rate > 0
     assert score.missing_span_count == 0
+    assert score.token_content_recall == pytest.approx(1.0)
+    assert score.token_content_precision == pytest.approx(1.0)
+    assert score.token_content_f1 == pytest.approx(1.0)
     assert score.critical["date"].recall == 1.0
     assert score.critical["money"].recall == 1.0
     assert score.critical["case_id"].recall == 1.0
@@ -69,4 +72,22 @@ def test_gold_scoring_is_zero_error_for_exact_text() -> None:
 
     assert score.character_error_rate == pytest.approx(0.0)
     assert score.word_error_rate == pytest.approx(0.0)
+    assert score.token_content_recall == pytest.approx(1.0)
+    assert score.token_content_precision == pytest.approx(1.0)
     assert score.legal_critical_recall == pytest.approx(1.0)
+
+
+
+def test_content_fidelity_is_order_insensitive_but_wer_is_not() -> None:
+    expected = "Primero segundo tercero cuarto."
+    reordered = "tercero cuarto primero segundo."
+
+    score = score_text_fidelity(
+        expected_text=expected,
+        candidate_text=reordered,
+    )
+
+    assert score.word_error_rate > 0.0
+    assert score.token_content_recall == pytest.approx(1.0)
+    assert score.token_content_precision == pytest.approx(1.0)
+    assert score.token_content_f1 == pytest.approx(1.0)
