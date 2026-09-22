@@ -108,3 +108,58 @@ def brier_score(
         ** 2
         for item in observations
     ) / len(observations)
+
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionAssessment:
+    eligible: bool
+    reasons: tuple[str, ...]
+
+
+def assess_promotion_readiness(
+    *,
+    calibration: ThresholdMetrics,
+    holdout: ThresholdMetrics,
+    brier: float,
+    minimum_positive_cases: int = 25,
+    minimum_negative_cases: int = 25,
+    maximum_holdout_false_negative_rate: float = 0.02,
+    maximum_holdout_false_positive_rate: float = 0.25,
+    maximum_brier_score: float = 0.15,
+) -> PromotionAssessment:
+    if not 0.0 <= brier <= 1.0:
+        raise ValueError("Brier score must stay within [0, 1]")
+    reasons: list[str] = []
+
+    if calibration.positive_count < minimum_positive_cases:
+        reasons.append(
+            "calibration positive sample is below promotion minimum"
+        )
+    if calibration.negative_count < minimum_negative_cases:
+        reasons.append(
+            "calibration negative sample is below promotion minimum"
+        )
+    if holdout.positive_count < minimum_positive_cases:
+        reasons.append(
+            "holdout positive sample is below promotion minimum"
+        )
+    if holdout.negative_count < minimum_negative_cases:
+        reasons.append(
+            "holdout negative sample is below promotion minimum"
+        )
+    if holdout.false_negative_rate > maximum_holdout_false_negative_rate:
+        reasons.append(
+            "holdout false-negative rate exceeds promotion maximum"
+        )
+    if holdout.false_positive_rate > maximum_holdout_false_positive_rate:
+        reasons.append(
+            "holdout false-positive rate exceeds promotion maximum"
+        )
+    if brier > maximum_brier_score:
+        reasons.append("Brier score exceeds promotion maximum")
+
+    return PromotionAssessment(
+        eligible=not reasons,
+        reasons=tuple(reasons),
+    )
