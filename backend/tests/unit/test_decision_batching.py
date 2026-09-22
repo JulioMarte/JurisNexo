@@ -142,7 +142,7 @@ def test_record_scoped_batching_counts_only_questions_sent_with_each_batch() -> 
 def test_shadow_routing_escalates_uncertainty_and_visual_critical_risk() -> None:
     policy = JevRoutingPolicy()
 
-    assert policy.route(
+    assert policy.recommend(
         TextQualityProbabilities(
             acceptable=0.20,
             material_error=0.10,
@@ -152,7 +152,7 @@ def test_shadow_routing_escalates_uncertainty_and_visual_critical_risk() -> None
         )
     ) == "human_review"
 
-    assert policy.route(
+    assert policy.recommend(
         TextQualityProbabilities(
             acceptable=0.80,
             material_error=0.10,
@@ -166,7 +166,7 @@ def test_shadow_routing_escalates_uncertainty_and_visual_critical_risk() -> None
 def test_shadow_routing_keeps_borderline_clean_text_in_sentinel_band() -> None:
     policy = JevRoutingPolicy()
 
-    assert policy.route(
+    assert policy.recommend(
         TextQualityProbabilities(
             acceptable=0.95,
             material_error=0.04,
@@ -176,7 +176,7 @@ def test_shadow_routing_keeps_borderline_clean_text_in_sentinel_band() -> None:
         )
     ) == "sentinel"
 
-    assert policy.route(
+    assert policy.recommend(
         TextQualityProbabilities(
             acceptable=0.99,
             material_error=0.005,
@@ -185,3 +185,20 @@ def test_shadow_routing_keeps_borderline_clean_text_in_sentinel_band() -> None:
             needs_visual_review=0.0,
         )
     ) == "accept"
+
+
+
+def test_shadow_mode_never_activates_recommended_route() -> None:
+    probabilities = TextQualityProbabilities(
+        acceptable=0.10,
+        material_error=0.80,
+        uncertain=0.05,
+        legal_critical_damage=0.90,
+        needs_visual_review=0.85,
+    )
+    shadow = JevRoutingPolicy(promotion_state="shadow")
+    active = JevRoutingPolicy(promotion_state="active")
+
+    assert shadow.recommend(probabilities) == "visual_review"
+    assert shadow.route(probabilities) == "shadow_observe"
+    assert active.route(probabilities) == "visual_review"
