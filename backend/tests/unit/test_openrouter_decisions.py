@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-from typing import cast
-
 import pytest
 
 from jurisnexo.model_providers.openrouter_decisions import (
@@ -16,24 +14,38 @@ def test_parse_openrouter_decisions_preserves_choice_noul_and_score_answers() ->
         "model": "typesafe/jev-1.13",
         "answers": {
             "case_1__quality": {
-                "choice": {
+                "type": "choice",
+                "choice": "acceptable",
+                "confidence": 0.91,
+                "probabilities": {
                     "acceptable": 0.91,
                     "material_error": 0.04,
                     "uncertain": 0.05,
-                }
+                },
             },
-            "case_1__critical_damage": {"noul": 0.08},
+            "case_1__critical_damage": {
+                "type": "noul",
+                "noul": 0.08,
+            },
             "case_1__risk": {
-                "score": {
-                    "value": 1,
-                    "probabilities": [0.75, 0.2, 0.05],
-                }
+                "type": "score",
+                "score": 1.3,
+                "confidence": 0.80,
+                "legend": {
+                    "0": "low",
+                    "1": "medium",
+                    "2": "high",
+                },
+                "probabilities": {
+                    "0": 0.10,
+                    "1": 0.50,
+                    "2": 0.40,
+                },
             },
         },
         "usage": {
-            "prompt_tokens": 1200,
-            "completion_tokens": 0,
-            "total_tokens": 1200,
+            "input_tokens": 1200,
+            "output_tokens": 0,
             "cost": 0.0000504,
         },
     }
@@ -44,17 +56,12 @@ def test_parse_openrouter_decisions_preserves_choice_noul_and_score_answers() ->
 
     assert result.model == "typesafe/jev-1.13"
     assert result.response_id == "decision-1"
-    quality = cast(
-        dict[str, float],
-        result.answers["case_1__quality"]["choice"],
-    )
-    risk = cast(
-        dict[str, object],
-        result.answers["case_1__risk"]["score"],
-    )
-    assert quality["acceptable"] == 0.91
+    quality = result.answers["case_1__quality"]
+    risk = result.answers["case_1__risk"]
+    assert quality["choice"] == "acceptable"
+    assert quality["probabilities"]["acceptable"] == 0.91
     assert result.answers["case_1__critical_damage"]["noul"] == 0.08
-    assert risk["value"] == 1
+    assert risk["score"] == 1.3
     assert result.usage.input_tokens == 1200
     assert result.usage.total_tokens == 1200
     assert result.cost_usd == pytest.approx(0.0000504)
