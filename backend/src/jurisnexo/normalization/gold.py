@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 _TOKEN_RE = re.compile(r"\S+")
+_CONTENT_TOKEN_RE = re.compile(r"\w+(?:[./-]\w+)*", re.UNICODE)
 _CRITICAL_PATTERNS: dict[str, re.Pattern[str]] = {
     "date": re.compile(
         r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})\b"
@@ -40,6 +42,9 @@ class CriticalCategoryScore:
 class TextFidelityScore:
     character_error_rate: float
     word_error_rate: float
+    token_content_recall: float
+    token_content_precision: float
+    token_content_f1: float
     missing_span_count: int
     critical: dict[str, CriticalCategoryScore]
 
@@ -70,6 +75,34 @@ def _levenshtein_distance(left: list[str], right: list[str]) -> int:
 
 def _normalize_space(text: str) -> str:
     return " ".join(text.split())
+
+
+def _content_tokens(text: str) -> tuple[str, ...]:
+    return tuple(
+        token.casefold()
+        for token in _CONTENT_TOKEN_RE.findall(text)
+    )
+
+
+def _content_overlap(
+    expected_text: str,
+    candidate_text: str,
+) -> tuple[float, float, float]:
+    expected = Counter(_content_tokens(expected_text))
+    candidate = Counter(_content_tokens(candidate_text))
+    matched = sum((expected & candidate).values())
+    expected_count = sum(expected.values())
+    candidate_count = sum(candidate.values())
+    recall = 1.0 if expected_count == 0 else matched / expected_count
+    precision = 1.0 if candidate_count == 0 and expected_count == 0 else (
+        0.0 if candidate_count == 0 else matched / candidate_count
+    )
+    f1 = (
+        0.0
+        if recall + precision == 0.0
+        else 2 * recall * precision / (recall + precision)
+    )
+    return recall, precision, f1
 
 
 def _critical_values(
@@ -106,6 +139,12 @@ def score_text_fidelity(
         else word_distance / max(1, len(expected_words))
     )
 
+    (
+        token_content_recall,
+        token_content_precision,
+        token_content_f1,
+    ) = _content_overlap(expected_text, candidate_text)
+
     candidate_folded = candidate_text.casefold()
     missing_span_count = sum(
         span.casefold() not in candidate_folded
@@ -129,6 +168,9 @@ def score_text_fidelity(
     return TextFidelityScore(
         character_error_rate=character_error_rate,
         word_error_rate=word_error_rate,
+        token_content_recall=token_content_recall,
+        token_content_precision=token_content_precision,
+        token_content_f1=token_content_f1,
         missing_span_count=missing_span_count,
         critical=critical,
     )
