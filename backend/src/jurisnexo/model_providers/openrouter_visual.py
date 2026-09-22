@@ -21,12 +21,15 @@ class OpenRouterVisualModelProvider:
     model: str
     base_url: str = "https://openrouter.ai/api/v1"
     timeout_seconds: float = 120.0
+    reasoning_effort: str = "high"
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
             raise ValueError("OpenRouter API key is required for live calls")
         if not self.model.strip():
             raise ValueError("visual model is required")
+        if self.reasoning_effort not in {"high", "xhigh"}:
+            raise ValueError("visual reasoning_effort must be high or xhigh")
 
     def verify_image_text(
         self,
@@ -64,6 +67,7 @@ class OpenRouterVisualModelProvider:
                 },
             },
             "provider": {"sort": "price", "require_parameters": True},
+            "reasoning": {"effort": self.reasoning_effort},
             "usage": {"include": True},
         }
         request = Request(
@@ -123,10 +127,14 @@ class OpenRouterVisualModelProvider:
             usage=ModelUsage(
                 input_tokens=_int_or_none(usage.get("prompt_tokens")),
                 output_tokens=_int_or_none(usage.get("completion_tokens")),
+                thinking_tokens=_reasoning_tokens(usage),
                 total_tokens=_int_or_none(usage.get("total_tokens")),
             ),
             cost_usd=_float_or_none(usage.get("cost")),
-            provider_metadata={"requested_model": self.model},
+            provider_metadata={
+                "requested_model": self.model,
+                "requested_reasoning_effort": self.reasoning_effort,
+            },
         )
 
 
@@ -136,6 +144,14 @@ def _int_or_none(value: object) -> int | None:
     if isinstance(value, int):
         return value
     return None
+
+
+def _reasoning_tokens(usage: dict[str, object]) -> int | None:
+    details = usage.get("completion_tokens_details")
+    if not isinstance(details, dict):
+        return None
+    typed_details = cast(dict[str, object], details)
+    return _int_or_none(typed_details.get("reasoning_tokens"))
 
 
 def _float_or_none(value: object) -> float | None:
