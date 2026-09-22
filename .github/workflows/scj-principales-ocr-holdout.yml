@@ -1,4 +1,4 @@
-name: SCJ Principales OCR calibration and holdout
+name: SCJ Principales OCR fallback diagnostic
 
 on:
   pull_request:
@@ -48,11 +48,49 @@ jobs:
             "pypdfium2==5.13.0" \
             "pillow==12.3.0"
 
-      - name: Run source-derived calibration and holdout
+      - name: Measure forced full-page OCR fallback
+        id: fallback
+        continue-on-error: true
         env:
           SCJ_NORMALIZATION_HOLDOUT_OUTPUT: ${{ runner.temp }}/ocr-holdout/results.json
         run: |
           python benchmark/normalization/evaluate_scj_principales_ocr_holdout.py
+
+      - name: Summarize fallback quality without promoting it
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "ocr-holdout" / "results.json"
+          if not path.exists():
+              raise SystemExit("fallback OCR benchmark did not produce results.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          holdout = payload["holdout"]
+          gate = payload["quality_gate"]
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary.open("a", encoding="utf-8") as stream:
+              stream.write("## Forced OCR fallback diagnostic\n\n")
+              stream.write(f"- gate passed: {gate['passed']}\n")
+              stream.write(
+                  f"- mean WER: {holdout['mean_word_error_rate']:.4f}\n"
+              )
+              stream.write(
+                  "- token content recall / precision: "
+                  f"{holdout['mean_token_content_recall']:.4f} / "
+                  f"{holdout['mean_token_content_precision']:.4f}\n"
+              )
+              stream.write(
+                  "- aggregate legal-critical recall: "
+                  f"{holdout['aggregate_legal_critical_recall']:.4f}\n"
+              )
+              stream.write(
+                  "\nThis lane is diagnostic for full-page OCR fallback. "
+                  "It does not gate born-digital Principales rollout.\n"
+              )
+          PY
 
       - name: Preserve holdout evidence
         if: always()
