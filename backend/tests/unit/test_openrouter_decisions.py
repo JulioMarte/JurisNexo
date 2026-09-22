@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -43,9 +44,17 @@ def test_parse_openrouter_decisions_preserves_choice_noul_and_score_answers() ->
 
     assert result.model == "typesafe/jev-1.13"
     assert result.response_id == "decision-1"
-    assert result.answers["case_1__quality"]["choice"]["acceptable"] == 0.91
+    quality = cast(
+        dict[str, float],
+        result.answers["case_1__quality"]["choice"],
+    )
+    risk = cast(
+        dict[str, object],
+        result.answers["case_1__risk"]["score"],
+    )
+    assert quality["acceptable"] == 0.91
     assert result.answers["case_1__critical_damage"]["noul"] == 0.08
-    assert result.answers["case_1__risk"]["score"]["value"] == 1
+    assert risk["value"] == 1
     assert result.usage.input_tokens == 1200
     assert result.usage.total_tokens == 1200
     assert result.cost_usd == pytest.approx(0.0000504)
