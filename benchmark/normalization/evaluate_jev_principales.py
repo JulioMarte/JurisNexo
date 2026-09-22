@@ -183,6 +183,48 @@ def _argmax_claim(metric: ClaimMetric) -> str:
     return max(candidates, key=candidates.__getitem__)
 
 
+def _split_record_id(record_id: str) -> str:
+    digest = sum(record_id.encode("utf-8"))
+    return "calibration" if digest % 2 == 0 else "holdout"
+
+
+def _threshold_metrics(
+    items: tuple[QualityMetric, ...],
+    *,
+    thresholds: tuple[float, ...],
+) -> dict[str, dict[str, float]]:
+    corrupted = [item for item in items if item.expected_corrupted]
+    clean = [item for item in items if not item.expected_corrupted]
+    if not corrupted or not clean:
+        raise RuntimeError("quality split requires clean and corrupted records")
+    metrics: dict[str, dict[str, float]] = {}
+    for threshold in thresholds:
+        metrics[str(threshold)] = {
+            "corruption_recall": (
+                sum(
+                    item.material_error_probability >= threshold
+                    for item in corrupted
+                )
+                / len(corrupted)
+            ),
+            "false_negative_rate": (
+                sum(
+                    item.material_error_probability < threshold
+                    for item in corrupted
+                )
+                / len(corrupted)
+            ),
+            "false_rejection_rate": (
+                sum(
+                    item.material_error_probability >= threshold
+                    for item in clean
+                )
+                / len(clean)
+            ),
+        }
+    return metrics
+
+
 def main() -> int:
     if not 2 <= SOURCE_CASES <= 8:
         raise ValueError(
@@ -327,30 +369,24 @@ def main() -> int:
     )
 
     thresholds = (0.25, 0.50, 0.75)
-    threshold_metrics: dict[str, dict[str, float]] = {}
-    for threshold in thresholds:
-        corrupted = [
-            item for item in quality_metrics if item.expected_corrupted
-        ]
-        clean = [
-            item for item in quality_metrics if not item.expected_corrupted
-        ]
-        threshold_metrics[str(threshold)] = {
-            "corruption_recall": (
-                sum(
-                    item.material_error_probability >= threshold
-                    for item in corrupted
-                )
-                / len(corrupted)
-            ),
-            "false_rejection_rate": (
-                sum(
-                    item.material_error_probability >= threshold
-                    for item in clean
-                )
-                / len(clean)
-            ),
-        }
+    calibration_quality = tuple(
+        item
+        for item in quality_metrics
+        if _split_record_id(item.record_id) == "calibration"
+    )
+    holdout_quality = tuple(
+        item
+        for item in quality_metrics
+        if _split_record_id(item.record_id) == "holdout"
+    )
+    calibration_threshold_metrics = _threshold_metrics(
+        calibration_quality,
+        thresholds=thresholds,
+    )
+    holdout_threshold_metrics = _threshold_metrics(
+        holdout_quality,
+        thresholds=thresholds,
+    )
 
     binary_brier = sum(
         (
@@ -372,11 +408,9 @@ def main() -> int:
         batch.cost_usd or 0.0
         for batch in quality_result.batches
     )
-    claim_cost = (
-        claim_evaluation.telemetry.cost_usd
-        if claim_evaluation.telemetry is not None
-        and claim_evaluation.telemetry.cost_usd is not None
-        else 0.0
+    claim_cost = sum(
+        telemetry.cost_usd or 0.0
+        for telemetry in claim_evaluation.telemetry
     )
     total_cost = quality_cost + claim_cost
     if total_cost > MAX_COST_USD:
@@ -399,15 +433,16 @@ def main() -> int:
             asdict(batch) for batch in quality_result.batches
         ],
         "quality_metrics": [asdict(item) for item in quality_metrics],
-        "threshold_metrics": threshold_metrics,
+        "calibration_threshold_metrics": calibration_threshold_metrics,
+        "holdout_threshold_metrics": holdout_threshold_metrics,
+        "calibration_record_count": len(calibration_quality),
+        "holdout_record_count": len(holdout_quality),
         "material_error_brier_score": binary_brier,
         "claim_metrics": [asdict(item) for item in claim_metrics],
         "claim_argmax_accuracy": claim_accuracy,
-        "claim_telemetry": (
-            asdict(claim_evaluation.telemetry)
-            if claim_evaluation.telemetry is not None
-            else None
-        ),
+        "claim_telemetry": [
+            asdict(item) for item in claim_evaluation.telemetry
+        ],
         "observed_quality_cost_usd": quality_cost,
         "observed_claim_cost_usd": claim_cost,
         "observed_total_cost_usd": total_cost,
@@ -421,8 +456,9 @@ def main() -> int:
                 "different capability from transcription-quality routing."
             ),
             (
-                "This bounded benchmark is calibration evidence, not sufficient "
-                "by itself to promote JEV from shadow to active production routing."
+                "Calibration and holdout are deterministically separated. This "
+                "bounded benchmark is still not sufficient by itself to promote "
+                "JEV from shadow to active production routing."
             ),
         ],
     }
