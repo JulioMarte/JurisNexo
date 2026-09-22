@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from jurisnexo.model_providers.contracts import ModelProviderError
+from jurisnexo.model_providers.contracts import JsonObject, ModelProviderError
 from jurisnexo.normalization.jev_answers import (
     choice_confidence,
     choice_probability,
@@ -14,7 +14,7 @@ from jurisnexo.normalization.jev_answers import (
 
 
 def test_official_choice_answer_preserves_selection_confidence_and_distribution() -> None:
-    answer = {
+    answer: JsonObject = {
         "type": "choice",
         "choice": "acceptable",
         "confidence": 0.91,
@@ -31,7 +31,7 @@ def test_official_choice_answer_preserves_selection_confidence_and_distribution(
 
 
 def test_official_noul_answer_is_yes_probability() -> None:
-    answer = {
+    answer: JsonObject = {
         "type": "noul",
         "noul": 0.18,
     }
@@ -39,7 +39,7 @@ def test_official_noul_answer_is_yes_probability() -> None:
 
 
 def test_official_score_answer_preserves_expected_score_and_distribution() -> None:
-    answer = {
+    answer: JsonObject = {
         "type": "score",
         "score": 1.4,
         "confidence": 0.72,
