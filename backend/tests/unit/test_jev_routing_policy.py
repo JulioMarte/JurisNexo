@@ -25,14 +25,14 @@ def _p(
 
 def test_policy_keeps_high_confidence_clean_text_on_cheap_path() -> None:
     policy = JevRoutingPolicy()
-    assert policy.route(_p(acceptable=0.99)) == "accept"
-    assert policy.route(_p(acceptable=0.93)) == "sentinel"
+    assert policy.recommend(_p(acceptable=0.99)) == "accept"
+    assert policy.recommend(_p(acceptable=0.93)) == "sentinel"
 
 
 def test_policy_escalates_visible_damage_before_auto_accept() -> None:
     policy = JevRoutingPolicy()
     assert (
-        policy.route(
+        policy.recommend(
             _p(
                 acceptable=0.99,
                 material_error=0.30,
@@ -48,7 +48,7 @@ def test_critical_damage_lowers_visual_escalation_threshold() -> None:
         critical_visual_multiplier=0.50,
     )
     assert (
-        policy.route(
+        policy.recommend(
             _p(
                 acceptable=0.75,
                 critical=0.8,
@@ -62,7 +62,7 @@ def test_critical_damage_lowers_visual_escalation_threshold() -> None:
 def test_uncertainty_can_force_human_review() -> None:
     policy = JevRoutingPolicy(human_min_uncertain=0.55)
     assert (
-        policy.route(
+        policy.recommend(
             _p(
                 acceptable=0.30,
                 uncertain=0.60,
@@ -70,3 +70,19 @@ def test_uncertainty_can_force_human_review() -> None:
         )
         == "human_review"
     )
+
+
+
+def test_shadow_policy_never_executes_auto_routing() -> None:
+    policy = JevRoutingPolicy()
+    probabilities = _p(acceptable=0.999)
+
+    assert policy.recommend(probabilities) == "accept"
+    assert policy.route(probabilities) == "shadow_observe"
+
+
+def test_active_policy_requires_explicit_promotion() -> None:
+    policy = JevRoutingPolicy(promotion_state="active")
+    probabilities = _p(acceptable=0.999)
+
+    assert policy.route(probabilities) == "accept"
