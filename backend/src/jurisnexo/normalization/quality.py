@@ -60,6 +60,18 @@ def assess_text_quality(text: str) -> DeterministicQualityReport:
     )
 
 
+def _object_dict(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, object], value)
+
+
+def _object_list(value: object) -> list[object] | None:
+    if not isinstance(value, list):
+        return None
+    return cast(list[object], value)
+
+
 def _decode_json_pointer_part(part: str) -> str:
     return part.replace("~1", "/").replace("~0", "~")
 
@@ -70,20 +82,20 @@ def _resolve_json_pointer(document: object, ref: str) -> object:
     current = document
     for raw_part in ref[2:].split("/"):
         part = _decode_json_pointer_part(raw_part)
-        if isinstance(current, dict):
-            mapping = cast(dict[str, object], current)
+        mapping = _object_dict(current)
+        if mapping is not None:
             if part not in mapping:
                 raise ValueError(f"unresolvable Docling reference: {ref}")
             current = mapping[part]
             continue
-        if isinstance(current, list):
+        sequence = _object_list(current)
+        if sequence is not None:
             try:
                 index = int(part)
             except ValueError as exc:
                 raise ValueError(
                     f"unresolvable Docling reference: {ref}"
                 ) from exc
-            sequence = cast(list[object], current)
             if index < 0 or index >= len(sequence):
                 raise ValueError(f"unresolvable Docling reference: {ref}")
             current = sequence[index]
@@ -94,18 +106,19 @@ def _resolve_json_pointer(document: object, ref: str) -> object:
 
 def _table_cell_texts(node: dict[str, object]) -> tuple[str, ...]:
     data = node.get("data")
-    if not isinstance(data, dict):
+    data_map = _object_dict(data)
+    if data_map is None:
         return ()
-    data_map = cast(dict[str, object], data)
     cells = data_map.get("table_cells")
-    if not isinstance(cells, list):
+    cell_items = _object_list(cells)
+    if cell_items is None:
         return ()
 
     sortable: list[tuple[int, int, str]] = []
-    for raw_cell in cast(list[object], cells):
-        if not isinstance(raw_cell, dict):
+    for raw_cell in cell_items:
+        cell = _object_dict(raw_cell)
+        if cell is None:
             continue
-        cell = cast(dict[str, object], raw_cell)
         text = cell.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
@@ -134,23 +147,22 @@ def extract_text_from_structural_json(payload: bytes) -> str:
         document: object = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise ValueError("structural artifact is not valid JSON") from exc
-    if not isinstance(document, dict):
+    root = _object_dict(document)
+    if root is None:
         raise ValueError("structural artifact root is not an object")
-
-    root = cast(dict[str, object], document)
     body = root.get("body")
     parts: list[str] = []
     visited_refs: set[str] = set()
 
     def visit(node: object) -> None:
-        if isinstance(node, list):
-            for child in cast(list[object], node):
+        sequence = _object_list(node)
+        if sequence is not None:
+            for child in sequence:
                 visit(child)
             return
-        if not isinstance(node, dict):
+        mapping = _object_dict(node)
+        if mapping is None:
             return
-
-        mapping = cast(dict[str, object], node)
         ref = mapping.get("$ref")
         if isinstance(ref, str):
             if ref in visited_refs:
@@ -166,15 +178,15 @@ def extract_text_from_structural_json(payload: bytes) -> str:
         for cell_text in _table_cell_texts(mapping):
             parts.append(cell_text)
 
-        children = mapping.get("children")
-        if isinstance(children, list):
-            visit(cast(list[object], children))
+        children = _object_list(mapping.get("children"))
+        if children is not None:
+            visit(children)
 
-    if isinstance(body, dict):
-        body_map = cast(dict[str, object], body)
-        children = body_map.get("children")
-        if isinstance(children, list):
-            visit(cast(list[object], children))
+    body_map = _object_dict(body)
+    if body_map is not None:
+        children = _object_list(body_map.get("children"))
+        if children is not None:
+            visit(children)
 
     if parts:
         return "\n".join(parts)
@@ -182,19 +194,21 @@ def extract_text_from_structural_json(payload: bytes) -> str:
     # Defensive fallback for older/minimal Docling-shaped artifacts that do not
     # expose a body tree. Restrict traversal to canonical content collections;
     # never recursively walk the entire exported JSON.
-    texts = root.get("texts")
-    if isinstance(texts, list):
-        for item in cast(list[object], texts):
-            if isinstance(item, dict):
-                mapping = cast(dict[str, object], item)
-                text_value = mapping.get("text")
-                if isinstance(text_value, str) and text_value.strip():
-                    parts.append(text_value)
+    texts = _object_list(root.get("texts"))
+    if texts is not None:
+        for item in texts:
+            mapping = _object_dict(item)
+            if mapping is None:
+                continue
+            text_value = mapping.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                parts.append(text_value)
 
-    tables = root.get("tables")
-    if isinstance(tables, list):
-        for item in cast(list[object], tables):
-            if isinstance(item, dict):
-                parts.extend(_table_cell_texts(cast(dict[str, object], item)))
+    tables = _object_list(root.get("tables"))
+    if tables is not None:
+        for item in tables:
+            mapping = _object_dict(item)
+            if mapping is not None:
+                parts.extend(_table_cell_texts(mapping))
 
     return "\n".join(parts)
