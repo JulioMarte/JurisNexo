@@ -52,11 +52,14 @@ class _FakeClaimProvider:
                 if distribution["supported"] > distribution["contradicted"]
                 else "contradicted"
             )
+            probabilities: JsonObject = {
+                key: value for key, value in distribution.items()
+            }
             answer: JsonObject = {
                 "type": "choice",
                 "choice": selected,
                 "confidence": max(distribution.values()),
-                "probabilities": distribution,
+                "probabilities": probabilities,
             }
             answers[record_id] = answer
 
