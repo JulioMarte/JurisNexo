@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 from jurisnexo.model_providers.contracts import JsonObject
 from jurisnexo.model_providers.decisions import DecisionProvider
@@ -19,18 +20,24 @@ from jurisnexo.normalization.jev_quality import (
 @dataclass(frozen=True, slots=True)
 class JevRecordEvaluation:
     record_id: str
+    batch_index: int
     probabilities: TextQualityProbabilities
 
 
 @dataclass(frozen=True, slots=True)
 class JevBatchTelemetry:
     batch_index: int
-    record_count: int
+    record_ids: tuple[str, ...]
     estimated_total_tokens: int
+    provider: str
+    model: str
+    model_version: str | None
+    response_id: str | None
     input_tokens: int | None
     output_tokens: int | None
+    total_tokens: int | None
     cost_usd: float | None
-    model: str
+    latency_ms: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +75,7 @@ class JevBatchQualityEvaluator:
         for batch_index, batch in enumerate(planned):
             batch_ids = tuple(record.record_id for record in batch.records)
             questions = build_text_quality_questions(record_ids=batch_ids)
+            started = time.perf_counter()
             result = self.provider.decide(
                 state_description=state_description,
                 records=tuple(
@@ -79,10 +87,12 @@ class JevBatchQualityEvaluator:
                 ),
                 questions=questions,
             )
+            latency_ms = int((time.perf_counter() - started) * 1000)
             for record in batch.records:
                 evaluations.append(
                     JevRecordEvaluation(
                         record_id=record.record_id,
+                        batch_index=batch_index,
                         probabilities=parse_text_quality_probabilities(
                             result.answers,
                             record_id=record.record_id,
@@ -92,12 +102,17 @@ class JevBatchQualityEvaluator:
             telemetry.append(
                 JevBatchTelemetry(
                     batch_index=batch_index,
-                    record_count=len(batch.records),
+                    record_ids=batch_ids,
                     estimated_total_tokens=batch.estimated_total_tokens,
+                    provider=result.provider,
+                    model=result.model,
+                    model_version=result.model_version,
+                    response_id=result.response_id,
                     input_tokens=result.usage.input_tokens,
                     output_tokens=result.usage.output_tokens,
+                    total_tokens=result.usage.total_tokens,
                     cost_usd=result.cost_usd,
-                    model=result.model,
+                    latency_ms=latency_ms,
                 )
             )
 
