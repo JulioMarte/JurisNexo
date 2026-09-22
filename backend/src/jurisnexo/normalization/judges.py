@@ -10,6 +10,7 @@ from jurisnexo.model_providers.contracts import (
     ModelProviderError,
 )
 from jurisnexo.model_providers.decisions import DecisionProvider
+from jurisnexo.normalization.jev_quality import build_text_quality_questions
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,58 +89,9 @@ class DecisionTextQualityJudge:
 
     def judge(self, text: str, *, context: dict[str, Any]) -> dict[str, Any]:
         record_id = "candidate"
-        questions: dict[str, JsonObject] = {
-            f"{record_id}__transcription_quality": {
-                "type": "choice",
-                "instructions": (
-                    'For the record with id "candidate", classify transcription '
-                    "quality only. Do not evaluate legal merits."
-                ),
-                "criteria": {
-                    "acceptable": (
-                        "The text appears materially faithful and readable, without "
-                        "signs of corruption affecting legal meaning."
-                    ),
-                    "material_error": (
-                        "The text likely contains omissions, corruption, broken "
-                        "numbering, or other damage that can change legal meaning."
-                    ),
-                    "uncertain": (
-                        "The available text is insufficient to confidently choose "
-                        "acceptable or material_error."
-                    ),
-                },
-            },
-            f"{record_id}__legal_critical_damage": {
-                "type": "noul",
-                "instructions": (
-                    'For the record with id "candidate", decide whether apparent '
-                    "transcription damage affects legally critical tokens."
-                ),
-                "true_when": (
-                    "Damage appears to affect names, dates, case numbers, law/article "
-                    "numbers, monetary amounts, citations, holdings or dispositive text."
-                ),
-                "false_when": (
-                    "No legally critical transcription damage is apparent."
-                ),
-            },
-            f"{record_id}__needs_visual_review": {
-                "type": "noul",
-                "instructions": (
-                    'For the record with id "candidate", decide whether the original '
-                    "page image should be checked before accepting the text."
-                ),
-                "true_when": (
-                    "Material uncertainty or suspicious corruption cannot be safely "
-                    "resolved from the normalized text alone."
-                ),
-                "false_when": (
-                    "The normalized text is sufficiently clear that visual escalation "
-                    "is not warranted."
-                ),
-            },
-        }
+        questions = build_text_quality_questions(
+            record_ids=(record_id,),
+        )
         context_json = _context_json(context)
         result = self.provider.decide(
             state_description=(
