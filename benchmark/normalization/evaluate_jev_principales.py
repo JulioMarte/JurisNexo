@@ -24,6 +24,7 @@ from jurisnexo.normalization.jev_claims import (
 )
 from jurisnexo.normalization.jev_calibration import (
     BinaryRoutingObservation,
+    assess_promotion_readiness,
     brier_score,
     evaluate_frozen_candidate_on_holdout,
     select_candidate_threshold,
@@ -407,6 +408,11 @@ def main() -> int:
             for item in quality_metrics
         )
     )
+    promotion = assess_promotion_readiness(
+        calibration=candidate.calibration,
+        holdout=candidate_holdout,
+        brier=binary_brier,
+    )
 
     claim_accuracy = (
         sum(_argmax_claim(item) == item.expected for item in claim_metrics)
@@ -452,6 +458,7 @@ def main() -> int:
         "candidate_calibration_metrics": asdict(candidate.calibration),
         "candidate_holdout_metrics": asdict(candidate_holdout),
         "material_error_brier_score": binary_brier,
+        "promotion_assessment": asdict(promotion),
         "claim_metrics": [asdict(item) for item in claim_metrics],
         "claim_argmax_accuracy": claim_accuracy,
         "claim_telemetry": [
