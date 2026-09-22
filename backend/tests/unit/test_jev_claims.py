@@ -88,6 +88,6 @@ def test_claim_verification_preserves_probabilities_and_usage() -> None:
     supported, contradicted = evaluation.decisions
     assert supported.support_probability == 0.95
     assert contradicted.contradiction_probability == 0.92
-    assert evaluation.telemetry is not None
-    assert evaluation.telemetry.input_tokens == 400
-    assert evaluation.telemetry.cost_usd == 0.00002
+    assert len(evaluation.telemetry) == 1
+    assert evaluation.telemetry[0].input_tokens == 400
+    assert evaluation.telemetry[0].cost_usd == 0.00002
