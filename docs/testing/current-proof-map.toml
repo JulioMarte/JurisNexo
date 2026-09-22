@@ -429,6 +429,11 @@ path = "backend/tests/integration/test_normalization_control_plane.py"
 evidence = ["invariant"]
 
 [[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/evaluate_jev_principales.py"
+evidence = ["benchmark"]
+
+[[proofs]]
 guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 path = "backend/tests/architecture/test_normalization_source_agnostic.py"
 evidence = ["fitness"]
@@ -446,4 +451,4 @@ evidence = ["integration"]
 [[gaps]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 missing_evidence = ["integration"]
-reason = "Evidence/search separation and append-only persistence are proven, but live JEV decisions and visual-verifier observations remain unbenchmarked as durable persisted observations."
+reason = "Evidence/search separation and append-only persistence are proven, and bounded live JEV decision behavior is benchmarked. What remains unproven is durable end-to-end persistence of live JEV and visual-verifier observations/corrections through the supported normalization execution path."
