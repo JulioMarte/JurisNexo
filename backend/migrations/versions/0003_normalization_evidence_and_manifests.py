@@ -41,6 +41,8 @@ def upgrade() -> None:
                 CHECK (input_tokens IS NULL OR input_tokens >= 0),
             output_tokens integer
                 CHECK (output_tokens IS NULL OR output_tokens >= 0),
+            thinking_tokens integer
+                CHECK (thinking_tokens IS NULL OR thinking_tokens >= 0),
             total_tokens integer
                 CHECK (total_tokens IS NULL OR total_tokens >= 0),
             cost_usd numeric(18,8)
