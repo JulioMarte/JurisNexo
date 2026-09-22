@@ -22,6 +22,21 @@ class ClaimSupportDecision:
     insufficient_probability: float
 
 
+@dataclass(frozen=True, slots=True)
+class ClaimSupportTelemetry:
+    model: str
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimSupportEvaluation:
+    decisions: tuple[ClaimSupportDecision, ...]
+    telemetry: ClaimSupportTelemetry | None
+
+
 def build_claim_support_questions(
     claims: tuple[EvidenceClaim, ...],
 ) -> dict[str, JsonObject]:
@@ -55,8 +70,19 @@ def evaluate_claim_support(
     *,
     claims: tuple[EvidenceClaim, ...],
 ) -> tuple[ClaimSupportDecision, ...]:
+    return evaluate_claim_support_batch(
+        provider,
+        claims=claims,
+    ).decisions
+
+
+def evaluate_claim_support_batch(
+    provider: DecisionProvider,
+    *,
+    claims: tuple[EvidenceClaim, ...],
+) -> ClaimSupportEvaluation:
     if not claims:
-        return ()
+        return ClaimSupportEvaluation(decisions=(), telemetry=None)
 
     questions = build_claim_support_questions(claims)
     result = provider.decide(
@@ -105,7 +131,16 @@ def evaluate_claim_support(
                 ),
             )
         )
-    return tuple(decisions)
+    return ClaimSupportEvaluation(
+        decisions=tuple(decisions),
+        telemetry=ClaimSupportTelemetry(
+            model=result.model,
+            input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens,
+            total_tokens=result.usage.total_tokens,
+            cost_usd=result.cost_usd,
+        ),
+    )
 
 
 def _probability(value: object) -> float:
