@@ -22,6 +22,12 @@ from jurisnexo.normalization.jev_claims import (
     EvidenceClaim,
     evaluate_claim_support_batch,
 )
+from jurisnexo.normalization.jev_calibration import (
+    BinaryRoutingObservation,
+    brier_score,
+    evaluate_frozen_candidate_on_holdout,
+    select_candidate_threshold,
+)
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 OUTPUT = Path(
@@ -191,62 +197,6 @@ def _split_record_id(record_id: str) -> str:
     return "calibration" if case_number % 2 == 1 else "holdout"
 
 
-def _select_candidate_threshold(
-    metrics: dict[str, dict[str, float]],
-) -> float:
-    ranked = sorted(
-        (
-            (
-                values["corruption_recall"],
-                -values["false_rejection_rate"],
-                float(threshold),
-            )
-            for threshold, values in metrics.items()
-        ),
-        reverse=True,
-    )
-    if not ranked:
-        raise RuntimeError("no calibration thresholds were evaluated")
-    return ranked[0][2]
-
-
-def _threshold_metrics(
-    items: tuple[QualityMetric, ...],
-    *,
-    thresholds: tuple[float, ...],
-) -> dict[str, dict[str, float]]:
-    corrupted = [item for item in items if item.expected_corrupted]
-    clean = [item for item in items if not item.expected_corrupted]
-    if not corrupted or not clean:
-        raise RuntimeError("quality split requires clean and corrupted records")
-    metrics: dict[str, dict[str, float]] = {}
-    for threshold in thresholds:
-        metrics[str(threshold)] = {
-            "corruption_recall": (
-                sum(
-                    item.material_error_probability >= threshold
-                    for item in corrupted
-                )
-                / len(corrupted)
-            ),
-            "false_negative_rate": (
-                sum(
-                    item.material_error_probability < threshold
-                    for item in corrupted
-                )
-                / len(corrupted)
-            ),
-            "false_rejection_rate": (
-                sum(
-                    item.material_error_probability >= threshold
-                    for item in clean
-                )
-                / len(clean)
-            ),
-        }
-    return metrics
-
-
 def main() -> int:
     if not 2 <= SOURCE_CASES <= 8:
         raise ValueError(
@@ -401,29 +351,62 @@ def main() -> int:
         for item in quality_metrics
         if _split_record_id(item.record_id) == "holdout"
     )
-    calibration_threshold_metrics = _threshold_metrics(
-        calibration_quality,
-        thresholds=thresholds,
-    )
-    holdout_threshold_metrics = _threshold_metrics(
-        holdout_quality,
-        thresholds=thresholds,
-    )
-    candidate_threshold = _select_candidate_threshold(
-        calibration_threshold_metrics
-    )
-    candidate_holdout_metrics = holdout_threshold_metrics[
-        str(candidate_threshold)
-    ]
-
-    binary_brier = sum(
-        (
-            item.material_error_probability
-            - (1.0 if item.expected_corrupted else 0.0)
+    calibration_observations = tuple(
+        BinaryRoutingObservation(
+            record_id=item.record_id,
+            expected_positive=item.expected_corrupted,
+            probability=item.material_error_probability,
         )
-        ** 2
-        for item in quality_metrics
-    ) / len(quality_metrics)
+        for item in calibration_quality
+    )
+    holdout_observations = tuple(
+        BinaryRoutingObservation(
+            record_id=item.record_id,
+            expected_positive=item.expected_corrupted,
+            probability=item.material_error_probability,
+        )
+        for item in holdout_quality
+    )
+    candidate = select_candidate_threshold(
+        calibration_observations,
+        thresholds=thresholds,
+    )
+    candidate_holdout = evaluate_frozen_candidate_on_holdout(
+        candidate,
+        holdout_observations,
+    )
+    calibration_threshold_metrics = {
+        str(threshold): asdict(
+            select_candidate_threshold(
+                calibration_observations,
+                thresholds=(threshold,),
+            ).calibration
+        )
+        for threshold in thresholds
+    }
+    holdout_threshold_metrics = {
+        str(threshold): asdict(
+            evaluate_frozen_candidate_on_holdout(
+                select_candidate_threshold(
+                    calibration_observations,
+                    thresholds=(threshold,),
+                ),
+                holdout_observations,
+            )
+        )
+        for threshold in thresholds
+    }
+
+    binary_brier = brier_score(
+        tuple(
+            BinaryRoutingObservation(
+                record_id=item.record_id,
+                expected_positive=item.expected_corrupted,
+                probability=item.material_error_probability,
+            )
+            for item in quality_metrics
+        )
+    )
 
     claim_accuracy = (
         sum(_argmax_claim(item) == item.expected for item in claim_metrics)
@@ -465,8 +448,9 @@ def main() -> int:
         "holdout_threshold_metrics": holdout_threshold_metrics,
         "calibration_record_count": len(calibration_quality),
         "holdout_record_count": len(holdout_quality),
-        "candidate_material_error_threshold": candidate_threshold,
-        "candidate_holdout_metrics": candidate_holdout_metrics,
+        "candidate_material_error_threshold": candidate.threshold,
+        "candidate_calibration_metrics": asdict(candidate.calibration),
+        "candidate_holdout_metrics": asdict(candidate_holdout),
         "material_error_brier_score": binary_brier,
         "claim_metrics": [asdict(item) for item in claim_metrics],
         "claim_argmax_accuracy": claim_accuracy,
