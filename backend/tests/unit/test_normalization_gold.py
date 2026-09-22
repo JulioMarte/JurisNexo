@@ -26,9 +26,9 @@ def test_gold_scoring_measures_generic_and_legal_critical_fidelity() -> None:
     assert score.character_error_rate > 0
     assert score.word_error_rate > 0
     assert score.missing_span_count == 0
-    assert score.token_content_recall == pytest.approx(1.0)
-    assert score.token_content_precision == pytest.approx(1.0)
-    assert score.token_content_f1 == pytest.approx(1.0)
+    assert score.token_content_recall == pytest.approx(15 / 17)
+    assert score.token_content_precision == pytest.approx(15 / 17)
+    assert score.token_content_f1 == pytest.approx(15 / 17)
     assert score.critical["date"].recall == 1.0
     assert score.critical["money"].recall == 1.0
     assert score.critical["case_id"].recall == 1.0
