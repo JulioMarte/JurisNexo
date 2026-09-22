@@ -6,6 +6,12 @@ import pytest
 from jurisnexo.model_providers.openrouter_decisions import (
     parse_openrouter_decision_response,
 )
+from jurisnexo.normalization.jev_answers import (
+    choice_probability,
+    choice_selected,
+    noul_probability,
+    score_value,
+)
 
 
 def test_parse_openrouter_decisions_preserves_choice_noul_and_score_answers() -> None:
@@ -57,11 +63,12 @@ def test_parse_openrouter_decisions_preserves_choice_noul_and_score_answers() ->
     assert result.model == "typesafe/jev-1.13"
     assert result.response_id == "decision-1"
     quality = result.answers["case_1__quality"]
+    critical = result.answers["case_1__critical_damage"]
     risk = result.answers["case_1__risk"]
-    assert quality["choice"] == "acceptable"
-    assert quality["probabilities"]["acceptable"] == 0.91
-    assert result.answers["case_1__critical_damage"]["noul"] == 0.08
-    assert risk["score"] == 1.3
+    assert choice_selected(quality) == "acceptable"
+    assert choice_probability(quality, "acceptable") == 0.91
+    assert noul_probability(critical) == 0.08
+    assert score_value(risk) == 1.3
     assert result.usage.input_tokens == 1200
     assert result.usage.total_tokens == 1200
     assert result.cost_usd == pytest.approx(0.0000504)
