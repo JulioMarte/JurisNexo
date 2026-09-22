@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from jurisnexo.model_providers.contracts import JsonObject, JsonValue, ModelProviderError
+from jurisnexo.model_providers.contracts import JsonObject, ModelProviderError
+from jurisnexo.normalization.jev_answers import (
+    choice_probability,
+    noul_probability,
+)
 
 
 def build_text_quality_questions(
@@ -83,11 +87,11 @@ def parse_text_quality_probabilities(
         f"{record_id}__needs_visual_review",
     )
     return TextQualityProbabilities(
-        acceptable=_choice_probability(quality, "acceptable"),
-        material_error=_choice_probability(quality, "material_error"),
-        uncertain=_choice_probability(quality, "uncertain"),
-        legal_critical_damage=_noul_probability(critical),
-        needs_visual_review=_noul_probability(visual),
+        acceptable=choice_probability(quality, "acceptable"),
+        material_error=choice_probability(quality, "material_error"),
+        uncertain=choice_probability(quality, "uncertain"),
+        legal_critical_damage=noul_probability(critical),
+        needs_visual_review=noul_probability(visual),
     )
 
 
@@ -101,7 +105,7 @@ def _required_answer(
     return answer
 
 
-def _choice_probability(answer: JsonObject, option: str) -> float:
+def choice_probability(answer: JsonObject, option: str) -> float:
     raw_choice = answer.get("choice")
     if not isinstance(raw_choice, dict):
         raise ModelProviderError("choice answer is not an object")
@@ -109,7 +113,7 @@ def _choice_probability(answer: JsonObject, option: str) -> float:
     return _probability(choice.get(option), f"choice.{option}")
 
 
-def _noul_probability(answer: JsonObject) -> float:
+def noul_probability(answer: JsonObject) -> float:
     return _probability(answer.get("noul"), "noul")
 
 
