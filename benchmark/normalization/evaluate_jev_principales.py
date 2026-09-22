@@ -184,8 +184,30 @@ def _argmax_claim(metric: ClaimMetric) -> str:
 
 
 def _split_record_id(record_id: str) -> str:
-    digest = sum(record_id.encode("utf-8"))
-    return "calibration" if digest % 2 == 0 else "holdout"
+    match = re.match(r"case_(\d+)_", record_id)
+    if match is None:
+        raise ValueError(f"unexpected benchmark record id: {record_id}")
+    case_number = int(match.group(1))
+    return "calibration" if case_number % 2 == 1 else "holdout"
+
+
+def _select_candidate_threshold(
+    metrics: dict[str, dict[str, float]],
+) -> float:
+    ranked = sorted(
+        (
+            (
+                values["corruption_recall"],
+                -values["false_rejection_rate"],
+                float(threshold),
+            )
+            for threshold, values in metrics.items()
+        ),
+        reverse=True,
+    )
+    if not ranked:
+        raise RuntimeError("no calibration thresholds were evaluated")
+    return ranked[0][2]
 
 
 def _threshold_metrics(
@@ -387,6 +409,12 @@ def main() -> int:
         holdout_quality,
         thresholds=thresholds,
     )
+    candidate_threshold = _select_candidate_threshold(
+        calibration_threshold_metrics
+    )
+    candidate_holdout_metrics = holdout_threshold_metrics[
+        str(candidate_threshold)
+    ]
 
     binary_brier = sum(
         (
@@ -437,6 +465,8 @@ def main() -> int:
         "holdout_threshold_metrics": holdout_threshold_metrics,
         "calibration_record_count": len(calibration_quality),
         "holdout_record_count": len(holdout_quality),
+        "candidate_material_error_threshold": candidate_threshold,
+        "candidate_holdout_metrics": candidate_holdout_metrics,
         "material_error_brier_score": binary_brier,
         "claim_metrics": [asdict(item) for item in claim_metrics],
         "claim_argmax_accuracy": claim_accuracy,
