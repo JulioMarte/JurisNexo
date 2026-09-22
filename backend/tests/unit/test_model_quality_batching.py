@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import cast
 
 from jurisnexo.model_providers.contracts import JsonObject
 from jurisnexo.model_providers.decisions import (
@@ -186,19 +187,22 @@ def test_batched_shadow_service_accounts_once_per_provider_call() -> None:
     assert len(writer.model_calls) == 3
     assert len(writer.observations) == 5
     assert len(observation_ids) == 5
-    assert sum(
-        float(call["cost_usd"] or 0)
-        for call in writer.model_calls
-    ) == 0.0005
+    observed_cost = 0.0
+    for call in writer.model_calls:
+        raw_cost = call["cost_usd"]
+        if isinstance(raw_cost, Decimal):
+            observed_cost += float(raw_cost)
+    assert observed_cost == 0.0005
     assert {
         observation["model_call_id"]
         for observation in writer.observations
     } == {"call-0", "call-1", "call-2"}
-    assert all(
-        observation["payload"]["mode"] == "shadow"
+    payloads = tuple(
+        cast(dict[str, object], observation["payload"])
         for observation in writer.observations
     )
+    assert all(payload["mode"] == "shadow" for payload in payloads)
     assert all(
-        observation["payload"]["recommended_action"] == "sentinel"
-        for observation in writer.observations
+        payload["recommended_action"] == "sentinel"
+        for payload in payloads
     )
