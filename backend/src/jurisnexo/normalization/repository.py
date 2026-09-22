@@ -371,6 +371,7 @@ class PostgresNormalizationLedger:
         estimated_input_tokens: int | None,
         input_tokens: int | None,
         output_tokens: int | None,
+        thinking_tokens: int | None,
         total_tokens: int | None,
         cost_usd: Decimal | None,
         latency_ms: int | None,
@@ -382,10 +383,11 @@ class PostgresNormalizationLedger:
                 insert into corpus.normalization_model_calls
                     (scope_id, run_id, purpose, provider, model, model_version,
                      response_id, estimated_input_tokens, input_tokens,
-                     output_tokens, total_tokens, cost_usd, latency_ms, metadata)
+                     output_tokens, thinking_tokens, total_tokens, cost_usd,
+                     latency_ms, metadata)
                 values (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s::jsonb
+                    %s, %s::jsonb
                 )
                 returning id::text
                 """,
@@ -400,6 +402,7 @@ class PostgresNormalizationLedger:
                     estimated_input_tokens,
                     input_tokens,
                     output_tokens,
+                    thinking_tokens,
                     total_tokens,
                     cost_usd,
                     latency_ms,
