@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from jurisnexo.model_providers.contracts import JsonObject
 from jurisnexo.model_providers.decisions import DecisionProvider
+from jurisnexo.normalization.jev_answers import choice_probability
 from jurisnexo.normalization.decision_batching import (
     DecisionBatchPolicy,
     DecisionRecord,
@@ -140,23 +141,20 @@ def evaluate_claim_support_batch(
                 raise RuntimeError(
                     f"decision provider omitted claim {claim.claim_id}"
                 )
-            choice = answer.get("choice")
-            if not isinstance(choice, dict):
-                raise RuntimeError(
-                    f"claim {claim.claim_id} did not return a choice distribution"
-                )
-            probabilities = dict(choice)
             decisions.append(
                 ClaimSupportDecision(
                     claim_id=claim.claim_id,
-                    support_probability=_probability(
-                        probabilities.get("supported")
+                    support_probability=choice_probability(
+                        answer,
+                        "supported",
                     ),
-                    contradiction_probability=_probability(
-                        probabilities.get("contradicted")
+                    contradiction_probability=choice_probability(
+                        answer,
+                        "contradicted",
                     ),
-                    insufficient_probability=_probability(
-                        probabilities.get("insufficient")
+                    insufficient_probability=choice_probability(
+                        answer,
+                        "insufficient",
                     ),
                 )
             )
@@ -176,11 +174,3 @@ def evaluate_claim_support_batch(
         telemetry=tuple(telemetry),
     )
 
-
-def _probability(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise RuntimeError("claim-support probability is not numeric")
-    probability = float(value)
-    if not 0.0 <= probability <= 1.0:
-        raise RuntimeError("claim-support probability is outside [0, 1]")
-    return probability
