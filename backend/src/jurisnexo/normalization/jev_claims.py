@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 from jurisnexo.model_providers.contracts import JsonObject
 from jurisnexo.model_providers.decisions import DecisionProvider
+from jurisnexo.normalization.decision_batching import (
+    DecisionBatchPolicy,
+    DecisionRecord,
+    plan_decision_batches,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +39,7 @@ class ClaimSupportTelemetry:
 @dataclass(frozen=True, slots=True)
 class ClaimSupportEvaluation:
     decisions: tuple[ClaimSupportDecision, ...]
-    telemetry: ClaimSupportTelemetry | None
+    telemetry: tuple[ClaimSupportTelemetry, ...]
 
 
 def build_claim_support_questions(
@@ -80,66 +85,95 @@ def evaluate_claim_support_batch(
     provider: DecisionProvider,
     *,
     claims: tuple[EvidenceClaim, ...],
+    policy: DecisionBatchPolicy | None = None,
 ) -> ClaimSupportEvaluation:
     if not claims:
-        return ClaimSupportEvaluation(decisions=(), telemetry=None)
+        return ClaimSupportEvaluation(decisions=(), telemetry=())
 
-    questions = build_claim_support_questions(claims)
-    result = provider.decide(
-        state_description=(
-            "Each record contains legal-document evidence plus a proposed extracted "
-            "field value. Evaluate evidentiary support only."
-        ),
-        records=tuple(
-            {
-                "id": claim.claim_id,
-                "record": (
-                    f"Field: {claim.field_name}\n"
-                    f"Proposed value: {claim.proposed_value}\n\n"
-                    f"Evidence:\n{claim.evidence}"
-                ),
-            }
-            for claim in claims
-        ),
-        questions=questions,
+    state_description = (
+        "Each record contains legal-document evidence plus a proposed extracted "
+        "field value. Evaluate evidentiary support only."
+    )
+    records = tuple(
+        DecisionRecord(
+            record_id=claim.claim_id,
+            text=(
+                f"Field: {claim.field_name}\n"
+                f"Proposed value: {claim.proposed_value}\n\n"
+                f"Evidence:\n{claim.evidence}"
+            ),
+        )
+        for claim in claims
+    )
+    question_map = build_claim_support_questions(claims)
+    batches = plan_decision_batches(
+        records,
+        questions=question_map,
+        state_description=state_description,
+        policy=policy,
     )
 
     decisions: list[ClaimSupportDecision] = []
-    for claim in claims:
-        answer = result.answers.get(claim.claim_id)
-        if answer is None:
-            raise RuntimeError(
-                f"decision provider omitted claim {claim.claim_id}"
+    telemetry: list[ClaimSupportTelemetry] = []
+    claims_by_id = {claim.claim_id: claim for claim in claims}
+
+    for batch in batches:
+        batch_claims = tuple(
+            claims_by_id[record.record_id] for record in batch.records
+        )
+        questions = build_claim_support_questions(batch_claims)
+        result = provider.decide(
+            state_description=state_description,
+            records=tuple(
+                {
+                    "id": record.record_id,
+                    "record": record.text,
+                }
+                for record in batch.records
+            ),
+            questions=questions,
+        )
+
+        for claim in batch_claims:
+            answer = result.answers.get(claim.claim_id)
+            if answer is None:
+                raise RuntimeError(
+                    f"decision provider omitted claim {claim.claim_id}"
+                )
+            choice = answer.get("choice")
+            if not isinstance(choice, dict):
+                raise RuntimeError(
+                    f"claim {claim.claim_id} did not return a choice distribution"
+                )
+            probabilities = dict(choice)
+            decisions.append(
+                ClaimSupportDecision(
+                    claim_id=claim.claim_id,
+                    support_probability=_probability(
+                        probabilities.get("supported")
+                    ),
+                    contradiction_probability=_probability(
+                        probabilities.get("contradicted")
+                    ),
+                    insufficient_probability=_probability(
+                        probabilities.get("insufficient")
+                    ),
+                )
             )
-        choice = answer.get("choice")
-        if not isinstance(choice, dict):
-            raise RuntimeError(
-                f"claim {claim.claim_id} did not return a choice distribution"
-            )
-        probabilities = dict(choice)
-        decisions.append(
-            ClaimSupportDecision(
-                claim_id=claim.claim_id,
-                support_probability=_probability(
-                    probabilities.get("supported")
-                ),
-                contradiction_probability=_probability(
-                    probabilities.get("contradicted")
-                ),
-                insufficient_probability=_probability(
-                    probabilities.get("insufficient")
-                ),
+
+        telemetry.append(
+            ClaimSupportTelemetry(
+                model=result.model,
+                input_tokens=result.usage.input_tokens,
+                output_tokens=result.usage.output_tokens,
+                total_tokens=result.usage.total_tokens,
+                cost_usd=result.cost_usd,
             )
         )
+
     return ClaimSupportEvaluation(
         decisions=tuple(decisions),
-        telemetry=ClaimSupportTelemetry(
-            model=result.model,
-            input_tokens=result.usage.input_tokens,
-            output_tokens=result.usage.output_tokens,
-            total_tokens=result.usage.total_tokens,
-            cost_usd=result.cost_usd,
-        ),
+        telemetry=tuple(telemetry),
     )
 
 
