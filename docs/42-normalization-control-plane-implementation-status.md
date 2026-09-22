@@ -22,7 +22,7 @@ This document tracks implementation and proof status for the V3 normalization co
 | 4. Planner/durable execution | IMPLEMENTED | deterministic planning, idempotency, durable checkpoints, retry classes, circuit breaker and interrupted-run resume exist |
 | 5. Docling/Tika production adapters | IMPLEMENTED | object-storage derivatives, lineage, PDF-aware OCR, language configuration and optional isolated Docling subprocess exist |
 | 6. Deterministic QA | IMPLEMENTED | text health/legal-critical signals exist; page/region OCR behavior uses Docling PDF-aware OCR; semantic quality thresholds remain benchmark-owned |
-| 7. JEV shadow | IMPLEMENTED | DecisionProvider + OpenRouter decisions adapter + DecisionTextQualityJudge + shadow persistence exist; live Principales benchmark remains PENDING EVIDENCE |
+| 7. JEV shadow | PROVEN IN BOUNDED LIVE BENCHMARK | DecisionProvider + OpenRouter decisions adapter + DecisionTextQualityJudge + shadow persistence exist. A 4-source Principales live benchmark passed with 0 calibration/holdout false negatives and false positives on the bounded corruption task, Brier ≈ 0.0153, claim argmax accuracy 1.0, 373 ms quality-batch latency and total observed OpenRouter cost US$0.000660282. Promotion remains blocked by insufficient sample size. |
 | 8. Visual verification | IMPLEMENTED | provider-neutral verifier, DeepSeek V4.1 Flash visual adapter path, correction proposals and bounded two-call smoke exist; live benchmark remains PENDING EVIDENCE |
 | 9. Resolved views/sentinel/workspace | IMPLEMENTED | evidence/search separation, stable workspace, deterministic sentinel sampling and read-only GC audit exist |
 | 10. Reconciliation | IMPLEMENTED | fail-closed plan/DB/lineage/storage/quality reconciliation and immutable normalization manifest exist; PostgreSQL + S3-compatible integration proof exists |
@@ -51,7 +51,7 @@ See `43-jev-system-one-engineering-guidelines.md` for the canonical System One d
 - Oversized records fail closed; JurisNexo does not silently truncate a decision record to make it fit.
 - Quality routing and claim/evidence verification are treated as different capabilities: JEV cannot infer that a plausible identifier is wrong unless the reference evidence is provided.
 - Routing thresholds live in a provider-independent policy and remain calibration-owned rather than hard-coded as a property of JEV.
-- JEV remains shadow/advisory until false-negative, calibration and escalation benchmarks justify promotion.
+- JEV remains shadow/advisory. Live run 35763120423 resolved to model `typesafe/jev-1.13-20260917`; the quality batch used 8,905 input tokens / 9,677 total tokens, stayed inside the 24k target budget, and cost US$0.00037401. Evidence-backed claim verification cost US$0.000286272. The benchmark selected a candidate material-error threshold of 0.75 with zero observed false negatives/positives in its tiny calibration and holdout splits, but `promotion_assessment.eligible=false` because each split had only two positive and two negative quality cases.
 
 ### DeepSeek
 
@@ -82,7 +82,7 @@ Do not claim any of the following until the corresponding evidence has passed:
 - all SCJ Principales are normalized;
 - OCR quality is calibrated for the full Principales distribution;
 - JEV thresholds are production-ready;
-- JEV has a measured acceptable false-negative rate;
+- JEV has a production-representative acceptable false-negative rate beyond the bounded 4-source smoke;
 - visual-verifier false-correction rate is acceptable beyond the bounded smoke;
 - the worker is a complete security sandbox;
 - the full Principales Definition of Done in doc 41 is complete.
@@ -90,11 +90,11 @@ Do not claim any of the following until the corresponding evidence has passed:
 ## Remaining closure sequence
 
 1. obtain exact-head deterministic CI green;
-2. run one explicitly labeled bounded JEV calibration benchmark using batched visible-corruption routing plus evidence-backed claim verification;
-3. run one explicitly labeled JEV + DeepSeek challenger smoke;
-4. run one explicitly labeled two-call visual verifier smoke;
-5. persist/analyze model probabilities, false negatives, calibration, token/cost/latency evidence;
-6. execute the real SCJ calibration/holdout/adversarial corpus with source-verified gold and preserve holdout independence;
+2. execute the labeled OCR calibration/holdout lane on real Principales pages;
+3. expand JEV calibration/holdout to promotion-sized source-verified samples while preserving split independence;
+4. run one explicitly labeled JEV + DeepSeek challenger smoke;
+5. run one explicitly labeled two-call visual verifier smoke;
+6. persist/analyze model probabilities, false negatives, calibration, token/cost/latency evidence and durable observation lineage;
 7. execute broader Principales canary, interruption/resume drill and reconciliation audit;
 8. run OOD SCJ sample;
 9. reconcile docs/testing proof map and remove only gaps actually closed by evidence;
