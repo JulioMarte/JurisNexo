@@ -36,16 +36,21 @@ class _FakeDecisionProvider:
         for record in records:
             record_id = record["id"]
             answers[f"{record_id}__transcription_quality"] = {
-                "choice": {
+                "type": "choice",
+                "choice": "acceptable",
+                "confidence": 0.9,
+                "probabilities": {
                     "acceptable": 0.9,
                     "material_error": 0.05,
                     "uncertain": 0.05,
-                }
+                },
             }
             answers[f"{record_id}__legal_critical_damage"] = {
+                "type": "noul",
                 "noul": 0.1,
             }
             answers[f"{record_id}__needs_visual_review"] = {
+                "type": "noul",
                 "noul": 0.2,
             }
         assert set(questions) == set(answers)
