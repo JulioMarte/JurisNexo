@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from jurisnexo.model_providers.contracts import JsonObject
@@ -132,6 +133,99 @@ def plan_decision_batches(
         )
 
     for batch in batches:
+        if batch.estimated_total_tokens >= policy.max_context_tokens:
+            raise AssertionError("planned batch exceeds model context window")
+    return tuple(batches)
+
+
+
+QuestionFactory = Callable[[tuple[str, ...]], dict[str, JsonObject]]
+
+
+def plan_record_scoped_decision_batches(
+    records: tuple[DecisionRecord, ...],
+    *,
+    question_factory: QuestionFactory,
+    state_description: str,
+    policy: DecisionBatchPolicy | None = None,
+) -> tuple[DecisionBatch, ...]:
+    """Pack records using only the questions actually sent with each batch.
+
+    Many System One workflows create several questions per record. Counting
+    questions for the entire corpus in every batch is safe but wastes context.
+    This planner incrementally measures each prospective batch so the working
+    target is used efficiently while still staying below the hard window.
+    """
+    policy = policy or DecisionBatchPolicy()
+    if not records:
+        return ()
+
+    state_tokens = estimate_legal_text_tokens(state_description)
+    batches: list[DecisionBatch] = []
+    current: list[DecisionRecord] = []
+
+    def estimate(candidate: list[DecisionRecord]) -> tuple[int, int]:
+        ids = tuple(record.record_id for record in candidate)
+        questions = question_factory(ids)
+        question_tokens = estimate_question_tokens(questions)
+        record_tokens = sum(
+            max(
+                policy.minimum_record_tokens,
+                estimate_legal_text_tokens(record.text),
+            )
+            for record in candidate
+        )
+        total = (
+            policy.reserved_instruction_tokens
+            + state_tokens
+            + question_tokens
+            + record_tokens
+        )
+        return record_tokens, total
+
+    for record in records:
+        single_record_tokens, single_total = estimate([record])
+        if single_total > policy.target_total_tokens:
+            raise ValueError(
+                f"record {record.record_id!r} plus its questions exceeds "
+                "the safe JEV batch budget"
+            )
+        if single_total >= policy.max_context_tokens:
+            raise ValueError(
+                f"record {record.record_id!r} exceeds the JEV context window"
+            )
+
+        prospective = [*current, record]
+        prospective_record_tokens, prospective_total = estimate(prospective)
+        exceeds_target = prospective_total > policy.target_total_tokens
+        exceeds_count = len(prospective) > policy.max_records_per_batch
+
+        if current and (exceeds_target or exceeds_count):
+            current_record_tokens, current_total = estimate(current)
+            batches.append(
+                DecisionBatch(
+                    records=tuple(current),
+                    estimated_record_tokens=current_record_tokens,
+                    estimated_total_tokens=current_total,
+                )
+            )
+            current = [record]
+        else:
+            current = prospective
+
+    if current:
+        current_record_tokens, current_total = estimate(current)
+        batches.append(
+            DecisionBatch(
+                records=tuple(current),
+                estimated_record_tokens=current_record_tokens,
+                estimated_total_tokens=current_total,
+            )
+        )
+
+    for batch in batches:
+        if batch.estimated_total_tokens > policy.target_total_tokens:
+            raise AssertionError("planned batch exceeds safe target context")
         if batch.estimated_total_tokens >= policy.max_context_tokens:
             raise AssertionError("planned batch exceeds model context window")
     return tuple(batches)
