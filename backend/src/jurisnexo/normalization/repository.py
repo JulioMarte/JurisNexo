@@ -358,6 +358,58 @@ class PostgresNormalizationLedger:
             )
             return artifact_id
 
+    def record_model_call(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        purpose: str,
+        provider: str,
+        model: str,
+        model_version: str | None,
+        response_id: str | None,
+        estimated_input_tokens: int | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        total_tokens: int | None,
+        cost_usd: Decimal | None,
+        latency_ms: int | None,
+        metadata: dict[str, object] | None = None,
+    ) -> str:
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into corpus.normalization_model_calls
+                    (scope_id, run_id, purpose, provider, model, model_version,
+                     response_id, estimated_input_tokens, input_tokens,
+                     output_tokens, total_tokens, cost_usd, latency_ms, metadata)
+                values (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb
+                )
+                returning id::text
+                """,
+                (
+                    scope_id,
+                    run_id,
+                    purpose,
+                    provider,
+                    model,
+                    model_version,
+                    response_id,
+                    estimated_input_tokens,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    cost_usd,
+                    latency_ms,
+                    Json(metadata or {}),
+                ),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            return str(row[0])
+
     def record_observation(
         self,
         *,
@@ -367,35 +419,25 @@ class PostgresNormalizationLedger:
         observation_kind: str,
         payload: dict[str, object],
         status: str = "candidate",
-        provider: str | None = None,
-        model: str | None = None,
-        model_version: str | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cost_usd: Decimal | None = None,
+        model_call_id: str | None = None,
     ) -> str:
         with self.connection.transaction(), self.connection.cursor() as cursor:
             cursor.execute(
                 """
                 insert into corpus.normalization_observations
-                    (scope_id, run_item_id, artifact_id, observation_kind, payload, status,
-                     provider, model, model_version, input_tokens, output_tokens, cost_usd)
-                values (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                    (scope_id, run_item_id, artifact_id, model_call_id,
+                     observation_kind, payload, status)
+                values (%s, %s, %s, %s, %s, %s::jsonb, %s)
                 returning id::text
                 """,
                 (
                     scope_id,
                     run_item_id,
                     artifact_id,
+                    model_call_id,
                     observation_kind,
                     Json(payload),
                     status,
-                    provider,
-                    model,
-                    model_version,
-                    input_tokens,
-                    output_tokens,
-                    cost_usd,
                 ),
             )
             row = cursor.fetchone()
