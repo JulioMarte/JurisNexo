@@ -224,14 +224,25 @@ def test_derived_artifacts_and_lineage_are_immutable(
         assert derivation is not None
 
         for statement, value in (
-            ("update corpus.derived_artifacts set mime_type='text/plain' where id=%s", derived),
-            ("delete from corpus.artifact_derivations where id=%s", derivation[0]),
+            (
+                sql.SQL(
+                    "update corpus.derived_artifacts "
+                    "set mime_type='text/plain' where id=%s"
+                ),
+                derived,
+            ),
+            (
+                sql.SQL(
+                    "delete from corpus.artifact_derivations where id=%s"
+                ),
+                derivation[0],
+            ),
         ):
             with (
                 connection.transaction(force_rollback=True),
                 pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState),
             ):
-                cursor.execute(sql.SQL(statement), (value,))
+                cursor.execute(statement, (value,))
 
 
 def test_run_item_is_idempotent_per_source(connection: psycopg.Connection[Any]) -> None:
