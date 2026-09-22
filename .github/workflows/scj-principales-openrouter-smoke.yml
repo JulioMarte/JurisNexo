@@ -3,6 +3,7 @@ name: SCJ Principales OpenRouter smoke
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches:
       - development
     paths:
