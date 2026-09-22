@@ -46,21 +46,34 @@ class DoclingStructuralNormalizer:
         converter: Any
         ocr_policy = "not_applicable"
 
-        if inspection.media_type == "application/pdf":
+        if (
+            inspection.media_type == "application/pdf"
+            or inspection.media_type.startswith("image/")
+        ):
             input_format: Any = base_models.InputFormat
             pdf_format_option: Any = converter_module.PdfFormatOption
+            image_format_option: Any = converter_module.ImageFormatOption
             pdf_pipeline_options: Any = pipeline_module.PdfPipelineOptions
             ocr_mode: Any = pipeline_module.OcrMode
 
             pipeline_options = pdf_pipeline_options()
             pipeline_options.do_ocr = True
-            if self.pdf_aware_ocr:
-                pipeline_options.ocr_options.mode = (
-                    ocr_mode.PDF_AWARE_LAYOUT_REGIONS
-                )
-                ocr_policy = "pdf_aware_layout_regions"
+            if inspection.media_type == "application/pdf":
+                if self.pdf_aware_ocr:
+                    pipeline_options.ocr_options.mode = (
+                        ocr_mode.PDF_AWARE_LAYOUT_REGIONS
+                    )
+                    ocr_policy = "pdf_aware_layout_regions"
+                else:
+                    ocr_policy = str(pipeline_options.ocr_options.mode)
+                format_key = input_format.PDF
+                format_option = pdf_format_option
             else:
-                ocr_policy = str(pipeline_options.ocr_options.mode)
+                pipeline_options.ocr_options.mode = ocr_mode.FULL_PAGE
+                ocr_policy = "full_page"
+                format_key = input_format.IMAGE
+                format_option = image_format_option
+
             if self.ocr_language_tags:
                 pipeline_options.ocr_options.lang = list(
                     self.ocr_language_tags
@@ -68,7 +81,7 @@ class DoclingStructuralNormalizer:
 
             converter = converter_cls(
                 format_options={
-                    input_format.PDF: pdf_format_option(
+                    format_key: format_option(
                         pipeline_options=pipeline_options
                     )
                 }
