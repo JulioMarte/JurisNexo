@@ -438,10 +438,10 @@ guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 path = "backend/tests/unit/test_normalization_contracts.py"
 evidence = ["contract"]
 
-[[gaps]]
+[[proofs]]
 guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
-missing_evidence = ["integration"]
-reason = "The generic boundary and contracts are implemented; measured execution on the official Tribunal Constitucional source is pending the second-source smoke gate."
+path = "backend/scripts/tc_second_source_normalization_smoke.py"
+evidence = ["integration"]
 
 [[gaps]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
