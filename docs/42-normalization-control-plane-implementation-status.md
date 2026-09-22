@@ -27,7 +27,7 @@ This document tracks implementation and proof status for the V3 normalization co
 | 9. Resolved views/sentinel/workspace | IMPLEMENTED | evidence/search separation, stable workspace, deterministic sentinel sampling and read-only GC audit exist |
 | 10. Reconciliation | IMPLEMENTED | fail-closed plan/DB/lineage/storage/quality reconciliation and immutable normalization manifest exist; PostgreSQL + S3-compatible integration proof exists |
 | 11. SCJ Principales rollout | IMPLEMENTED IN PART | real-source canary/smoke infrastructure exists; calibration, holdout, adversarial sample, broader canary/full rollout and OOD promotion evidence remain PENDING |
-| 12. Second source | IMPLEMENTED IN PART | TC acquisition adapter and same-core normalization smoke exist; official TC smoke must pass before universality is marked PROVEN |
+| 12. Second source | PROVEN | Official TC/0001/26 passed the same Tika + Docling normalization core; source-specific logic remains confined to acquisition |
 
 ## Current engine policy
 
@@ -44,8 +44,12 @@ This document tracks implementation and proof status for the V3 normalization co
 - JEV is a System One decisions model.
 - Runtime endpoint: OpenRouter `/api/alpha/decisions`.
 - JurisNexo exposes it through `DecisionProvider`.
-- Current normalization questions use typed Choice/Noul decisions rather than free-form generation.
-- JEV remains shadow/advisory until false-negative and escalation benchmarks justify promotion.
+- Current normalization questions use typed Choice/Noul/Score decisions rather than free-form generation.
+- Context batching targets ~24k estimated tokens inside the 32k model window, reserving headroom for state/question serialization instead of filling the hard limit.
+- Oversized records fail closed; JurisNexo does not silently truncate a decision record to make it fit.
+- Quality routing and claim/evidence verification are treated as different capabilities: JEV cannot infer that a plausible identifier is wrong unless the reference evidence is provided.
+- Routing thresholds live in a provider-independent policy and remain calibration-owned rather than hard-coded as a property of JEV.
+- JEV remains shadow/advisory until false-negative, calibration and escalation benchmarks justify promotion.
 
 ### DeepSeek
 
@@ -78,18 +82,17 @@ Do not claim any of the following until the corresponding evidence has passed:
 - JEV thresholds are production-ready;
 - JEV has a measured acceptable false-negative rate;
 - visual-verifier false-correction rate is acceptable beyond the bounded smoke;
-- TC proves universality until the official second-source smoke passes;
 - the worker is a complete security sandbox;
 - the full Principales Definition of Done in doc 41 is complete.
 
 ## Remaining closure sequence
 
 1. obtain exact-head deterministic CI green;
-2. obtain official TC second-source smoke green;
-3. run one explicitly labeled bounded JEV + DeepSeek Principales smoke;
+2. run one explicitly labeled bounded JEV calibration benchmark using batched visible-corruption routing plus evidence-backed claim verification;
+3. run one explicitly labeled JEV + DeepSeek challenger smoke;
 4. run one explicitly labeled two-call visual verifier smoke;
-5. persist/analyze the resulting model/cost/latency evidence;
-6. build and execute a real SCJ calibration/holdout/adversarial corpus with human- or source-verified gold;
+5. persist/analyze model probabilities, false negatives, calibration, token/cost/latency evidence;
+6. execute the real SCJ calibration/holdout/adversarial corpus with source-verified gold and preserve holdout independence;
 7. execute broader Principales canary, interruption/resume drill and reconciliation audit;
 8. run OOD SCJ sample;
 9. reconcile docs/testing proof map and remove only gaps actually closed by evidence;
