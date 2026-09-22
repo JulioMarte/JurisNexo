@@ -534,6 +534,33 @@ The current DeepSeek challenger is `deepseek/deepseek-v4.1-flash`.
 
 ## 14. JEV role
 
+### JEV 32k operating envelope
+
+JEV is not operated like a generative LLM. JurisNexo treats the provider-published 32k context as a hard ceiling and uses a conservative working target around 24k estimated tokens per batch, reserving roughly 4k tokens for state/question serialization and additional margin below the model limit.
+
+Operational rules:
+
+1. batch multiple independent records when possible;
+2. reuse typed Choice/Noul/Score questions;
+3. do not silently truncate oversized records;
+4. keep source/evidence context dense and relevant;
+5. preserve full probability distributions;
+6. interpret probabilities through a separately versioned routing policy;
+7. do not promote thresholds from intuition or 0.5 defaults;
+8. calibrate on visible text corruption, false negatives and false rejections;
+9. test evidence-backed claim verification separately from transcription-quality routing;
+10. keep JEV shadow/advisory until holdout evidence justifies active routing.
+
+The current core primitives are:
+- `DecisionBatchPolicy` / `plan_decision_batches()`;
+- `JevBatchQualityEvaluator`;
+- canonical text-quality question builders;
+- provider-independent `JevRoutingPolicy`;
+- evidence-backed claim support decisions;
+- a bounded SCJ Principales calibration benchmark with a total live-cost cap.
+
+
+
 Keep the V2 policy.
 
 JEV implements a provider-neutral:
