@@ -184,7 +184,7 @@ def plan_record_scoped_decision_batches(
         return record_tokens, total
 
     for record in records:
-        single_record_tokens, single_total = estimate([record])
+        _, single_total = estimate([record])
         if single_total > policy.target_total_tokens:
             raise ValueError(
                 f"record {record.record_id!r} plus its questions exceeds "
@@ -196,7 +196,7 @@ def plan_record_scoped_decision_batches(
             )
 
         prospective = [*current, record]
-        prospective_record_tokens, prospective_total = estimate(prospective)
+        _, prospective_total = estimate(prospective)
         exceeds_target = prospective_total > policy.target_total_tokens
         exceeds_count = len(prospective) > policy.max_records_per_batch
 
