@@ -23,8 +23,12 @@ class TextQualityDecision:
     reasons: tuple[str, ...]
     provider: str
     model: str
+    model_version: str | None
+    response_id: str | None
     input_tokens: int | None
     output_tokens: int | None
+    thinking_tokens: int | None
+    total_tokens: int | None
     cost_usd: float | None
 
 
@@ -77,8 +81,12 @@ class StructuredTextQualityJudge:
             reasons=reasons,
             provider=result.provider,
             model=result.model,
+            model_version=result.model_version,
+            response_id=result.response_id,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            thinking_tokens=result.usage.thinking_tokens,
+            total_tokens=result.usage.total_tokens,
             cost_usd=result.cost_usd,
         )
         return _decision_dict(decision)
@@ -147,8 +155,12 @@ class DecisionTextQualityJudge:
             reasons=tuple(reasons),
             provider=result.provider,
             model=result.model,
+            model_version=result.model_version,
+            response_id=result.response_id,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            thinking_tokens=None,
+            total_tokens=result.usage.total_tokens,
             cost_usd=result.cost_usd,
         )
         payload = _decision_dict(decision)
@@ -171,8 +183,12 @@ def _decision_dict(decision: TextQualityDecision) -> dict[str, Any]:
         "reasons": list(decision.reasons),
         "provider": decision.provider,
         "model": decision.model,
+        "model_version": decision.model_version,
+        "response_id": decision.response_id,
         "input_tokens": decision.input_tokens,
         "output_tokens": decision.output_tokens,
+        "thinking_tokens": decision.thinking_tokens,
+        "total_tokens": decision.total_tokens,
         "cost_usd": decision.cost_usd,
     }
 
