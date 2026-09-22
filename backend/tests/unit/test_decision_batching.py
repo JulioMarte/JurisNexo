@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from jurisnexo.model_providers.contracts import JsonObject
 from jurisnexo.normalization.decision_batching import (
     DecisionBatchPolicy,
     DecisionRecord,
@@ -10,7 +11,7 @@ from jurisnexo.normalization.decision_batching import (
 )
 
 
-def _questions() -> dict[str, dict[str, object]]:
+def _questions() -> dict[str, JsonObject]:
     return {
         "quality": {
             "type": "choice",
