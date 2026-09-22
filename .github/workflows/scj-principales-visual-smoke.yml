@@ -2,6 +2,7 @@ name: SCJ Principales visual verifier smoke
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches:
       - development
     paths:
