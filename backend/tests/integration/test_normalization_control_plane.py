@@ -287,12 +287,32 @@ def test_observations_corrections_and_manifest_are_append_only(
         artifact = _derived(cursor, "2")
         cursor.execute(
             """
-            insert into corpus.normalization_observations
-                (run_item_id, artifact_id, observation_kind, payload, status)
-            values (%s, %s, 'ocr_text', '{"text":"texto"}'::jsonb, 'accepted')
+            insert into corpus.normalization_model_calls
+                (run_id, purpose, provider, model, response_id,
+                 input_tokens, output_tokens, total_tokens, cost_usd)
+            values (
+                %s, 'text_quality_judge', 'fixture', 'fixture-model',
+                'fixture-response', 100, 0, 100, 0.00001000
+            )
             returning id
             """,
-            (item, artifact),
+            (run,),
+        )
+        model_call = cursor.fetchone()
+        assert model_call is not None
+
+        cursor.execute(
+            """
+            insert into corpus.normalization_observations
+                (run_item_id, artifact_id, model_call_id,
+                 observation_kind, payload, status)
+            values (
+                %s, %s, %s, 'ocr_text',
+                '{"text":"texto"}'::jsonb, 'accepted'
+            )
+            returning id
+            """,
+            (item, artifact, model_call[0]),
         )
         observation = cursor.fetchone()
         assert observation is not None
@@ -323,6 +343,7 @@ def test_observations_corrections_and_manifest_are_append_only(
 
         for table, identifier in (
             ("normalization_observations", observation[0]),
+            ("normalization_model_calls", model_call[0]),
             ("normalization_corrections", correction[0]),
             ("normalization_manifests", manifest[0]),
         ):
@@ -411,3 +432,84 @@ def test_concurrent_opposite_lineage_edges_cannot_create_cycle(
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == 1
+
+
+
+def test_batched_model_call_cost_is_not_duplicated_across_observations(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        run = _run(cursor, "a")
+        source_one = _source(cursor, "b")
+        source_two = _source(cursor, "c")
+        item_one = _run_item(
+            cursor,
+            run_id=run,
+            source_artifact_id=source_one,
+        )
+        item_two = _run_item(
+            cursor,
+            run_id=run,
+            source_artifact_id=source_two,
+        )
+        artifact_one = _derived(cursor, "d")
+        artifact_two = _derived(cursor, "e")
+
+        cursor.execute(
+            """
+            insert into corpus.normalization_model_calls
+                (run_id, purpose, provider, model, response_id,
+                 estimated_input_tokens, input_tokens, output_tokens,
+                 total_tokens, cost_usd, latency_ms, metadata)
+            values (
+                %s, 'text_quality_judge', 'openrouter', 'typesafe/jev-1.13',
+                'batch-response', 1200, 1000, 0, 1000, 0.00004200, 18,
+                '{"mode":"system_one_batch"}'::jsonb
+            )
+            returning id
+            """,
+            (run,),
+        )
+        call = cursor.fetchone()
+        assert call is not None
+
+        cursor.execute(
+            """
+            insert into corpus.normalization_observations
+                (run_item_id, artifact_id, model_call_id,
+                 observation_kind, payload)
+            values
+                (%s, %s, %s, 'text_quality_judge',
+                 '{"material_error_probability":0.1}'::jsonb),
+                (%s, %s, %s, 'text_quality_judge',
+                 '{"material_error_probability":0.2}'::jsonb)
+            """,
+            (
+                item_one,
+                artifact_one,
+                call[0],
+                item_two,
+                artifact_two,
+                call[0],
+            ),
+        )
+
+        cursor.execute(
+            """
+            select
+                count(o.id),
+                count(distinct o.model_call_id),
+                sum(distinct c.cost_usd)
+            from corpus.normalization_observations o
+            join corpus.normalization_model_calls c
+              on c.scope_id=o.scope_id
+             and c.id=o.model_call_id
+            where o.model_call_id=%s
+            """,
+            (call[0],),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == 2
+        assert row[1] == 1
+        assert float(row[2]) == pytest.approx(0.000042)
