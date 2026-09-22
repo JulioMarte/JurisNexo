@@ -10,6 +10,10 @@ from jurisnexo.normalization.decision_batching import (
     plan_decision_batches,
     plan_record_scoped_decision_batches,
 )
+from jurisnexo.normalization.jev_quality import (
+    JevRoutingPolicy,
+    TextQualityProbabilities,
+)
 
 
 def _questions() -> dict[str, JsonObject]:
@@ -132,3 +136,52 @@ def test_record_scoped_batching_counts_only_questions_sent_with_each_batch() -> 
         for batch in batches
         for record in batch.records
     ) == tuple(record.record_id for record in records)
+
+
+
+def test_shadow_routing_escalates_uncertainty_and_visual_critical_risk() -> None:
+    policy = JevRoutingPolicy()
+
+    assert policy.route(
+        TextQualityProbabilities(
+            acceptable=0.20,
+            material_error=0.10,
+            uncertain=0.70,
+            legal_critical_damage=0.10,
+            needs_visual_review=0.10,
+        )
+    ) == "human_review"
+
+    assert policy.route(
+        TextQualityProbabilities(
+            acceptable=0.80,
+            material_error=0.10,
+            uncertain=0.05,
+            legal_critical_damage=0.90,
+            needs_visual_review=0.30,
+        )
+    ) == "visual_review"
+
+
+def test_shadow_routing_keeps_borderline_clean_text_in_sentinel_band() -> None:
+    policy = JevRoutingPolicy()
+
+    assert policy.route(
+        TextQualityProbabilities(
+            acceptable=0.95,
+            material_error=0.04,
+            uncertain=0.01,
+            legal_critical_damage=0.01,
+            needs_visual_review=0.01,
+        )
+    ) == "sentinel"
+
+    assert policy.route(
+        TextQualityProbabilities(
+            acceptable=0.99,
+            material_error=0.005,
+            uncertain=0.005,
+            legal_critical_damage=0.0,
+            needs_visual_review=0.0,
+        )
+    ) == "accept"
