@@ -30,6 +30,7 @@ class ModelCallWriter(Protocol):
         estimated_input_tokens: int | None,
         input_tokens: int | None,
         output_tokens: int | None,
+        thinking_tokens: int | None,
         total_tokens: int | None,
         cost_usd: Decimal | None,
         latency_ms: int | None,
@@ -134,6 +135,7 @@ class ShadowTextQualityService:
             estimated_input_tokens=None,
             input_tokens=_optional_int(decision.get("input_tokens")),
             output_tokens=_optional_int(decision.get("output_tokens")),
+            thinking_tokens=_optional_int(decision.get("thinking_tokens")),
             total_tokens=_optional_int(decision.get("total_tokens")),
             cost_usd=cost,
             latency_ms=latency_ms,
@@ -213,6 +215,7 @@ class BatchedShadowTextQualityService:
                 estimated_input_tokens=batch.estimated_total_tokens,
                 input_tokens=batch.input_tokens,
                 output_tokens=batch.output_tokens,
+                thinking_tokens=None,
                 total_tokens=batch.total_tokens,
                 cost_usd=(
                     Decimal(str(batch.cost_usd))
@@ -324,6 +327,7 @@ class SelectiveVisualVerificationService:
             estimated_input_tokens=None,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            thinking_tokens=result.usage.thinking_tokens,
             total_tokens=result.usage.total_tokens,
             cost_usd=(
                 Decimal(str(result.cost_usd))
