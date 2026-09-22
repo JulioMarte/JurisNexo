@@ -7,7 +7,7 @@ from jurisnexo.model_providers.decisions import DecisionProvider
 from jurisnexo.normalization.decision_batching import (
     DecisionBatchPolicy,
     DecisionRecord,
-    plan_decision_batches,
+    plan_record_scoped_decision_batches,
 )
 
 
@@ -105,18 +105,18 @@ def evaluate_claim_support_batch(
         )
         for claim in claims
     )
-    question_map = build_claim_support_questions(claims)
-    batches = plan_decision_batches(
+    claims_by_id = {claim.claim_id: claim for claim in claims}
+    batches = plan_record_scoped_decision_batches(
         records,
-        questions=question_map,
+        question_factory=lambda record_ids: build_claim_support_questions(
+            tuple(claims_by_id[record_id] for record_id in record_ids)
+        ),
         state_description=state_description,
         policy=policy,
     )
 
     decisions: list[ClaimSupportDecision] = []
     telemetry: list[ClaimSupportTelemetry] = []
-    claims_by_id = {claim.claim_id: claim for claim in claims}
-
     for batch in batches:
         batch_claims = tuple(
             claims_by_id[record.record_id] for record in batch.records
