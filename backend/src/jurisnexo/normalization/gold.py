@@ -45,6 +45,7 @@ class TextFidelityScore:
     token_content_recall: float
     token_content_precision: float
     token_content_f1: float
+    token_order_preservation: float
     missing_span_count: int
     critical: dict[str, CriticalCategoryScore]
 
@@ -75,6 +76,24 @@ def _levenshtein_distance(left: list[str], right: list[str]) -> int:
 
 def _normalize_space(text: str) -> str:
     return " ".join(text.split())
+
+
+def _longest_common_subsequence_length(
+    left: list[str],
+    right: list[str],
+) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    for left_value in left:
+        current = [0]
+        for index, right_value in enumerate(right, start=1):
+            if left_value == right_value:
+                current.append(previous[index - 1] + 1)
+            else:
+                current.append(max(previous[index], current[-1]))
+        previous = current
+    return previous[-1]
 
 
 def _content_tokens(text: str) -> tuple[str, ...]:
@@ -145,6 +164,18 @@ def score_text_fidelity(
         token_content_f1,
     ) = _content_overlap(expected_text, candidate_text)
 
+    expected_content_tokens = list(_content_tokens(expected_text))
+    candidate_content_tokens = list(_content_tokens(candidate_text))
+    token_order_preservation = (
+        1.0
+        if not expected_content_tokens
+        else _longest_common_subsequence_length(
+            expected_content_tokens,
+            candidate_content_tokens,
+        )
+        / len(expected_content_tokens)
+    )
+
     candidate_folded = candidate_text.casefold()
     missing_span_count = sum(
         span.casefold() not in candidate_folded
@@ -171,6 +202,7 @@ def score_text_fidelity(
         token_content_recall=token_content_recall,
         token_content_precision=token_content_precision,
         token_content_f1=token_content_f1,
+        token_order_preservation=token_order_preservation,
         missing_span_count=missing_span_count,
         critical=critical,
     )

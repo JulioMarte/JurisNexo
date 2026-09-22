@@ -91,3 +91,23 @@ def test_content_fidelity_is_order_insensitive_but_wer_is_not() -> None:
     assert score.token_content_recall == pytest.approx(1.0)
     assert score.token_content_precision == pytest.approx(1.0)
     assert score.token_content_f1 == pytest.approx(1.0)
+
+
+def test_token_order_preservation_separates_reorder_from_edit() -> None:
+    expected = "Uno dos tres cuatro."
+
+    reordered = score_text_fidelity(
+        expected_text=expected,
+        candidate_text="Cuatro tres dos uno.",
+    )
+    edited = score_text_fidelity(
+        expected_text=expected,
+        candidate_text="Uno dos tres cinco.",
+    )
+
+    assert reordered.token_content_recall == pytest.approx(1.0)
+    assert reordered.token_content_precision == pytest.approx(1.0)
+    assert reordered.token_order_preservation == pytest.approx(0.25)
+    assert reordered.word_error_rate == pytest.approx(1.0)
+    assert edited.token_order_preservation == pytest.approx(0.75)
+    assert edited.word_error_rate == pytest.approx(0.25)

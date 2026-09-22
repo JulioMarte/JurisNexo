@@ -42,6 +42,9 @@ MIN_HOLDOUT_CONTENT_PRECISION = float(
 MIN_HOLDOUT_CRITICAL_RECALL = float(
     os.environ.get("SCJ_PDF_POLICY_MIN_HOLDOUT_CRITICAL_RECALL", "1.0")
 )
+MAX_DIAGNOSTIC_TEXT_CHARS = int(
+    os.environ.get("SCJ_PDF_POLICY_MAX_DIAGNOSTIC_TEXT_CHARS", "6000")
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +60,12 @@ class PdfPolicyCase:
     token_content_recall: float
     token_content_precision: float
     token_content_f1: float
+    token_order_preservation: float
     legal_critical_recall: float
     critical_expected_count: int
     critical_matched_count: int
+    reference_text: str
+    candidate_text: str
 
 
 def _list_pdf_keys(store: Any) -> tuple[str, ...]:
@@ -134,6 +140,13 @@ def _split(index: int) -> str:
     return "calibration" if index % 2 == 0 else "holdout"
 
 
+def _diagnostic_text(text: str) -> str:
+    normalized = " ".join(text.split())
+    if len(normalized) <= MAX_DIAGNOSTIC_TEXT_CHARS:
+        return normalized
+    return normalized[:MAX_DIAGNOSTIC_TEXT_CHARS] + "…[truncated]"
+
+
 def _aggregate(items: tuple[PdfPolicyCase, ...]) -> dict[str, float | int]:
     critical_expected = sum(item.critical_expected_count for item in items)
     critical_matched = sum(item.critical_matched_count for item in items)
@@ -153,6 +166,9 @@ def _aggregate(items: tuple[PdfPolicyCase, ...]) -> dict[str, float | int]:
         ),
         "mean_token_content_f1": (
             sum(item.token_content_f1 for item in items) / len(items)
+        ),
+        "mean_token_order_preservation": (
+            sum(item.token_order_preservation for item in items) / len(items)
         ),
         "critical_expected_count": critical_expected,
         "critical_matched_count": critical_matched,
@@ -216,6 +232,7 @@ def main() -> int:
                 token_content_recall=score.token_content_recall,
                 token_content_precision=score.token_content_precision,
                 token_content_f1=score.token_content_f1,
+                token_order_preservation=score.token_order_preservation,
                 legal_critical_recall=score.legal_critical_recall,
                 critical_expected_count=sum(
                     item.expected for item in score.critical.values()
@@ -223,6 +240,8 @@ def main() -> int:
                 critical_matched_count=sum(
                     item.matched for item in score.critical.values()
                 ),
+                reference_text=_diagnostic_text(reference),
+                candidate_text=_diagnostic_text(candidate),
             )
         )
 
@@ -281,6 +300,15 @@ def main() -> int:
             },
         },
         "cases": [asdict(case) for case in cases],
+        "diagnostics": (
+            "Each case exports reference_text and candidate_text so a human "
+            "can adjudicate reading order directly. token_order_preservation "
+            "is the longest-common-subsequence ratio of content tokens: near "
+            "1.0 means content survived in order; a low value with high "
+            "token_content_recall/precision means content is present but "
+            "reordered. The reference is pypdfium2 content-stream order, "
+            "which is not guaranteed to equal logical reading order."
+        ),
         "limitations": (
             "This proves the born-digital Principales production route only. "
             "It does not prove full-page OCR quality for scanned/historical material."
