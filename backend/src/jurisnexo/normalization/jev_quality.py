@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from jurisnexo.model_providers.contracts import JsonObject
+from jurisnexo.model_providers.contracts import JsonObject, JsonValue, ModelProviderError
 
 
 def build_text_quality_questions(
@@ -63,6 +63,63 @@ def build_text_quality_questions(
             ),
         }
     return questions
+
+
+def parse_text_quality_probabilities(
+    answers: dict[str, JsonObject],
+    *,
+    record_id: str,
+) -> TextQualityProbabilities:
+    quality = _required_answer(
+        answers,
+        f"{record_id}__transcription_quality",
+    )
+    critical = _required_answer(
+        answers,
+        f"{record_id}__legal_critical_damage",
+    )
+    visual = _required_answer(
+        answers,
+        f"{record_id}__needs_visual_review",
+    )
+    return TextQualityProbabilities(
+        acceptable=_choice_probability(quality, "acceptable"),
+        material_error=_choice_probability(quality, "material_error"),
+        uncertain=_choice_probability(quality, "uncertain"),
+        legal_critical_damage=_noul_probability(critical),
+        needs_visual_review=_noul_probability(visual),
+    )
+
+
+def _required_answer(
+    answers: dict[str, JsonObject],
+    key: str,
+) -> JsonObject:
+    answer = answers.get(key)
+    if answer is None:
+        raise ModelProviderError(f"decision response omitted {key}")
+    return answer
+
+
+def _choice_probability(answer: JsonObject, option: str) -> float:
+    raw_choice = answer.get("choice")
+    if not isinstance(raw_choice, dict):
+        raise ModelProviderError("choice answer is not an object")
+    choice = dict(raw_choice)
+    return _probability(choice.get(option), f"choice.{option}")
+
+
+def _noul_probability(answer: JsonObject) -> float:
+    return _probability(answer.get("noul"), "noul")
+
+
+def _probability(value: JsonValue | object | None, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ModelProviderError(f"{label} probability is not numeric")
+    probability = float(value)
+    if not 0.0 <= probability <= 1.0:
+        raise ModelProviderError(f"{label} probability is outside [0, 1]")
+    return probability
 
 
 RoutingAction = Literal[
