@@ -156,7 +156,7 @@ def extract_text_from_structural_json(payload: bytes) -> str:
             if ref in visited_refs:
                 return
             visited_refs.add(ref)
-            visit(_resolve_json_pointer(document, ref))
+            visit(_resolve_json_pointer(root, ref))
             return
 
         text_value = mapping.get("text")
@@ -168,13 +168,13 @@ def extract_text_from_structural_json(payload: bytes) -> str:
 
         children = mapping.get("children")
         if isinstance(children, list):
-            visit(children)
+            visit(cast(list[object], children))
 
     if isinstance(body, dict):
         body_map = cast(dict[str, object], body)
         children = body_map.get("children")
         if isinstance(children, list):
-            visit(children)
+            visit(cast(list[object], children))
 
     if parts:
         return "\n".join(parts)
