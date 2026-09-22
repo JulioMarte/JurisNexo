@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
-from jurisnexo.bootstrap.settings import get_openrouter_settings
+from jurisnexo.bootstrap.settings import (
+    get_normalization_model_settings,
+    get_openrouter_settings,
+)
 from jurisnexo.model_providers.openrouter_visual import (
     OpenRouterVisualModelProvider,
 )
@@ -167,6 +170,7 @@ def main() -> int:
         raise ValueError("visual smoke cost cap must be > 0 and <= 0.01")
 
     openrouter = get_openrouter_settings()
+    models = get_normalization_model_settings()
     if openrouter.api_key is None:
         raise RuntimeError("OPENROUTER_API_KEY is required for visual smoke")
 
@@ -188,6 +192,7 @@ def main() -> int:
         api_key=openrouter.api_key.get_secret_value(),
         model=MODEL,
         base_url=openrouter.base_url,
+        reasoning_effort=models.deepseek_reasoning_effort,
     )
 
     good = _run_case(
@@ -237,6 +242,7 @@ def main() -> int:
         "collection": "principales-sentencias",
         "object_key": object_key,
         "model": MODEL,
+        "reasoning_effort": models.deepseek_reasoning_effort,
         "model_call_count": 2,
         "observed_cost_usd": running_cost,
         "max_cost_usd": MAX_COST_USD,
