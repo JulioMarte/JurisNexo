@@ -20,7 +20,7 @@ from jurisnexo.normalization.decision_batching import (
 from jurisnexo.normalization.jev_batch_evaluator import JevBatchQualityEvaluator
 from jurisnexo.normalization.jev_claims import (
     EvidenceClaim,
-    evaluate_claim_support,
+    evaluate_claim_support_batch,
 )
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
@@ -311,7 +311,7 @@ def main() -> int:
         for item in labeled
     )
 
-    claim_results = evaluate_claim_support(
+    claim_evaluation = evaluate_claim_support_batch(
         provider,
         claims=tuple(claims),
     )
@@ -323,7 +323,7 @@ def main() -> int:
             contradiction_probability=item.contradiction_probability,
             insufficient_probability=item.insufficient_probability,
         )
-        for item in claim_results
+        for item in claim_evaluation.decisions
     )
 
     thresholds = (0.25, 0.50, 0.75)
@@ -372,9 +372,16 @@ def main() -> int:
         batch.cost_usd or 0.0
         for batch in quality_result.batches
     )
-    if quality_cost > MAX_COST_USD:
+    claim_cost = (
+        claim_evaluation.telemetry.cost_usd
+        if claim_evaluation.telemetry is not None
+        and claim_evaluation.telemetry.cost_usd is not None
+        else 0.0
+    )
+    total_cost = quality_cost + claim_cost
+    if total_cost > MAX_COST_USD:
         raise RuntimeError(
-            f"JEV quality batches exceeded cost cap: {quality_cost:.6f} USD"
+            f"JEV benchmark exceeded cost cap: {total_cost:.6f} USD"
         )
 
     payload = {
@@ -396,11 +403,14 @@ def main() -> int:
         "material_error_brier_score": binary_brier,
         "claim_metrics": [asdict(item) for item in claim_metrics],
         "claim_argmax_accuracy": claim_accuracy,
-        "observed_quality_cost_usd": quality_cost,
-        "cost_note": (
-            "quality cost is provider-reported; claim-support call cost is not "
-            "yet included in this benchmark payload"
+        "claim_telemetry": (
+            asdict(claim_evaluation.telemetry)
+            if claim_evaluation.telemetry is not None
+            else None
         ),
+        "observed_quality_cost_usd": quality_cost,
+        "observed_claim_cost_usd": claim_cost,
+        "observed_total_cost_usd": total_cost,
         "limitations": [
             (
                 "Visible-corruption routing measures text-observable damage only. "
