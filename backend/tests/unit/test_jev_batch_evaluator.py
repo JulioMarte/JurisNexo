@@ -95,7 +95,13 @@ def test_batched_evaluator_returns_probabilities_and_telemetry() -> None:
     assert provider.calls == 3
     assert len(result.records) == 5
     assert len(result.batches) == 3
-    assert sum(batch.record_count for batch in result.batches) == 5
+    assert sum(len(batch.record_ids) for batch in result.batches) == 5
+    assert result.records[0].batch_index == 0
     assert result.records[0].probabilities.acceptable == 0.9
     assert result.records[0].probabilities.needs_visual_review == 0.2
     assert sum(batch.cost_usd or 0.0 for batch in result.batches) == 0.0005
+    assert [batch.response_id for batch in result.batches] == [
+        "call-1",
+        "call-2",
+        "call-3",
+    ]
