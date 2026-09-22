@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 from jurisnexo.model_providers.contracts import JsonObject
 from jurisnexo.model_providers.decisions import DecisionProvider
-from jurisnexo.normalization.jev_answers import choice_probability
 from jurisnexo.normalization.decision_batching import (
     DecisionBatchPolicy,
     DecisionRecord,
     plan_record_scoped_decision_batches,
 )
+from jurisnexo.normalization.jev_answers import choice_probability
 
 
 @dataclass(frozen=True, slots=True)
