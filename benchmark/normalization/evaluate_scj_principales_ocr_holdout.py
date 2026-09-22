@@ -28,6 +28,18 @@ MIN_REFERENCE_CHARS = int(
 MAX_PAGES_TO_SCAN = int(
     os.environ.get("SCJ_NORMALIZATION_HOLDOUT_MAX_PAGES_TO_SCAN", "6")
 )
+MAX_HOLDOUT_MEAN_WER = float(
+    os.environ.get("SCJ_NORMALIZATION_MAX_HOLDOUT_MEAN_WER", "0.20")
+)
+MIN_HOLDOUT_CONTENT_RECALL = float(
+    os.environ.get("SCJ_NORMALIZATION_MIN_HOLDOUT_CONTENT_RECALL", "0.95")
+)
+MIN_HOLDOUT_CONTENT_PRECISION = float(
+    os.environ.get("SCJ_NORMALIZATION_MIN_HOLDOUT_CONTENT_PRECISION", "0.95")
+)
+MIN_HOLDOUT_CRITICAL_RECALL = float(
+    os.environ.get("SCJ_NORMALIZATION_MIN_HOLDOUT_CRITICAL_RECALL", "1.0")
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +52,12 @@ class OcrCase:
     candidate_chars: int
     character_error_rate: float
     word_error_rate: float
+    token_content_recall: float
+    token_content_precision: float
+    token_content_f1: float
     legal_critical_recall: float
+    critical_expected_count: int
+    critical_matched_count: int
     missing_span_count: int
     critical: dict[str, dict[str, float | int]]
 
@@ -166,7 +183,16 @@ def main() -> int:
                 candidate_chars=len(candidate),
                 character_error_rate=score.character_error_rate,
                 word_error_rate=score.word_error_rate,
+                token_content_recall=score.token_content_recall,
+                token_content_precision=score.token_content_precision,
+                token_content_f1=score.token_content_f1,
                 legal_critical_recall=score.legal_critical_recall,
+                critical_expected_count=sum(
+                    item.expected for item in score.critical.values()
+                ),
+                critical_matched_count=sum(
+                    item.matched for item in score.critical.values()
+                ),
                 missing_span_count=score.missing_span_count,
                 critical=_critical_payload(score),
             )
@@ -181,6 +207,12 @@ def main() -> int:
     holdout = tuple(case for case in cases if case.split == "holdout")
 
     def aggregate(items: tuple[OcrCase, ...]) -> dict[str, float | int]:
+        critical_expected = sum(
+            item.critical_expected_count for item in items
+        )
+        critical_matched = sum(
+            item.critical_matched_count for item in items
+        )
         return {
             "case_count": len(items),
             "mean_character_error_rate": (
@@ -189,11 +221,21 @@ def main() -> int:
             "mean_word_error_rate": (
                 sum(item.word_error_rate for item in items) / len(items)
             ),
-            "mean_legal_critical_recall": (
-                sum(item.legal_critical_recall for item in items) / len(items)
+            "mean_token_content_recall": (
+                sum(item.token_content_recall for item in items) / len(items)
             ),
-            "minimum_legal_critical_recall": min(
-                item.legal_critical_recall for item in items
+            "mean_token_content_precision": (
+                sum(item.token_content_precision for item in items) / len(items)
+            ),
+            "mean_token_content_f1": (
+                sum(item.token_content_f1 for item in items) / len(items)
+            ),
+            "critical_expected_count": critical_expected,
+            "critical_matched_count": critical_matched,
+            "aggregate_legal_critical_recall": (
+                1.0
+                if critical_expected == 0
+                else critical_matched / critical_expected
             ),
         }
 
@@ -213,6 +255,37 @@ def main() -> int:
         "holdout": aggregate(holdout),
         "cases": [asdict(case) for case in cases],
     }
+    holdout_metrics = payload["holdout"]
+    gate_checks = {
+        "mean_word_error_rate": (
+            float(holdout_metrics["mean_word_error_rate"])
+            <= MAX_HOLDOUT_MEAN_WER
+        ),
+        "mean_token_content_recall": (
+            float(holdout_metrics["mean_token_content_recall"])
+            >= MIN_HOLDOUT_CONTENT_RECALL
+        ),
+        "mean_token_content_precision": (
+            float(holdout_metrics["mean_token_content_precision"])
+            >= MIN_HOLDOUT_CONTENT_PRECISION
+        ),
+        "aggregate_legal_critical_recall": (
+            float(holdout_metrics["aggregate_legal_critical_recall"])
+            >= MIN_HOLDOUT_CRITICAL_RECALL
+        ),
+    }
+    payload["quality_gate"] = {
+        "passed": all(gate_checks.values()),
+        "checks": gate_checks,
+        "thresholds": {
+            "max_mean_word_error_rate": MAX_HOLDOUT_MEAN_WER,
+            "min_mean_token_content_recall": MIN_HOLDOUT_CONTENT_RECALL,
+            "min_mean_token_content_precision": MIN_HOLDOUT_CONTENT_PRECISION,
+            "min_aggregate_legal_critical_recall": (
+                MIN_HOLDOUT_CRITICAL_RECALL
+            ),
+        },
+    }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -220,18 +293,8 @@ def main() -> int:
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
 
-    # The first run is measurement, not a hidden quality-policy promotion.
-    # Fail only when the holdout is structurally unusable or has zero critical fidelity.
-    return (
-        0
-        if all(
-            (
-                float(payload["holdout"]["mean_word_error_rate"]) < 1.0,
-                float(payload["holdout"]["mean_legal_critical_recall"]) > 0.0,
-            )
-        )
-        else 1
-    )
+    quality_gate = payload["quality_gate"]
+    return 0 if bool(quality_gate["passed"]) else 1
 
 
 if __name__ == "__main__":
