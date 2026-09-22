@@ -77,10 +77,14 @@ class _FakeDecisionProvider:
         )
 
 
+def _rows() -> list[dict[str, object]]:
+    return []
+
+
 @dataclass
 class _Writer:
-    model_calls: list[dict[str, object]] = field(default_factory=list)
-    observations: list[dict[str, object]] = field(default_factory=list)
+    model_calls: list[dict[str, object]] = field(default_factory=_rows)
+    observations: list[dict[str, object]] = field(default_factory=_rows)
 
     def record_model_call(
         self,
