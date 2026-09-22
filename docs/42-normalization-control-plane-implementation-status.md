@@ -41,6 +41,8 @@ This document tracks implementation and proof status for the V3 normalization co
 
 ### JEV
 
+See `43-jev-system-one-engineering-guidelines.md` for the canonical System One design/calibration contract.
+
 - JEV is a System One decisions model.
 - Runtime endpoint: OpenRouter `/api/alpha/decisions`.
 - JurisNexo exposes it through `DecisionProvider`.
