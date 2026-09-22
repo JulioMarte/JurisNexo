@@ -129,6 +129,15 @@ RoutingAction = Literal[
     "visual_review",
     "human_review",
 ]
+EffectiveRoutingAction = Literal[
+    "shadow_observe",
+    "accept",
+    "sentinel",
+    "deepseek_review",
+    "visual_review",
+    "human_review",
+]
+PromotionState = Literal["shadow", "active"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +164,7 @@ class JevRoutingPolicy:
     visual_min_probability: float = 0.35
     human_min_uncertain: float = 0.60
     critical_visual_multiplier: float = 0.75
+    promotion_state: PromotionState = "shadow"
 
     def __post_init__(self) -> None:
         values = (
@@ -172,7 +182,10 @@ class JevRoutingPolicy:
                 "sentinel_min_acceptable cannot exceed auto_accept_min_acceptable"
             )
 
-    def route(self, probabilities: TextQualityProbabilities) -> RoutingAction:
+    def recommend(
+        self,
+        probabilities: TextQualityProbabilities,
+    ) -> RoutingAction:
         if probabilities.uncertain >= self.human_min_uncertain:
             return "human_review"
 
@@ -194,3 +207,13 @@ class JevRoutingPolicy:
             return "sentinel"
 
         return "deepseek_review"
+
+
+    def route(
+        self,
+        probabilities: TextQualityProbabilities,
+    ) -> EffectiveRoutingAction:
+        recommendation = self.recommend(probabilities)
+        if self.promotion_state == "shadow":
+            return "shadow_observe"
+        return recommendation
