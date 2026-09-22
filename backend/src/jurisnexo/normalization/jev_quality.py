@@ -105,25 +105,6 @@ def _required_answer(
     return answer
 
 
-def choice_probability(answer: JsonObject, option: str) -> float:
-    raw_choice = answer.get("choice")
-    if not isinstance(raw_choice, dict):
-        raise ModelProviderError("choice answer is not an object")
-    choice = dict(raw_choice)
-    return _probability(choice.get(option), f"choice.{option}")
-
-
-def noul_probability(answer: JsonObject) -> float:
-    return _probability(answer.get("noul"), "noul")
-
-
-def _probability(value: JsonValue | object | None, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ModelProviderError(f"{label} probability is not numeric")
-    probability = float(value)
-    if not 0.0 <= probability <= 1.0:
-        raise ModelProviderError(f"{label} probability is outside [0, 1]")
-    return probability
 
 
 RoutingAction = Literal[
