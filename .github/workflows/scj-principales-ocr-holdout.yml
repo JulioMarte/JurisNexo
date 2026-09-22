@@ -2,6 +2,7 @@ name: SCJ Principales OCR calibration and holdout
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches:
       - development
     paths:
