@@ -51,8 +51,9 @@ def build_claim_support_questions(
         questions[claim.claim_id] = {
             "type": "choice",
             "instructions": (
-                f'For claim "{claim.claim_id}", decide whether the supplied evidence '
-                f'supports the proposed {claim.field_name!r} value. Judge only the '
+                f'For the record with id "{claim.claim_id}", decide whether the '
+                f'supplied evidence supports the proposed {claim.field_name!r} value. '
+                "Judge only the "
                 "evidence/value relationship; do not infer missing facts."
             ),
             "criteria": {
