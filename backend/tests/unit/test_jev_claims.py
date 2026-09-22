@@ -47,7 +47,17 @@ class _FakeClaimProvider:
                     "contradicted": 0.92,
                     "insufficient": 0.04,
                 }
-            answers[record_id] = {"choice": distribution}
+            selected = (
+                "supported"
+                if distribution["supported"] > distribution["contradicted"]
+                else "contradicted"
+            )
+            answers[record_id] = {
+                "type": "choice",
+                "choice": selected,
+                "confidence": max(distribution.values()),
+                "probabilities": distribution,
+            }
 
         assert set(questions) == set(answers)
         return DecisionResult(
