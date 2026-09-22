@@ -7,7 +7,7 @@ from jurisnexo.model_providers.decisions import DecisionProvider
 from jurisnexo.normalization.decision_batching import (
     DecisionBatchPolicy,
     DecisionRecord,
-    plan_decision_batches,
+    plan_record_scoped_decision_batches,
 )
 from jurisnexo.normalization.jev_quality import (
     TextQualityProbabilities,
@@ -53,12 +53,11 @@ class JevBatchQualityEvaluator:
         if not records:
             return JevBatchEvaluation(records=(), batches=())
 
-        all_questions = build_text_quality_questions(
-            record_ids=tuple(record.record_id for record in records),
-        )
-        planned = plan_decision_batches(
+        planned = plan_record_scoped_decision_batches(
             records,
-            questions=all_questions,
+            question_factory=lambda record_ids: build_text_quality_questions(
+                record_ids=record_ids
+            ),
             state_description=state_description,
             policy=self.policy,
         )
