@@ -102,6 +102,17 @@ def _int_or_none(value: object) -> int | None:
     return None
 
 
+def _first_int(
+    mapping: dict[str, object],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        value = _int_or_none(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
 def _float_or_none(value: object) -> float | None:
     if isinstance(value, bool):
         return None
@@ -145,6 +156,20 @@ def parse_openrouter_decision_response(
     )
     effective_model = str(body.get("model") or requested_model)
     response_id = body.get("id")
+    input_tokens = _first_int(
+        usage,
+        "input_tokens",
+        "prompt_tokens",
+    )
+    output_tokens = _first_int(
+        usage,
+        "output_tokens",
+        "completion_tokens",
+    )
+    total_tokens = _int_or_none(usage.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
     return DecisionResult(
         answers=answers,
         provider=provider,
@@ -152,9 +177,9 @@ def parse_openrouter_decision_response(
         model_version=effective_model,
         response_id=str(response_id) if response_id else None,
         usage=DecisionUsage(
-            input_tokens=_int_or_none(usage.get("prompt_tokens")),
-            output_tokens=_int_or_none(usage.get("completion_tokens")),
-            total_tokens=_int_or_none(usage.get("total_tokens")),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
         ),
         cost_usd=_float_or_none(usage.get("cost")),
     )
