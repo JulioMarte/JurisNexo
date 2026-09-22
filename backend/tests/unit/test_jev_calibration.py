@@ -4,6 +4,7 @@ import pytest
 
 from jurisnexo.normalization.jev_calibration import (
     BinaryRoutingObservation,
+    assess_promotion_readiness,
     brier_score,
     evaluate_frozen_candidate_on_holdout,
     select_candidate_threshold,
@@ -78,3 +79,64 @@ def test_brier_score_penalizes_overconfident_wrong_predictions() -> None:
 
     assert brier_score(good) == pytest.approx(0.0025)
     assert brier_score(bad) == pytest.approx(0.9025)
+
+
+
+def test_promotion_readiness_rejects_tiny_green_sample() -> None:
+    calibration = (
+        _o("p1", positive=True, probability=0.95),
+        _o("n1", positive=False, probability=0.05),
+    )
+    candidate = select_candidate_threshold(
+        calibration,
+        thresholds=(0.50,),
+    )
+    holdout = (
+        _o("p2", positive=True, probability=0.95),
+        _o("n2", positive=False, probability=0.05),
+    )
+    holdout_metrics = evaluate_frozen_candidate_on_holdout(
+        candidate,
+        holdout,
+    )
+    assessment = assess_promotion_readiness(
+        calibration=candidate.calibration,
+        holdout=holdout_metrics,
+        brier=brier_score((*calibration, *holdout)),
+    )
+
+    assert not assessment.eligible
+    assert any("sample" in reason for reason in assessment.reasons)
+
+
+def test_promotion_readiness_accepts_large_well_calibrated_evidence() -> None:
+    calibration = tuple(
+        _o(f"cp{index}", positive=True, probability=0.95)
+        for index in range(25)
+    ) + tuple(
+        _o(f"cn{index}", positive=False, probability=0.05)
+        for index in range(25)
+    )
+    candidate = select_candidate_threshold(
+        calibration,
+        thresholds=(0.50,),
+    )
+    holdout = tuple(
+        _o(f"hp{index}", positive=True, probability=0.95)
+        for index in range(25)
+    ) + tuple(
+        _o(f"hn{index}", positive=False, probability=0.05)
+        for index in range(25)
+    )
+    holdout_metrics = evaluate_frozen_candidate_on_holdout(
+        candidate,
+        holdout,
+    )
+    assessment = assess_promotion_readiness(
+        calibration=candidate.calibration,
+        holdout=holdout_metrics,
+        brier=brier_score((*calibration, *holdout)),
+    )
+
+    assert assessment.eligible
+    assert assessment.reasons == ()
