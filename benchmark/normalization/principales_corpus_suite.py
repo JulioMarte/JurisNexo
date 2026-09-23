@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import io
 import json
 import os
 import time
+from importlib.metadata import PackageNotFoundError, version
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import ClientError
+
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.benchmark_suite import (
+    QualityThresholds,
     SuiteRecord,
     aggregate_records,
+    evaluate_quality_gates,
     format_summary,
     parse_configs,
     resume_key,
@@ -36,7 +42,59 @@ PAGES_PER_DOCUMENT = int(os.environ.get("SUITE_PAGES_PER_DOCUMENT", "3"))
 MAX_PAGES_TO_SCAN = int(os.environ.get("SUITE_MAX_PAGES_TO_SCAN", "120"))
 MIN_REFERENCE_CHARS = int(os.environ.get("SUITE_MIN_REFERENCE_CHARS", "800"))
 RESUME = os.environ.get("SUITE_RESUME", "1") == "1"
+REQUIRED_CONFIGS = parse_configs(
+    os.environ.get("SUITE_REQUIRED_CONFIGS", "pdf_aware")
+)
+QUALITY_THRESHOLDS = QualityThresholds(
+    max_mean_word_error_rate=float(
+        os.environ.get("SUITE_MAX_MEAN_WER", "0.10")
+    ),
+    min_mean_token_content_recall=float(
+        os.environ.get("SUITE_MIN_CONTENT_RECALL", "0.98")
+    ),
+    min_mean_token_content_precision=float(
+        os.environ.get("SUITE_MIN_CONTENT_PRECISION", "0.98")
+    ),
+    min_aggregate_legal_critical_recall=float(
+        os.environ.get("SUITE_MIN_CRITICAL_RECALL", "1.0")
+    ),
+    min_document_pass_rate=float(
+        os.environ.get("SUITE_MIN_DOCUMENT_PASS_RATE", "1.0")
+    ),
+)
 OCR_LANGUAGE_TAGS = ("iso:es",)
+BENCHMARK_SCHEMA_VERSION = 2
+
+
+def _package_version(name: str) -> str:
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _benchmark_identity(config: str) -> str:
+    material = {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "config": config,
+        "ocr_language_tags": list(OCR_LANGUAGE_TAGS),
+        "docling_version": _package_version("docling"),
+        "normalizer_source": inspect.getsource(DoclingStructuralNormalizer),
+        "scoring_source": inspect.getsource(score_text_fidelity),
+        "selector_source": inspect.getsource(select_reference_pages),
+    }
+    encoded = json.dumps(
+        material, ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _run_id() -> str:
+    github_run_id = os.environ.get("GITHUB_RUN_ID")
+    github_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    if github_run_id:
+        return f"github-{github_run_id}-attempt-{github_attempt}"
+    return f"local-{int(time.time())}"
 
 
 def _list_pdf_keys(store: Any) -> tuple[str, ...]:
@@ -144,8 +202,12 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
         payload = store.client.get_object(
             Bucket=store.config.bucket, Key=CHECKPOINT_KEY
         )["Body"].read()
-    except Exception:  # noqa: BLE001 - a missing checkpoint is a normal cold start
-        return records, keys
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code") or "")
+        if code in {"NoSuchKey", "404", "NotFound"}:
+            return records, keys
+        raise
     text = (
         payload.decode("utf-8")
         if isinstance(payload, bytes)
@@ -154,10 +216,17 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
     for line in text.splitlines():
         if not line.strip():
             continue
-        record = SuiteRecord(**json.loads(line))
+        raw = json.loads(line)
+        raw.setdefault("benchmark_identity", "legacy-unversioned")
+        record = SuiteRecord(**raw)
         records.append(record)
         keys.add(
-            resume_key(record.config, record.source_sha256, record.page_index)
+            resume_key(
+                record.config,
+                record.source_sha256,
+                record.page_index,
+                record.benchmark_identity,
+            )
         )
     return records, keys
 
@@ -169,6 +238,16 @@ def main() -> int:
         raise ValueError("SUITE_PAGES_PER_DOCUMENT must be between 1 and 10")
 
     configs = parse_configs(CONFIGS)
+    missing_required = tuple(
+        config for config in REQUIRED_CONFIGS if config not in configs
+    )
+    if missing_required:
+        raise ValueError(
+            f"required configurations are not enabled: {missing_required}"
+        )
+    identities = {
+        config: _benchmark_identity(config) for config in configs
+    }
     store = build_s3_object_store()
     records, completed = _load_existing(store)
 
@@ -189,6 +268,14 @@ def main() -> int:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     jsonl_path = OUTPUT_DIR / "records.jsonl"
+    jsonl_path.write_text(
+        "".join(
+            json.dumps(asdict(record), ensure_ascii=False, sort_keys=True)
+            + "\n"
+            for record in records
+        ),
+        encoding="utf-8",
+    )
     with jsonl_path.open("a", encoding="utf-8") as stream:
         document_index = 0
         for object_key in keys:
@@ -209,7 +296,13 @@ def main() -> int:
             source_sha256 = hashlib.sha256(source).hexdigest()
             for page in pages:
                 for config in configs:
-                    key = resume_key(config, source_sha256, page.page_index)
+                    benchmark_identity = identities[config]
+                    key = resume_key(
+                        config,
+                        source_sha256,
+                        page.page_index,
+                        benchmark_identity,
+                    )
                     if key in completed:
                         continue
                     started = time.perf_counter()
@@ -249,6 +342,7 @@ def main() -> int:
                         critical_matched_count=sum(
                             item.matched for item in score.critical.values()
                         ),
+                        benchmark_identity=benchmark_identity,
                     )
                     records.append(record)
                     completed.add(key)
@@ -260,32 +354,70 @@ def main() -> int:
                     )
                     stream.flush()
 
-    report = aggregate_records(records)
+    active_records = [
+        record
+        for record in records
+        if record.config in identities
+        and record.benchmark_identity == identities[record.config]
+    ]
+    report = aggregate_records(active_records)
+    quality_gate = evaluate_quality_gates(
+        report,
+        required_configs=REQUIRED_CONFIGS,
+        thresholds=QUALITY_THRESHOLDS,
+    )
     report_payload = {
-        "schema_version": 1,
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
         "configs": list(configs),
+        "required_configs": list(REQUIRED_CONFIGS),
+        "benchmark_identities": identities,
         "document_limit": DOCUMENT_LIMIT,
         "pages_per_document": PAGES_PER_DOCUMENT,
-        "recorded": len(records),
+        "recorded_current_identity": len(active_records),
+        "checkpoint_record_count": len(records),
         "report": report,
+        "quality_gate": quality_gate,
     }
-    (OUTPUT_DIR / "report.json").write_text(
+    report_bytes = (
         json.dumps(report_payload, indent=2, ensure_ascii=False, sort_keys=True)
-        + "\n",
-        encoding="utf-8",
+        + "\n"
+    ).encode("utf-8")
+    (OUTPUT_DIR / "report.json").write_bytes(report_bytes)
+    summary = format_summary(
+        report,
+        recorded=len(active_records),
+        quality_gate=quality_gate,
     )
-    summary = format_summary(report, recorded=len(records))
     (OUTPUT_DIR / "summary.md").write_text(summary, encoding="utf-8")
     print(summary)
     print(json.dumps(report_payload, indent=2, ensure_ascii=False, sort_keys=True))
 
+    checkpoint_bytes = jsonl_path.read_bytes()
     store.put(
         key=CHECKPOINT_KEY,
-        content=jsonl_path.read_bytes(),
+        content=checkpoint_bytes,
+        content_type="application/x-ndjson",
+        metadata={
+            "recorded": str(len(records)),
+            "schema_version": str(BENCHMARK_SCHEMA_VERSION),
+        },
+    )
+    run_prefix = f"{CHECKPOINT_PREFIX}runs/{_run_id()}/"
+    store.put(
+        key=f"{run_prefix}records.jsonl",
+        content=checkpoint_bytes,
         content_type="application/x-ndjson",
         metadata={"recorded": str(len(records))},
     )
-    return 0
+    store.put(
+        key=f"{run_prefix}report.json",
+        content=report_bytes,
+        content_type="application/json",
+        metadata={
+            "quality_gate_passed": str(bool(quality_gate["passed"])).lower()
+        },
+    )
+    return 0 if quality_gate["passed"] else 2
 
 
 if __name__ == "__main__":
