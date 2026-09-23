@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 
 from jurisnexo.normalization.benchmark_suite import (
+    QualityThresholds,
     SuiteRecord,
     aggregate_records,
     document_aggregates,
-    QualityThresholds,
     evaluate_quality_gates,
     format_summary,
     parse_configs,
@@ -118,14 +118,14 @@ def test_format_summary_includes_configuration_row() -> None:
     summary = format_summary(report, recorded=1)
     assert "pdf_aware" in summary
     assert "mean WER" in summary
-    assert "Recorded page evaluations: 1" in summary
+    assert "Recorded current-identity page evaluations: 1" in summary
 
 
 def test_quality_gate_is_independent_from_report_generation() -> None:
     report = aggregate_records(
         (
-            _record(config="pdf_aware", sha="a" * 64, page=1, wer=0.02),
-            _record(config="pdf_aware", sha="a" * 64, page=2, wer=0.03),
+            _record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),
+            _record(config="pdf_aware", sha="a" * 64, page=2, wer=0.01),
         )
     )
     gate = evaluate_quality_gates(
