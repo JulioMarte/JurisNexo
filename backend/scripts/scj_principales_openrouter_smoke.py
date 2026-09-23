@@ -47,6 +47,9 @@ TEXT_LIMIT = int(os.environ.get("SCJ_PRINCIPALES_OPENROUTER_TEXT_CHARS", "5000")
 MAX_COST_USD = float(
     os.environ.get("SCJ_PRINCIPALES_OPENROUTER_MAX_COST_USD", "0.01")
 )
+DEEPSEEK_THINKING = os.environ.get(
+    "SCJ_PRINCIPALES_OPENROUTER_DEEPSEEK_THINKING", "none"
+)
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 
 
@@ -387,8 +390,8 @@ def main() -> int:
                     + item.excerpt
                 ),
                 json_schema=_deepseek_schema(),
-                max_output_tokens=1200,
-                thinking_level=models.deepseek_reasoning_effort,
+                max_output_tokens=1500,
+                thinking_level=DEEPSEEK_THINKING,
             )
         except ModelProviderError as exc:
             deepseek_error = str(exc)
@@ -400,7 +403,7 @@ def main() -> int:
             deepseek_observation = _deepseek_observation(
                 deepseek_result,
                 latency_ms=deepseek_latency_ms,
-                reasoning_effort=models.deepseek_reasoning_effort,
+                reasoning_effort=DEEPSEEK_THINKING,
             )
             running_cost += deepseek_observation.cost_usd or 0.0
         if running_cost > MAX_COST_USD:
@@ -447,7 +450,7 @@ def main() -> int:
         "model_call_count": 1 + len(results),
         "jev_batch": asdict(jev_batch),
         "deepseek_model": models.deepseek_model,
-        "deepseek_reasoning_effort": models.deepseek_reasoning_effort,
+        "deepseek_structured_thinking": DEEPSEEK_THINKING,
         "text_char_limit_per_case": TEXT_LIMIT,
         "max_cost_usd": MAX_COST_USD,
         "observed_cost_usd": running_cost,

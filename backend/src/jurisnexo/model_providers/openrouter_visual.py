@@ -29,8 +29,10 @@ class OpenRouterVisualModelProvider:
             raise ValueError("OpenRouter API key is required for live calls")
         if not self.model.strip():
             raise ValueError("visual model is required")
-        if self.reasoning_effort not in {"high", "xhigh"}:
-            raise ValueError("visual reasoning_effort must be high or xhigh")
+        if self.reasoning_effort not in {"none", "high", "xhigh"}:
+            raise ValueError(
+                "visual reasoning_effort must be none, high or xhigh"
+            )
 
     def verify_image_text(
         self,
@@ -68,9 +70,10 @@ class OpenRouterVisualModelProvider:
                 },
             },
             "provider": {"sort": "price", "require_parameters": True},
-            "reasoning": {"effort": self.reasoning_effort},
             "usage": {"include": True},
         }
+        if self.reasoning_effort != "none":
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         request = Request(
             url=f"{self.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload).encode(),
