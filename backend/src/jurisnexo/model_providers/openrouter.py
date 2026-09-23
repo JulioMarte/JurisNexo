@@ -180,10 +180,9 @@ class OpenRouterStructuredModelProvider:
                     },
                 }
             ]
-            payload["tool_choice"] = {
-                "type": "function",
-                "function": {"name": name},
-            }
+            # With exactly one tool, "required" is sufficient and is more
+            # portable across OpenRouter providers than forcing a named tool.
+            payload["tool_choice"] = "required"
             return
         if self.structured_mode == "json_object":
             payload["response_format"] = {"type": "json_object"}
