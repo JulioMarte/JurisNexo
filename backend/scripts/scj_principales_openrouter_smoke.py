@@ -338,6 +338,7 @@ def main() -> int:
         base_url=openrouter.base_url,
         structured_mode=models.deepseek_structured_mode,
         provider_order=provider_order,
+        allow_provider_fallbacks=models.deepseek_allow_provider_fallbacks,
     )
     normalizer = DoclingStructuralNormalizer(
         ocr_language_tags=("iso:es",),
@@ -466,6 +467,9 @@ def main() -> int:
         "deepseek_structured_thinking": DEEPSEEK_THINKING,
         "deepseek_structured_mode": models.deepseek_structured_mode,
         "deepseek_provider_order": list(provider_order),
+        "deepseek_allow_provider_fallbacks": (
+            models.deepseek_allow_provider_fallbacks
+        ),
         "text_char_limit_per_case": TEXT_LIMIT,
         "max_cost_usd": MAX_COST_USD,
         "observed_cost_usd": running_cost,
