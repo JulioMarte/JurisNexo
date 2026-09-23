@@ -39,6 +39,12 @@ jobs:
       SUITE_PAGES_PER_DOCUMENT: "2"
       SUITE_MAX_PAGES_TO_SCAN: "120"
       SUITE_RESUME: "1"
+      SUITE_REQUIRED_CONFIGS: "pdf_aware"
+      SUITE_MAX_MEAN_WER: "0.10"
+      SUITE_MIN_CONTENT_RECALL: "0.98"
+      SUITE_MIN_CONTENT_PRECISION: "0.98"
+      SUITE_MIN_CRITICAL_RECALL: "1.0"
+      SUITE_MIN_DOCUMENT_PASS_RATE: "1.0"
     steps:
       - uses: actions/checkout@v6
 
