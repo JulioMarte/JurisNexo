@@ -7,6 +7,7 @@ from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from jurisnexo.model_providers.chat_message import extract_chat_message_text
 from jurisnexo.model_providers.contracts import (
     JsonObject,
     ModelProviderError,
@@ -101,9 +102,7 @@ class OpenRouterVisualModelProvider:
             choices = cast(list[object], choices_raw)
             choice = _json_object_value(choices[0], "choice")
             message = _json_object_value(choice["message"], "message")
-            content = message["content"]
-            if not isinstance(content, str):
-                raise TypeError("message content is not text")
+            content = extract_chat_message_text(message)
             value = cast(JsonObject, json.loads(content))
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise ModelProviderError(
