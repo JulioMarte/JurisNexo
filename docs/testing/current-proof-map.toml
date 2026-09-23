@@ -439,6 +439,16 @@ path = "benchmark/normalization/evaluate_scj_principales_pdf_policy_holdout.py"
 evidence = ["benchmark"]
 
 [[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/integration/test_normalization_model_evidence_persistence.py"
+evidence = ["invariant", "integration", "provenance"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_gold.py"
+evidence = ["unit", "contract"]
+
+[[proofs]]
 guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 path = "backend/tests/architecture/test_normalization_source_agnostic.py"
 evidence = ["fitness"]
@@ -455,5 +465,5 @@ evidence = ["integration"]
 
 [[gaps]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
-missing_evidence = ["integration"]
-reason = "Evidence/search separation and append-only persistence are proven, and bounded live JEV decision behavior is benchmarked. What remains unproven is durable end-to-end persistence of live JEV and visual-verifier observations/corrections through the supported normalization execution path."
+missing_evidence = ["benchmark"]
+reason = "Durable append-only persistence of JEV/visual observations and proposed corrections through the supported normalization path is now proven against real PostgreSQL with provider doubles at the external model boundary (executor + shadow model-evidence stage + real ledger), including that a proposed correction never becomes accepted evidence on its own. What remains unproven is a real OpenRouter provider run flowing through that path: the bounded live JEV/visual smokes recorded provider_structured_output_failed, so live model evidence was not persisted."
