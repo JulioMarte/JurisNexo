@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader, PdfWriter
+from scj_page_selection import has_native_text, select_reference_page
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
@@ -48,47 +49,6 @@ MIN_HOLDOUT_CRITICAL_RECALL = float(
 MAX_DIAGNOSTIC_TEXT_CHARS = int(
     os.environ.get("SCJ_PDF_POLICY_MAX_DIAGNOSTIC_TEXT_CHARS", "6000")
 )
-
-# Compiled Principales volumes begin with cover, credits, ISBN and library
-# catalog-card front matter and a table of contents. Selecting the first page
-# with enough native text therefore samples bibliographic front matter, never a
-# judgment, and cannot measure legal-document normalization. Require real
-# adjudicative structure instead.
-_FRONT_MATTER_MARKERS = (
-    "isbn",
-    "coordinación general",
-    "1a. ed.",
-    "r426p",
-    "índice",
-    "indice",
-    "impreso en",
-    "www.poderjudicial.gob.do",
-    "diagramación",
-    "división de publicaciones",
-    "división de jurisprudencia",
-    "catalogación",
-    "edición:",
-    "ejemplares",
-)
-_NATIVE_ARTIFACT = "\ufffe"
-
-
-def _normalize_native_reference(text: str) -> str:
-    # pypdfium2 emits U+FFFE for glyphs it cannot decode (frequently a
-    # line-break hyphen). Removing it avoids charging a reference artifact to
-    # the candidate as a fidelity error.
-    return text.replace(_NATIVE_ARTIFACT, "").strip()
-
-
-def _looks_like_body_page(text: str) -> bool:
-    folded = text.casefold()
-    if any(marker in folded for marker in _FRONT_MATTER_MARKERS):
-        return False
-    if folded.count("considerando") >= 2:
-        return True
-    if "en nombre de la república" in folded:
-        return True
-    return "vistos" in folded and ("falla" in folded or "fallamos" in folded)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,53 +107,14 @@ def _download(store: Any, key: str) -> bytes:
 
 
 def _reference_page(pdf_bytes: bytes) -> tuple[int, str, int] | None:
-    import pypdfium2 as pdfium
-
-    document = pdfium.PdfDocument(pdf_bytes)
-    try:
-        page_count = len(document)
-        page_limit = min(page_count, MAX_PAGES_TO_SCAN)
-        for page_index in range(page_limit):
-            page = document[page_index]
-            try:
-                text_page = page.get_textpage()
-                try:
-                    reference = _normalize_native_reference(
-                        text_page.get_text_range()
-                    )
-                finally:
-                    text_page.close()
-                if len(reference) < MIN_REFERENCE_CHARS:
-                    continue
-                if not _looks_like_body_page(reference):
-                    continue
-                return page_index, reference, page_count
-            finally:
-                page.close()
-    finally:
-        document.close()
-    return None
-
-
-def _has_native_text(pdf_bytes: bytes, probe_pages: int = 3) -> bool:
-    import pypdfium2 as pdfium
-
-    document = pdfium.PdfDocument(pdf_bytes)
-    try:
-        for page_index in range(min(len(document), probe_pages)):
-            page = document[page_index]
-            try:
-                text_page = page.get_textpage()
-                try:
-                    if len(text_page.get_text_range().strip()) >= 200:
-                        return True
-                finally:
-                    text_page.close()
-            finally:
-                page.close()
-    finally:
-        document.close()
-    return False
+    page = select_reference_page(
+        pdf_bytes,
+        min_reference_chars=MIN_REFERENCE_CHARS,
+        max_pages_to_scan=MAX_PAGES_TO_SCAN,
+    )
+    if page is None:
+        return None
+    return page.page_index, page.text, page.document_page_count
 
 
 def _single_page_pdf(pdf_bytes: bytes, page_index: int) -> bytes:
@@ -273,7 +194,7 @@ def main() -> int:
             break
         attempted += 1
         source = _download(store, object_key)
-        if not _has_native_text(source):
+        if not has_native_text(source):
             continue
         reference_page = _reference_page(source)
         if reference_page is None:

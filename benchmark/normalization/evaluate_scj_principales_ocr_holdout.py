@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from scj_page_selection import has_native_text, select_reference_page
+
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.contracts import FormatInspection
@@ -26,7 +28,10 @@ MIN_REFERENCE_CHARS = int(
     os.environ.get("SCJ_NORMALIZATION_HOLDOUT_MIN_REFERENCE_CHARS", "800")
 )
 MAX_PAGES_TO_SCAN = int(
-    os.environ.get("SCJ_NORMALIZATION_HOLDOUT_MAX_PAGES_TO_SCAN", "6")
+    os.environ.get("SCJ_NORMALIZATION_HOLDOUT_MAX_PAGES_TO_SCAN", "120")
+)
+MAX_DOCUMENTS_TO_ATTEMPT = int(
+    os.environ.get("SCJ_NORMALIZATION_HOLDOUT_MAX_DOCUMENTS", "40")
 )
 MAX_HOLDOUT_MEAN_WER = float(
     os.environ.get("SCJ_NORMALIZATION_MAX_HOLDOUT_MEAN_WER", "0.20")
@@ -48,6 +53,7 @@ class OcrCase:
     object_key: str
     source_sha256: str
     page_index: int
+    document_page_count: int
     reference_chars: int
     candidate_chars: int
     character_error_rate: float
@@ -55,6 +61,7 @@ class OcrCase:
     token_content_recall: float
     token_content_precision: float
     token_content_f1: float
+    token_order_preservation: float
     legal_critical_recall: float
     critical_expected_count: int
     critical_matched_count: int
@@ -95,32 +102,34 @@ def _download(store: Any, key: str) -> bytes:
     return payload if isinstance(payload, bytes) else bytes(payload)
 
 
-def _reference_page(pdf_bytes: bytes) -> tuple[int, str, bytes] | None:
+def _reference_page(pdf_bytes: bytes) -> tuple[int, str, bytes, int] | None:
     import pypdfium2 as pdfium
 
+    selected = select_reference_page(
+        pdf_bytes,
+        min_reference_chars=MIN_REFERENCE_CHARS,
+        max_pages_to_scan=MAX_PAGES_TO_SCAN,
+    )
+    if selected is None:
+        return None
     document = pdfium.PdfDocument(pdf_bytes)
     try:
-        page_limit = min(len(document), MAX_PAGES_TO_SCAN)
-        for page_index in range(page_limit):
-            page = document[page_index]
-            try:
-                text_page = page.get_textpage()
-                try:
-                    reference = text_page.get_text_range().strip()
-                finally:
-                    text_page.close()
-                if len(reference) < MIN_REFERENCE_CHARS:
-                    continue
-                bitmap = page.render(scale=1.5)
-                image = bitmap.to_pil()
-                buffer = io.BytesIO()
-                image.save(buffer, format="PNG")
-                return page_index, reference, buffer.getvalue()
-            finally:
-                page.close()
+        page = document[selected.page_index]
+        try:
+            bitmap = page.render(scale=1.5)
+            image = bitmap.to_pil()
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return (
+                selected.page_index,
+                selected.text,
+                buffer.getvalue(),
+                selected.document_page_count,
+            )
+        finally:
+            page.close()
     finally:
         document.close()
-    return None
 
 
 def _critical_payload(score: Any) -> dict[str, dict[str, float | int]]:
@@ -150,14 +159,20 @@ def main() -> int:
     )
 
     cases: list[OcrCase] = []
+    attempted = 0
     for object_key in _list_pdf_keys(store):
         if len(cases) >= TARGET_CASES:
             break
+        if attempted >= MAX_DOCUMENTS_TO_ATTEMPT:
+            break
+        attempted += 1
         source = _download(store, object_key)
+        if not has_native_text(source):
+            continue
         reference_page = _reference_page(source)
         if reference_page is None:
             continue
-        page_index, reference, image = reference_page
+        page_index, reference, image, document_page_count = reference_page
 
         normalized = normalizer.normalize(
             image,
@@ -179,6 +194,7 @@ def main() -> int:
                 object_key=object_key,
                 source_sha256=hashlib.sha256(source).hexdigest(),
                 page_index=page_index,
+                document_page_count=document_page_count,
                 reference_chars=len(reference),
                 candidate_chars=len(candidate),
                 character_error_rate=score.character_error_rate,
@@ -186,6 +202,7 @@ def main() -> int:
                 token_content_recall=score.token_content_recall,
                 token_content_precision=score.token_content_precision,
                 token_content_f1=score.token_content_f1,
+                token_order_preservation=score.token_order_preservation,
                 legal_critical_recall=score.legal_critical_recall,
                 critical_expected_count=sum(
                     item.expected for item in score.critical.values()
@@ -200,7 +217,8 @@ def main() -> int:
 
     if len(cases) < TARGET_CASES:
         raise RuntimeError(
-            f"only {len(cases)} Principales documents exposed suitable native-text pages"
+            f"only {len(cases)} Principales documents exposed a native-text "
+            "judgment page after front matter"
         )
 
     calibration = tuple(case for case in cases if case.split == "calibration")
@@ -230,6 +248,9 @@ def main() -> int:
             "mean_token_content_f1": (
                 sum(item.token_content_f1 for item in items) / len(items)
             ),
+            "mean_token_order_preservation": (
+                sum(item.token_order_preservation for item in items) / len(items)
+            ),
             "critical_expected_count": critical_expected,
             "critical_matched_count": critical_matched,
             "aggregate_legal_critical_recall": (
@@ -244,12 +265,15 @@ def main() -> int:
         "source": "scj",
         "collection": "principales-sentencias",
         "gold_method": (
-            "official born-digital PDF native text used as reference; "
-            "the same page is rendered to PNG and OCR-normalized"
+            "official born-digital PDF native text used as reference; the "
+            "selected page must expose real adjudicative structure (not cover, "
+            "credits, ISBN/catalog-card front matter or table of contents); "
+            "that same page is rendered to PNG and OCR-normalized"
         ),
         "limitations": (
-            "This is source-derived OCR gold for born-digital Principales pages. "
-            "It does not replace human-verified gold for historically scanned material."
+            "This is source-derived OCR gold for born-digital Principales "
+            "judgment pages. It does not replace human-verified gold for "
+            "historically scanned material."
         ),
         "calibration": aggregate(calibration),
         "holdout": aggregate(holdout),

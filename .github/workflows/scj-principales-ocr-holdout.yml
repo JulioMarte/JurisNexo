@@ -7,6 +7,7 @@ on:
       - development
     paths:
       - "benchmark/normalization/evaluate_scj_principales_ocr_holdout.py"
+      - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/normalization/gold.py"
       - ".github/workflows/scj-principales-ocr-holdout.yml"
   workflow_dispatch:
@@ -32,6 +33,8 @@ jobs:
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
       SCJ_NORMALIZATION_HOLDOUT_CASES: "6"
       SCJ_NORMALIZATION_HOLDOUT_MIN_REFERENCE_CHARS: "800"
+      SCJ_NORMALIZATION_HOLDOUT_MAX_PAGES_TO_SCAN: "120"
+      SCJ_NORMALIZATION_HOLDOUT_MAX_DOCUMENTS: "40"
     steps:
       - uses: actions/checkout@v6
 
