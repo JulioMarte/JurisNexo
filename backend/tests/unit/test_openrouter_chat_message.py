@@ -5,6 +5,7 @@ import pytest
 from jurisnexo.model_providers.chat_message import (
     extract_chat_message_text,
     extract_structured_object,
+    validate_structured_object,
 )
 
 
@@ -95,3 +96,41 @@ def test_structured_object_uses_tool_call_arguments() -> None:
         "corrected_text": None,
         "material_differences": [],
     }
+
+
+def test_validate_structured_object_accepts_current_visual_shape() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "matches": {"type": "boolean"},
+            "corrected_text": {"type": ["string", "null"]},
+            "material_differences": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 2,
+            },
+        },
+        "required": ["matches", "corrected_text", "material_differences"],
+        "additionalProperties": False,
+    }
+    validate_structured_object(
+        {
+            "matches": True,
+            "corrected_text": None,
+            "material_differences": [],
+        },
+        schema,
+    )
+
+
+def test_validate_structured_object_rejects_missing_and_extra_fields() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+        "additionalProperties": False,
+    }
+    with pytest.raises(ValueError, match="missing required"):
+        validate_structured_object({}, schema)
+    with pytest.raises(ValueError, match="unexpected keys"):
+        validate_structured_object({"ok": True, "extra": 1}, schema)
