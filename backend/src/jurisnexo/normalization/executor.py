@@ -16,7 +16,23 @@ class SourceByteReader(Protocol):
 
 
 class ItemCheckpoint(Protocol):
-    status: str
+    @property
+    def status(self) -> str: ...
+
+
+class ModelEvidenceStage(Protocol):
+    """Supported shadow stage for persisting model-derived normalization evidence."""
+
+    def capture_text_quality(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+        run_item_id: str,
+        artifact_id: str,
+        text: str,
+        context: dict[str, object],
+    ) -> object: ...
 
 
 class NormalizationLedger(Protocol):
@@ -159,6 +175,7 @@ class NormalizationExecutor:
     pipeline_version: str
     config_sha256: str
     circuit_breaker: CircuitBreaker
+    model_evidence: ModelEvidenceStage | None = None
 
     def execute(
         self,
@@ -337,6 +354,18 @@ class NormalizationExecutor:
                         derivation_type="resolve_evidence_text",
                         parameters={"policy": "deterministic-native-structural-text"},
                     )
+                    if self.model_evidence is not None:
+                        self.model_evidence.capture_text_quality(
+                            scope_id=scope_id,
+                            run_id=run_id,
+                            run_item_id=item_id,
+                            artifact_id=resolved_artifact_id,
+                            text=text,
+                            context={
+                                "source_sha256": planned.source_sha256,
+                                "object_key": planned.object_key,
+                            },
+                        )
                     self.ledger.mark_normalized(
                         scope_id=scope_id,
                         item_id=item_id,
