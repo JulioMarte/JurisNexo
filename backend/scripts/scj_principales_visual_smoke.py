@@ -228,6 +228,7 @@ def main() -> int:
         reasoning_effort=VISUAL_REASONING,
         structured_mode=models.deepseek_structured_mode,
         provider_order=provider_order,
+        allow_provider_fallbacks=models.deepseek_allow_provider_fallbacks,
     )
 
     good: VisualCaseResult | None = None
@@ -301,6 +302,7 @@ def main() -> int:
         "reasoning_effort": VISUAL_REASONING,
         "structured_mode": models.deepseek_structured_mode,
         "provider_order": list(provider_order),
+        "allow_provider_fallbacks": models.deepseek_allow_provider_fallbacks,
         "model_call_count": len(cases),
         "observed_cost_usd": running_cost,
         "max_cost_usd": MAX_COST_USD,
