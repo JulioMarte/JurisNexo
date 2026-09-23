@@ -22,10 +22,7 @@ def test_text_provider_tool_mode_forces_function_call() -> None:
     payload: dict[str, object] = {}
     provider._apply_structured_output(payload=payload, json_schema=SCHEMA)
     assert "response_format" not in payload
-    assert payload["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "jurisnexo_structured_output"},
-    }
+    assert payload["tool_choice"] == "required"
     assert provider._provider_routing() == {
         "require_parameters": True,
         "allow_fallbacks": True,
