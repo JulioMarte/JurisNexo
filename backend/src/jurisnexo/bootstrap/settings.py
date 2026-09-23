@@ -51,6 +51,8 @@ class NormalizationModelSettings(BaseSettings):
     jev_model: str = "~typesafe/jev-latest"
     deepseek_model: str = "deepseek/deepseek-v4.1-flash"
     deepseek_reasoning_effort: Literal["high", "xhigh"] = "high"
+    deepseek_structured_mode: Literal["tool", "json_schema", "json_object"] = "tool"
+    deepseek_provider_order: str = ""
     visual_model: str | None = None
 
 
