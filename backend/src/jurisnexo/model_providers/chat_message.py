@@ -40,6 +40,23 @@ def extract_structured_object(message: Mapping[str, object]) -> JsonObject:
     if isinstance(parsed, dict):
         return cast(JsonObject, parsed)
 
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for tool_call in cast(list[object], tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = cast(dict[str, object], tool_call).get("function")
+            if not isinstance(function, dict):
+                continue
+            arguments = cast(dict[str, object], function).get("arguments")
+            if isinstance(arguments, dict):
+                return cast(JsonObject, arguments)
+            if isinstance(arguments, str):
+                loaded: object = json.loads(arguments)
+                if not isinstance(loaded, dict):
+                    raise TypeError("tool arguments are not a JSON object")
+                return cast(JsonObject, loaded)
+
     text = extract_chat_message_text(message)
     candidate = _json_candidate(text)
     try:
