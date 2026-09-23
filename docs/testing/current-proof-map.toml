@@ -434,6 +434,11 @@ path = "benchmark/normalization/evaluate_jev_principales.py"
 evidence = ["benchmark"]
 
 [[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/evaluate_scj_principales_pdf_policy_holdout.py"
+evidence = ["benchmark"]
+
+[[proofs]]
 guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 path = "backend/tests/architecture/test_normalization_source_agnostic.py"
 evidence = ["fitness"]

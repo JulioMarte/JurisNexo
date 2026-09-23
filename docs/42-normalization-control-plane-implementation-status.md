@@ -18,7 +18,7 @@ This document tracks implementation and proof status for the V3 normalization co
 | 0. Substrate/provenance | IMPLEMENTED | PostgreSQL integration, baseline equivalence and lineage invariants exist; exact-head CI remains the merge authority |
 | 1. Docling + Tika spike | IMPLEMENTED | Engine spike covers born-digital/scanned/mixed PDF, DOCX, RTF, HTML and corrupt PDF |
 | 2. Replaceability boundaries | IMPLEMENTED | Architecture fitness + protocol/unit proof |
-| 3. Gold Set/contracts | IMPLEMENTED IN PART | Generic fixtures and legal-critical CER/WER/token scoring exist; real SCJ calibration/holdout semantic gold remains PENDING EVIDENCE |
+| 3. Gold Set/contracts | IMPLEMENTED IN PART | Generic fixtures and legal-critical CER/WER/token/order scoring exist. A bounded real-source SCJ Principales judgment-page calibration/holdout now exists for the born-digital PDF-aware route (3 calibration + 3 holdout pages); broader frozen and adversarial gold remains PENDING EVIDENCE |
 | 4. Planner/durable execution | IMPLEMENTED | deterministic planning, idempotency, durable checkpoints, retry classes, circuit breaker and interrupted-run resume exist |
 | 5. Docling/Tika production adapters | IMPLEMENTED | object-storage derivatives, lineage, PDF-aware OCR, language configuration and optional isolated Docling subprocess exist |
 | 6. Deterministic QA | IMPLEMENTED | text health/legal-critical signals exist; page/region OCR behavior uses Docling PDF-aware OCR; semantic quality thresholds remain benchmark-owned |
@@ -26,7 +26,7 @@ This document tracks implementation and proof status for the V3 normalization co
 | 8. Visual verification | IMPLEMENTED | provider-neutral verifier, DeepSeek V4.1 Flash visual adapter path, correction proposals and bounded two-call smoke exist; live benchmark remains PENDING EVIDENCE |
 | 9. Resolved views/sentinel/workspace | IMPLEMENTED | evidence/search separation, stable workspace, deterministic sentinel sampling and read-only GC audit exist |
 | 10. Reconciliation | IMPLEMENTED | fail-closed plan/DB/lineage/storage/quality reconciliation and immutable normalization manifest exist; PostgreSQL + S3-compatible integration proof exists |
-| 11. SCJ Principales rollout | IMPLEMENTED IN PART | real-source canary/smoke infrastructure exists; calibration, holdout, adversarial sample, broader canary/full rollout and OOD promotion evidence remain PENDING |
+| 11. SCJ Principales rollout | IMPLEMENTED IN PART | real-source canary/smoke infrastructure exists and the bounded born-digital PDF-aware production holdout passes on real judgment pages (holdout WER ≈0.022, content recall ≈0.993 / precision ≈0.998, order-preservation ≈0.987, legal-critical recall 1.0); adversarial sample, broader canary/full rollout and OOD promotion evidence remain PENDING |
 | 12. Second source | PROVEN | Official TC/0001/26 passed the same Tika + Docling normalization core; source-specific logic remains confined to acquisition |
 
 ## Current engine policy
@@ -36,6 +36,18 @@ This document tracks implementation and proof status for the V3 normalization co
 - PDF OCR uses Docling PDF-aware layout-region routing so native PDF cells are not blindly rasterized.
 - OCR languages are source/jurisdiction configuration, not normalization-core identity. Dominican SCJ/TC canaries use `iso:es`.
 - The optional isolated Docling worker enforces timeout, source/output byte limits, temp cleanup and strips DB/S3/OpenRouter credentials from the parser subprocess. Container/job isolation remains responsible for kernel/network-level sandboxing.
+
+## Bounded SCJ Principales benchmark evidence
+
+- The born-digital Principales production route (extract the native vector-text page, run `PDF_AWARE_LAYOUT_REGIONS`, resolve evidence text) was measured on real judgment pages, not front matter.
+- Live run `35811462583` (head `cc6eb85`): 6 judgment pages across 6 volumes, split calibration/holdout by case order. Holdout mean WER ≈0.022, token content recall ≈0.993, precision ≈0.998, mean order-preservation ≈0.987 and legal-critical recall 1.0; the gate passed.
+- The full-page OCR fallback diagnostic on the same pages (run `35811462579`) did not pass its thresholds: holdout WER ≈0.120, content recall ≈0.924, legal-critical recall ≈0.857. This supports keeping born-digital native/PDF-aware extraction ahead of rasterizing native text; full-page OCR remains diagnostic for scanned material.
+- `score_text_fidelity` now also reports `token_order_preservation` (longest-common-subsequence ratio of content tokens) so reordering can be distinguished from content loss or edits.
+
+### Benchmark-validity correction
+
+- An earlier PDF-policy holdout run selected the first page with ≥800 native characters. In these compiled volumes that page is cover/credits/ISBN/library catalog-card front matter or a table of contents, so the earlier `mean_word_error_rate ≈0.575` failure measured block ordering of non-legal front matter, not normalization of legal text. That run is retained as historical context, not as a quality verdict on the route.
+- Both holdout lanes now select pages that expose real adjudicative structure (reject ISBN/catalog/`ÍNDICE` front matter; require adjudicative markers) through `benchmark/normalization/scj_page_selection.py`, and export reference/candidate text for direct reading-order adjudication.
 
 ## Current model policy
 
@@ -73,7 +85,8 @@ See `43-jev-system-one-engineering-guidelines.md` for the canonical System One d
 - interrupted running items can be resumed against the same manifest/pipeline/config identity;
 - terminal success is gated behind reconciliation and manifest publication;
 - source adapters do not own parser/OCR engines;
-- downstream workspace APIs do not expose parser/provider internals.
+- downstream workspace APIs do not expose parser/provider internals;
+- the born-digital PDF-aware Principales route passed a bounded real judgment-page calibration/holdout while full-page OCR did not.
 
 ## Claims that must NOT be made yet
 
@@ -90,7 +103,7 @@ Do not claim any of the following until the corresponding evidence has passed:
 ## Remaining closure sequence
 
 1. obtain exact-head deterministic CI green;
-2. execute the labeled OCR calibration/holdout lane on real Principales pages;
+2. keep the full-page OCR lane diagnostic-only and widen the born-digital judgment-page holdout before rollout;
 3. expand JEV calibration/holdout to promotion-sized source-verified samples while preserving split independence;
 4. run one explicitly labeled JEV + DeepSeek challenger smoke;
 5. run one explicitly labeled two-call visual verifier smoke;
