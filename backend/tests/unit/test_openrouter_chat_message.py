@@ -75,3 +75,23 @@ def test_structured_object_rejects_non_object_json() -> None:
 def test_structured_object_rejects_non_json_text() -> None:
     with pytest.raises(ValueError):
         extract_structured_object({"content": "no json here"})
+
+
+def test_structured_object_uses_tool_call_arguments() -> None:
+    message = {
+        "content": "",
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "jurisnexo_visual_verification",
+                    "arguments": '{"matches": true, "corrected_text": null, "material_differences": []}',
+                },
+            }
+        ],
+    }
+    assert extract_structured_object(message) == {
+        "matches": True,
+        "corrected_text": None,
+        "material_differences": [],
+    }
