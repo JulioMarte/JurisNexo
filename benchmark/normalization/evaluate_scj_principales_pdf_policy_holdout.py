@@ -8,14 +8,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from pypdf import PdfReader, PdfWriter
-from scj_page_selection import has_native_text, select_reference_page
-
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
 from jurisnexo.normalization.quality import extract_text_from_structural_json
+from pypdf import PdfReader, PdfWriter
+from scj_page_selection import has_native_text, select_reference_pages
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 OUTPUT = Path(
@@ -24,7 +23,10 @@ OUTPUT = Path(
         ".artifacts/scj-principales-pdf-policy-holdout.json",
     )
 )
-TARGET_CASES = int(os.environ.get("SCJ_PDF_POLICY_HOLDOUT_CASES", "6"))
+PAGES_PER_DOCUMENT = int(
+    os.environ.get("SCJ_PDF_POLICY_PAGES_PER_DOCUMENT", "2")
+)
+TARGET_DOCUMENTS = int(os.environ.get("SCJ_PDF_POLICY_HOLDOUT_CASES", "6"))
 MIN_REFERENCE_CHARS = int(
     os.environ.get("SCJ_PDF_POLICY_HOLDOUT_MIN_REFERENCE_CHARS", "800")
 )
@@ -106,17 +108,6 @@ def _download(store: Any, key: str) -> bytes:
     return payload if isinstance(payload, bytes) else bytes(payload)
 
 
-def _reference_page(pdf_bytes: bytes) -> tuple[int, str, int] | None:
-    page = select_reference_page(
-        pdf_bytes,
-        min_reference_chars=MIN_REFERENCE_CHARS,
-        max_pages_to_scan=MAX_PAGES_TO_SCAN,
-    )
-    if page is None:
-        return None
-    return page.page_index, page.text, page.document_page_count
-
-
 def _single_page_pdf(pdf_bytes: bytes, page_index: int) -> bytes:
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
@@ -173,9 +164,53 @@ def _aggregate(items: tuple[PdfPolicyCase, ...]) -> dict[str, float | int]:
     }
 
 
+def _document_metrics(
+    cases: list[PdfPolicyCase],
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[PdfPolicyCase]] = {}
+    for case in cases:
+        grouped.setdefault(case.source_sha256, []).append(case)
+    documents: list[dict[str, object]] = []
+    for sha256, document_cases in grouped.items():
+        expected = sum(case.critical_expected_count for case in document_cases)
+        matched = sum(case.critical_matched_count for case in document_cases)
+        documents.append(
+            {
+                "source_sha256": sha256,
+                "split": document_cases[0].split,
+                "page_count": len(document_cases),
+                "worst_page_word_error_rate": max(
+                    case.word_error_rate for case in document_cases
+                ),
+                "worst_page_character_error_rate": max(
+                    case.character_error_rate for case in document_cases
+                ),
+                "pages_with_missing_critical": sum(
+                    1
+                    for case in document_cases
+                    if case.critical_matched_count
+                    < case.critical_expected_count
+                ),
+                "aggregate_legal_critical_recall": (
+                    1.0
+                    if expected == 0
+                    else matched / expected
+                ),
+            }
+        )
+    documents.sort(key=lambda item: str(item["source_sha256"]))
+    return documents
+
+
 def main() -> int:
-    if TARGET_CASES < 4 or TARGET_CASES > 12:
-        raise ValueError("SCJ_PDF_POLICY_HOLDOUT_CASES must be between 4 and 12")
+    if TARGET_DOCUMENTS < 2 or TARGET_DOCUMENTS > 12:
+        raise ValueError(
+            "SCJ_PDF_POLICY_HOLDOUT_CASES (documents) must be between 2 and 12"
+        )
+    if PAGES_PER_DOCUMENT < 1 or PAGES_PER_DOCUMENT > 5:
+        raise ValueError(
+            "SCJ_PDF_POLICY_PAGES_PER_DOCUMENT must be between 1 and 5"
+        )
     if MIN_REFERENCE_CHARS < 200:
         raise ValueError("minimum reference chars must be at least 200")
 
@@ -187,8 +222,9 @@ def main() -> int:
 
     cases: list[PdfPolicyCase] = []
     attempted = 0
+    document_index = 0
     for object_key in _list_pdf_keys(store):
-        if len(cases) >= TARGET_CASES:
+        if document_index >= TARGET_DOCUMENTS:
             break
         if attempted >= MAX_DOCUMENTS_TO_ATTEMPT:
             break
@@ -196,58 +232,71 @@ def main() -> int:
         source = _download(store, object_key)
         if not has_native_text(source):
             continue
-        reference_page = _reference_page(source)
-        if reference_page is None:
+        pages = select_reference_pages(
+            source,
+            min_reference_chars=MIN_REFERENCE_CHARS,
+            max_pages_to_scan=MAX_PAGES_TO_SCAN,
+            max_pages_per_document=PAGES_PER_DOCUMENT,
+        )
+        if not pages:
             continue
-        page_index, reference, document_page_count = reference_page
-        page_pdf = _single_page_pdf(source, page_index)
+        split = _split(document_index)
+        document_index += 1
+        source_sha256 = hashlib.sha256(source).hexdigest()
+        for page in pages:
+            page_pdf = _single_page_pdf(source, page.page_index)
 
-        normalized = normalizer.normalize(
-            page_pdf,
-            FormatInspection(
-                media_type="application/pdf",
-                detected_format="application/pdf",
-                metadata={},
-            ),
-            filename=f"{Path(object_key).stem}-p{page_index + 1}.pdf",
-        )
-        if normalized.metadata.get("ocr_policy") != "pdf_aware_layout_regions":
-            raise RuntimeError("production PDF holdout did not use PDF-aware OCR")
-        candidate = extract_text_from_structural_json(normalized.payload)
-        score = score_text_fidelity(
-            expected_text=reference,
-            candidate_text=candidate,
-        )
-        cases.append(
-            PdfPolicyCase(
-                split=_split(len(cases)),
-                object_key=object_key,
-                source_sha256=hashlib.sha256(source).hexdigest(),
-                page_index=page_index,
-                document_page_count=document_page_count,
-                reference_chars=len(reference),
-                candidate_chars=len(candidate),
-                character_error_rate=score.character_error_rate,
-                word_error_rate=score.word_error_rate,
-                token_content_recall=score.token_content_recall,
-                token_content_precision=score.token_content_precision,
-                token_content_f1=score.token_content_f1,
-                token_order_preservation=score.token_order_preservation,
-                legal_critical_recall=score.legal_critical_recall,
-                critical_expected_count=sum(
-                    item.expected for item in score.critical.values()
+            normalized = normalizer.normalize(
+                page_pdf,
+                FormatInspection(
+                    media_type="application/pdf",
+                    detected_format="application/pdf",
+                    metadata={},
                 ),
-                critical_matched_count=sum(
-                    item.matched for item in score.critical.values()
-                ),
-                reference_text=_diagnostic_text(reference),
-                candidate_text=_diagnostic_text(candidate),
+                filename=f"{Path(object_key).stem}-p{page.page_index + 1}.pdf",
             )
-        )
+            if (
+                normalized.metadata.get("ocr_policy")
+                != "pdf_aware_layout_regions"
+            ):
+                raise RuntimeError(
+                    "production PDF holdout did not use PDF-aware OCR"
+                )
+            candidate = extract_text_from_structural_json(normalized.payload)
+            score = score_text_fidelity(
+                expected_text=page.text,
+                candidate_text=candidate,
+            )
+            cases.append(
+                PdfPolicyCase(
+                    split=split,
+                    object_key=object_key,
+                    source_sha256=source_sha256,
+                    page_index=page.page_index,
+                    document_page_count=page.document_page_count,
+                    reference_chars=len(page.text),
+                    candidate_chars=len(candidate),
+                    character_error_rate=score.character_error_rate,
+                    word_error_rate=score.word_error_rate,
+                    token_content_recall=score.token_content_recall,
+                    token_content_precision=score.token_content_precision,
+                    token_content_f1=score.token_content_f1,
+                    token_order_preservation=score.token_order_preservation,
+                    legal_critical_recall=score.legal_critical_recall,
+                    critical_expected_count=sum(
+                        item.expected for item in score.critical.values()
+                    ),
+                    critical_matched_count=sum(
+                        item.matched for item in score.critical.values()
+                    ),
+                    reference_text=_diagnostic_text(page.text),
+                    candidate_text=_diagnostic_text(candidate),
+                )
+            )
 
-    if len(cases) < TARGET_CASES:
+    if document_index < TARGET_DOCUMENTS:
         raise RuntimeError(
-            f"only {len(cases)} Principales PDFs exposed a native-text "
+            f"only {document_index} Principales PDFs exposed a native-text "
             "judgment page after front matter"
         )
 
@@ -255,6 +304,25 @@ def main() -> int:
     holdout = tuple(case for case in cases if case.split == "holdout")
     calibration_metrics = _aggregate(calibration)
     holdout_metrics = _aggregate(holdout)
+    documents = _document_metrics(cases)
+    holdout_documents = tuple(
+        document for document in documents if document["split"] == "holdout"
+    )
+    documents_with_critical_loss = sum(
+        1
+        for document in holdout_documents
+        if int(document["pages_with_missing_critical"]) > 0
+    )
+    document_pass_rate = (
+        1.0
+        if not holdout_documents
+        else sum(
+            1
+            for document in holdout_documents
+            if int(document["pages_with_missing_critical"]) == 0
+        )
+        / len(holdout_documents)
+    )
 
     checks = {
         "mean_word_error_rate": (
@@ -273,21 +341,33 @@ def main() -> int:
             float(holdout_metrics["aggregate_legal_critical_recall"])
             >= MIN_HOLDOUT_CRITICAL_RECALL
         ),
+        "holdout_documents_with_critical_loss": (
+            documents_with_critical_loss == 0
+        ),
     }
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "scj",
         "collection": "principales-sentencias",
         "route_under_test": "production_pdf_aware",
+        "pages_per_document": PAGES_PER_DOCUMENT,
+        "document_count": document_index,
         "gold_method": (
-            "official born-digital PDF native text is the page reference; the "
+            "official born-digital PDF native text is the page reference; each "
             "selected page must expose real adjudicative structure (not cover, "
-            "credits, ISBN/catalog-card front matter or table of contents); "
-            "that same vector-text page is extracted as a one-page PDF and "
+            "credits, ISBN/catalog-card front matter or table of contents), and "
+            "up to pages_per_document pages spread across the document are "
+            "sampled; each vector-text page is extracted as a one-page PDF and "
             "normalized through the production PDF-aware Docling policy"
         ),
         "calibration": calibration_metrics,
         "holdout": holdout_metrics,
+        "document_metrics": {
+            "holdout_document_count": len(holdout_documents),
+            "holdout_documents_with_critical_loss": documents_with_critical_loss,
+            "holdout_document_pass_rate": document_pass_rate,
+        },
+        "documents": documents,
         "quality_gate": {
             "passed": all(checks.values()),
             "checks": checks,
@@ -300,6 +380,7 @@ def main() -> int:
                 "min_aggregate_legal_critical_recall": (
                     MIN_HOLDOUT_CRITICAL_RECALL
                 ),
+                "max_holdout_documents_with_critical_loss": 0,
             },
         },
         "cases": [asdict(case) for case in cases],
@@ -311,8 +392,9 @@ def main() -> int:
             "token_content_recall/precision means content is present but "
             "reordered. The reference is pypdfium2 content-stream order, "
             "which is not guaranteed to equal logical reading order. "
-            "document_page_count and page_index record where the selected "
-            "judgment page sits in the source volume."
+            "document_metrics tracks worst-page error and any critical loss per "
+            "document, because a perfect page average can still hide a document "
+            "whose dispositive identifier was damaged."
         ),
         "limitations": (
             "This proves the born-digital Principales production route only. "

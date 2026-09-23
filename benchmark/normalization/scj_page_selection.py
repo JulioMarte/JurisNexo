@@ -78,12 +78,40 @@ def select_reference_page(
     min_reference_chars: int,
     max_pages_to_scan: int,
 ) -> ReferencePage | None:
+    pages = select_reference_pages(
+        pdf_bytes,
+        min_reference_chars=min_reference_chars,
+        max_pages_to_scan=max_pages_to_scan,
+        max_pages_per_document=1,
+    )
+    return pages[0] if pages else None
+
+
+def select_reference_pages(
+    pdf_bytes: bytes,
+    *,
+    min_reference_chars: int,
+    max_pages_to_scan: int,
+    max_pages_per_document: int,
+) -> tuple[ReferencePage, ...]:
+    """Select up to ``max_pages_per_document`` judgment pages, spread out.
+
+    Sampling more than the first qualifying page reduces the selection bias of
+    "first clean page" and lets callers measure document-level worst-case
+    fidelity. The selected pages are spread across the qualifying range so the
+    document is not represented only by its opening page.
+    """
+
+    if max_pages_per_document < 1:
+        raise ValueError("max_pages_per_document must be at least 1")
+
     import pypdfium2 as pdfium
 
     document = pdfium.PdfDocument(pdf_bytes)
     try:
         page_count = len(document)
         page_limit = min(page_count, max_pages_to_scan)
+        candidates: list[ReferencePage] = []
         for page_index in range(page_limit):
             page = document[page_index]
             try:
@@ -98,13 +126,24 @@ def select_reference_page(
                     continue
                 if not looks_like_body_page(reference):
                     continue
-                return ReferencePage(
-                    page_index=page_index,
-                    document_page_count=page_count,
-                    text=reference,
+                candidates.append(
+                    ReferencePage(
+                        page_index=page_index,
+                        document_page_count=page_count,
+                        text=reference,
+                    )
                 )
             finally:
                 page.close()
     finally:
         document.close()
-    return None
+
+    if len(candidates) <= max_pages_per_document:
+        return tuple(candidates)
+    if max_pages_per_document == 1:
+        return (candidates[0],)
+    step = (len(candidates) - 1) / (max_pages_per_document - 1)
+    indices = sorted(
+        {round(step * offset) for offset in range(max_pages_per_document)}
+    )
+    return tuple(candidates[index] for index in indices)

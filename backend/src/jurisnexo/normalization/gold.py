@@ -19,6 +19,28 @@ _CRITICAL_PATTERNS: dict[str, re.Pattern[str]] = {
     "law": re.compile(
         r"(?i)\bley\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"
     ),
+    "decree": re.compile(
+        r"(?i)\bdecreto(?:-ley)?\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"
+    ),
+    "resolution": re.compile(
+        r"(?i)\bresoluci[oó]n\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"
+    ),
+    "gaceta": re.compile(
+        r"(?i)\bgaceta\s+oficial\b"
+    ),
+    "rnc": re.compile(
+        r"(?i)\bRNC\b[\s:.#-]*\d{9}\b"
+    ),
+    "cedula": re.compile(
+        r"(?i)\bc[eé]dula\b[\s:.#-]*\d{3}-?\d{7}-?\d\b"
+    ),
+    "matricula": re.compile(
+        r"(?i)\bmatr[ií]cula\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"
+    ),
+    "cadastre": re.compile(
+        r"(?i)\b(?:parcela|distrito catastral|designaci[oó]n catastral)\b"
+        r"[^\n]{0,40}?\d[\d-]*"
+    ),
     "case_id": re.compile(
         r"(?i)\b(?:TC|SCJ|expediente|sentencia)[\s:.-]*[A-Z0-9./-]{3,}\b"
     ),
@@ -54,6 +76,60 @@ class TextFidelityScore:
         expected = sum(item.expected for item in self.critical.values())
         matched = sum(item.matched for item in self.critical.values())
         return 1.0 if expected == 0 else matched / expected
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentFidelityScore:
+    page_count: int
+    worst_page_word_error_rate: float
+    worst_page_character_error_rate: float
+    pages_with_missing_critical: int
+    aggregate_legal_critical_recall: float
+
+    @property
+    def has_critical_loss(self) -> bool:
+        return self.pages_with_missing_critical > 0
+
+
+def score_document_fidelity(
+    pages: tuple[TextFidelityScore, ...],
+) -> DocumentFidelityScore:
+    """Aggregate page scores into document-level worst-case evidence.
+
+    Legal review cares about the worst page and about any critical loss, not
+    only the corpus mean. A document with a perfect average but a missing
+    dispositive identifier is unusable, so these tails are tracked explicitly.
+    """
+
+    if not pages:
+        raise ValueError("document fidelity requires at least one page")
+    expected_critical = sum(
+        item.expected for page in pages for item in page.critical.values()
+    )
+    matched_critical = sum(
+        item.matched for page in pages for item in page.critical.values()
+    )
+    return DocumentFidelityScore(
+        page_count=len(pages),
+        worst_page_word_error_rate=max(
+            page.word_error_rate for page in pages
+        ),
+        worst_page_character_error_rate=max(
+            page.character_error_rate for page in pages
+        ),
+        pages_with_missing_critical=sum(
+            any(
+                item.expected > item.matched
+                for item in page.critical.values()
+            )
+            for page in pages
+        ),
+        aggregate_legal_critical_recall=(
+            1.0
+            if expected_critical == 0
+            else matched_critical / expected_critical
+        ),
+    )
 
 
 def _levenshtein_distance(left: list[str], right: list[str]) -> int:

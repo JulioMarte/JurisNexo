@@ -15,6 +15,7 @@ from jurisnexo.bootstrap.settings import (
     get_normalization_model_settings,
     get_openrouter_settings,
 )
+from jurisnexo.model_providers.contracts import ModelProviderError
 from jurisnexo.model_providers.openrouter_visual import (
     OpenRouterVisualModelProvider,
 )
@@ -217,39 +218,53 @@ def main() -> int:
         reasoning_effort=models.deepseek_reasoning_effort,
     )
 
-    good = _run_case(
-        provider=provider,
-        image=image,
-        candidate=candidate,
-        case_name="native_candidate",
-        expected_matches=True,
-    )
-    running_cost = good.cost_usd or 0.0
+    good: VisualCaseResult | None = None
+    corrupted_result: VisualCaseResult | None = None
+    provider_errors: list[str] = []
+    running_cost = 0.0
+    try:
+        good = _run_case(
+            provider=provider,
+            image=image,
+            candidate=candidate,
+            case_name="native_candidate",
+            expected_matches=True,
+        )
+        running_cost += good.cost_usd or 0.0
+    except ModelProviderError as exc:
+        provider_errors.append(f"native_candidate: {exc}")
     if running_cost > MAX_COST_USD:
         raise RuntimeError(
             f"visual smoke exceeded cost cap after first call: ${running_cost:.6f}"
         )
 
-    corrupted_result = _run_case(
-        provider=provider,
-        image=image,
-        candidate=corrupted,
-        case_name="controlled_critical_corruption",
-        expected_matches=False,
-    )
-    running_cost += corrupted_result.cost_usd or 0.0
+    try:
+        corrupted_result = _run_case(
+            provider=provider,
+            image=image,
+            candidate=corrupted,
+            case_name="controlled_critical_corruption",
+            expected_matches=False,
+        )
+        running_cost += corrupted_result.cost_usd or 0.0
+    except ModelProviderError as exc:
+        provider_errors.append(f"controlled_critical_corruption: {exc}")
     if running_cost > MAX_COST_USD:
         raise RuntimeError(
             f"visual smoke exceeded cost cap: ${running_cost:.6f}"
         )
 
-    cases = (good, corrupted_result)
+    cases = tuple(
+        case for case in (good, corrupted_result) if case is not None
+    )
     false_correction_rate = (
         sum(
             result.expected_matches and not result.observed_matches
             for result in cases
         )
         / sum(result.expected_matches for result in cases)
+        if cases
+        else None
     )
     corruption_detection_recall = (
         sum(
@@ -257,16 +272,22 @@ def main() -> int:
             for result in cases
         )
         / sum(not result.expected_matches for result in cases)
+        if cases
+        else None
     )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": "scj",
         "collection": "principales-sentencias",
+        "runtime_status": (
+            "ok" if not provider_errors else "provider_structured_output_failed"
+        ),
+        "provider_errors": provider_errors,
         "object_key": object_key,
         "page_index": page_index,
         "model": MODEL,
         "reasoning_effort": models.deepseek_reasoning_effort,
-        "model_call_count": 2,
+        "model_call_count": len(cases),
         "observed_cost_usd": running_cost,
         "max_cost_usd": MAX_COST_USD,
         "false_correction_rate": false_correction_rate,
@@ -279,6 +300,8 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+    if provider_errors:
+        return 1
     return (
         0
         if false_correction_rate == 0.0

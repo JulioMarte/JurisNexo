@@ -17,6 +17,7 @@ from jurisnexo.bootstrap.settings import (
     get_normalization_model_settings,
     get_openrouter_settings,
 )
+from jurisnexo.model_providers.contracts import ModelProviderError
 from jurisnexo.model_providers.openrouter import OpenRouterStructuredModelProvider
 from jurisnexo.model_providers.openrouter_decisions import OpenRouterDecisionProvider
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
@@ -82,7 +83,8 @@ class SmokeCase:
     excerpt_chars: int
     deterministic_flags: tuple[str, ...]
     jev_answers: dict[str, Any]
-    deepseek: ModelObservation
+    deepseek: ModelObservation | None
+    deepseek_error: str | None = None
 
 
 def _deepseek_schema() -> dict[str, Any]:
@@ -367,31 +369,40 @@ def main() -> int:
         )
 
     results: list[SmokeCase] = []
+    provider_errors: list[str] = []
     for item in prepared:
         deepseek_started = time.perf_counter()
-        deepseek_result = deepseek_provider.generate_structured(
-            prompt=(
-                "You are a conservative extraction-quality challenger. Inspect "
-                "only the normalized legal-text excerpt below for signs of "
-                "parser/OCR damage such as broken numbering, garbled characters, "
-                "fragmented words, or materially suspicious omissions. Do not "
-                "evaluate the legal merits. Return whether this excerpt should "
-                "be escalated for human/visual review.\n\nExcerpt:\n"
-                + item.excerpt
-            ),
-            json_schema=_deepseek_schema(),
-            max_output_tokens=1200,
-            thinking_level=models.deepseek_reasoning_effort,
-        )
+        deepseek_result = None
+        deepseek_observation: ModelObservation | None = None
+        deepseek_error: str | None = None
+        try:
+            deepseek_result = deepseek_provider.generate_structured(
+                prompt=(
+                    "You are a conservative extraction-quality challenger. Inspect "
+                    "only the normalized legal-text excerpt below for signs of "
+                    "parser/OCR damage such as broken numbering, garbled characters, "
+                    "fragmented words, or materially suspicious omissions. Do not "
+                    "evaluate the legal merits. Return whether this excerpt should "
+                    "be escalated for human/visual review.\n\nExcerpt:\n"
+                    + item.excerpt
+                ),
+                json_schema=_deepseek_schema(),
+                max_output_tokens=1200,
+                thinking_level=models.deepseek_reasoning_effort,
+            )
+        except ModelProviderError as exc:
+            deepseek_error = str(exc)
+            provider_errors.append(f"{item.record_id}: {exc}")
         deepseek_latency_ms = int(
             (time.perf_counter() - deepseek_started) * 1000
         )
-        deepseek_observation = _deepseek_observation(
-            deepseek_result,
-            latency_ms=deepseek_latency_ms,
-            reasoning_effort=models.deepseek_reasoning_effort,
-        )
-        running_cost += deepseek_observation.cost_usd or 0.0
+        if deepseek_result is not None:
+            deepseek_observation = _deepseek_observation(
+                deepseek_result,
+                latency_ms=deepseek_latency_ms,
+                reasoning_effort=models.deepseek_reasoning_effort,
+            )
+            running_cost += deepseek_observation.cost_usd or 0.0
         if running_cost > MAX_COST_USD:
             raise RuntimeError(
                 f"live smoke exceeded cost cap after DeepSeek: ${running_cost:.6f}"
@@ -409,6 +420,7 @@ def main() -> int:
                     record_id=item.record_id,
                 ),
                 deepseek=deepseek_observation,
+                deepseek_error=deepseek_error,
             )
         )
 
@@ -427,6 +439,10 @@ def main() -> int:
         "schema_version": 2,
         "source": "scj",
         "collection": "principales-sentencias",
+        "runtime_status": (
+            "ok" if not provider_errors else "provider_structured_output_failed"
+        ),
+        "provider_errors": provider_errors,
         "case_count": len(results),
         "model_call_count": 1 + len(results),
         "jev_batch": asdict(jev_batch),
@@ -456,7 +472,7 @@ def main() -> int:
             sort_keys=True,
         )
     )
-    return 0
+    return 1 if provider_errors else 0
 
 
 if __name__ == "__main__":

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from jurisnexo.normalization.gold import score_text_fidelity
+from jurisnexo.normalization.gold import (
+    CriticalCategoryScore,
+    TextFidelityScore,
+    score_document_fidelity,
+    score_text_fidelity,
+)
 
 
 def test_gold_scoring_measures_generic_and_legal_critical_fidelity() -> None:
@@ -111,3 +116,56 @@ def test_token_order_preservation_separates_reorder_from_edit() -> None:
     assert reordered.word_error_rate == pytest.approx(1.0)
     assert edited.token_order_preservation == pytest.approx(0.75)
     assert edited.word_error_rate == pytest.approx(0.25)
+
+
+def test_critical_patterns_cover_extended_dominican_identifiers() -> None:
+    text = (
+        "Decreto núm. 123-24. Resolución 45-2023. Gaceta Oficial. "
+        "RNC 101123456. Cédula 402-1234567-8. "
+        "Matrícula 0099-2024. Parcela 123 del Distrito Catastral 4."
+    )
+
+    score = score_text_fidelity(expected_text=text, candidate_text=text)
+
+    for category in ("decree", "resolution", "gaceta", "rnc", "cedula"):
+        assert score.critical[category].expected >= 1
+        assert score.critical[category].recall == 1.0
+    assert score.critical["matricula"].recall == 1.0
+    assert score.critical["cadastre"].recall == 1.0
+
+
+def test_document_fidelity_tracks_worst_page_and_critical_loss() -> None:
+    clean = TextFidelityScore(
+        character_error_rate=0.01,
+        word_error_rate=0.01,
+        token_content_recall=1.0,
+        token_content_precision=1.0,
+        token_content_f1=1.0,
+        token_order_preservation=1.0,
+        missing_span_count=0,
+        critical={"article": CriticalCategoryScore(expected=2, matched=2)},
+    )
+    damaged = TextFidelityScore(
+        character_error_rate=0.40,
+        word_error_rate=0.50,
+        token_content_recall=0.90,
+        token_content_precision=0.95,
+        token_content_f1=0.92,
+        token_order_preservation=0.80,
+        missing_span_count=1,
+        critical={"article": CriticalCategoryScore(expected=3, matched=2)},
+    )
+
+    document = score_document_fidelity((clean, damaged))
+
+    assert document.page_count == 2
+    assert document.worst_page_word_error_rate == pytest.approx(0.50)
+    assert document.worst_page_character_error_rate == pytest.approx(0.40)
+    assert document.pages_with_missing_critical == 1
+    assert document.has_critical_loss is True
+    assert document.aggregate_legal_critical_recall == pytest.approx(4 / 5)
+
+
+def test_document_fidelity_requires_pages() -> None:
+    with pytest.raises(ValueError):
+        score_document_fidelity(())
