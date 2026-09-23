@@ -10,6 +10,9 @@ on:
       - "backend/scripts/scj_principales_openrouter_smoke.py"
       - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/model_providers/openrouter_decisions.py"
+      - "backend/src/jurisnexo/model_providers/openrouter.py"
+      - "backend/src/jurisnexo/model_providers/chat_message.py"
+      - "backend/src/jurisnexo/bootstrap/settings.py"
       - ".github/workflows/scj-principales-openrouter-smoke.yml"
 
 permissions:
