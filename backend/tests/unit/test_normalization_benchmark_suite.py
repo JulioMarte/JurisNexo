@@ -6,6 +6,8 @@ from jurisnexo.normalization.benchmark_suite import (
     SuiteRecord,
     aggregate_records,
     document_aggregates,
+    QualityThresholds,
+    evaluate_quality_gates,
     format_summary,
     parse_configs,
     percentile,
@@ -54,10 +56,10 @@ def test_parse_configs_deduplicates_and_validates() -> None:
         parse_configs("marker")
 
 
-def test_resume_key_is_stable_and_distinct() -> None:
-    assert resume_key("pdf_aware", "abc", 3) == "pdf_aware|abc|3"
-    assert resume_key("pdf_aware", "abc", 3) != resume_key(
-        "full_ocr", "abc", 3
+def test_resume_key_is_stable_and_versioned() -> None:
+    assert resume_key("pdf_aware", "abc", 3, "v1") == "pdf_aware|abc|3|v1"
+    assert resume_key("pdf_aware", "abc", 3, "v1") != resume_key(
+        "pdf_aware", "abc", 3, "v2"
     )
 
 
@@ -101,8 +103,8 @@ def test_aggregate_records_reports_quality_speed_and_cost() -> None:
     assert pdf["quality"]["mean_word_error_rate"] == pytest.approx(0.03)
     assert pdf["speed"]["total_seconds"] == pytest.approx(6.0)
     assert pdf["speed"]["mean_seconds_per_page"] == pytest.approx(3.0)
-    assert pdf["cost"]["model_cost_usd"] == 0.0
-    assert pdf["cost"]["cost_per_page_usd"] == 0.0
+    assert pdf["cost"]["provider_model_cost_usd"] == 0.0
+    assert pdf["cost"]["provider_cost_per_page_usd"] == 0.0
     assert pdf["cost"]["output_bytes_per_page"] == pytest.approx(1000.0)
     assert report["full_ocr"]["quality"]["mean_word_error_rate"] == pytest.approx(
         0.30
@@ -117,3 +119,56 @@ def test_format_summary_includes_configuration_row() -> None:
     assert "pdf_aware" in summary
     assert "mean WER" in summary
     assert "Recorded page evaluations: 1" in summary
+
+
+def test_quality_gate_is_independent_from_report_generation() -> None:
+    report = aggregate_records(
+        (
+            _record(config="pdf_aware", sha="a" * 64, page=1, wer=0.02),
+            _record(config="pdf_aware", sha="a" * 64, page=2, wer=0.03),
+        )
+    )
+    gate = evaluate_quality_gates(
+        report,
+        required_configs=("pdf_aware",),
+        thresholds=QualityThresholds(),
+    )
+    assert gate["passed"] is True
+    assert gate["configs"]["pdf_aware"]["checks"]["present"] is True
+
+
+def test_quality_gate_fails_on_critical_document_loss() -> None:
+    report = aggregate_records(
+        (
+            _record(
+                config="pdf_aware",
+                sha="a" * 64,
+                page=1,
+                wer=0.02,
+                expected=2,
+                matched=1,
+            ),
+        )
+    )
+    gate = evaluate_quality_gates(
+        report,
+        required_configs=("pdf_aware",),
+        thresholds=QualityThresholds(),
+    )
+    assert gate["passed"] is False
+    assert gate["configs"]["pdf_aware"]["checks"]["document_pass_rate"] is False
+
+
+def test_summary_labels_provider_cost_and_quality_verdict() -> None:
+    report = aggregate_records(
+        (_record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),)
+    )
+    gate = evaluate_quality_gates(
+        report,
+        required_configs=("pdf_aware",),
+        thresholds=QualityThresholds(),
+    )
+    summary = format_summary(report, recorded=1, quality_gate=gate)
+    assert "provider $/page" in summary
+    assert "## Quality gate" in summary
+    assert "**PASS**" in summary
