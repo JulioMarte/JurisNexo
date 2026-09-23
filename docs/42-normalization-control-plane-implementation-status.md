@@ -48,7 +48,7 @@ This document tracks implementation and proof status for the V3 normalization co
 
 ### Corpus-scale configuration suite
 
-- `benchmark/normalization/principales_corpus_suite.py` processes a configurable slice of the Principales corpus across configuration routes (`pdf_aware`, `full_ocr`), scoring quality, speed and cost per page and per document, gating on document-level critical loss, and checkpointing records in object storage (`derived/normalization/benchmark/principales-corpus-suite/latest/records.jsonl`) so successive runs accumulate and resume.
+- `benchmark/normalization/principales_corpus_suite.py` processes a configurable slice of the Principales corpus across configuration routes (`pdf_aware`, `full_ocr`), scoring quality, speed and provider cost per page/document. Resume is now version-aware: a page is reusable only for the same source hash, page, route and benchmark identity (derived from Docling version plus normalizer/scorer/selector source). The mutable `latest/records.jsonl` checkpoint is rebuilt from prior+new records instead of overwriting history with only the newest batch, and each run also publishes an immutable `runs/<run-id>/` snapshot. Old unversioned records remain historical evidence but are not mixed into a current-identity quality verdict.
 - Live run `35817108708` (head `8c0a5b8`): 12 documents × 2 spread pages per route (48 page evaluations).
 
 | route | pages | mean WER | p95 WER | recall | precision | order | legal-critical | doc pass | s/page |
@@ -56,14 +56,18 @@ This document tracks implementation and proof status for the V3 normalization co
 | pdf_aware | 24 | 0.031 | 0.069 | 0.994 | 0.995 | 0.985 | 1.000 | 1.000 | 7.34 |
 | full_ocr | 24 | 0.115 | 0.246 | 0.928 | 0.974 | 0.918 | 0.857 | 0.583 | 6.30 |
 
-- Provider/model cost is US$0.00 for both routes: technical normalization runs locally. The comparable operational cost is compute time and output size, reported as seconds/page, pages/second and bytes/page.
+- External provider/model cost is US$0.00 for both routes: technical normalization runs locally. This is not total infrastructure cost; the comparable operational proxies are compute time and output size, reported as seconds/page, pages/second and bytes/page.
+- Corpus-suite execution success and quality acceptance are now separate. The report is always emitted, but the required `pdf_aware` route fails the job if the existing quality thresholds are violated (mean WER <=0.10, content recall/precision >=0.98, legal-critical recall 1.0, document pass 1.0). The diagnostic `full_ocr` challenger does not decide the production gate.
 - Observation: on this sample the quality gap is decisive (legal-critical recall and document pass rate) while the speed gap is small and even slightly favours full OCR. Configuration selection must therefore be driven by quality/document-pass, not by throughput.
 - Pure aggregation/config logic lives in `backend/src/jurisnexo/normalization/benchmark_suite.py` with unit proofs, so the suite's scoring is independently testable without S3 or Docling.
 - This is a significant sample, not the full corpus; the checkpoint lets repeated labeled runs extend coverage toward "all Principales" without recomputing completed pages.
 
 ### Live provider-capability finding (DeepSeek structured output)
 
-- The bounded JEV + DeepSeek smoke (run `35815391187`) and the two-call visual smoke (run `35815391241`) failed to obtain a structured response from `deepseek/deepseek-v4.1-flash` through OpenRouter `/chat/completions`. The model returned reasoning prose in `message.content` instead of the requested JSON object. A follow-up attempt with reasoning disabled (`reasoning_effort = none`) produced the same reasoning prose (runs `35816454203`/`35816454339`), so this is a model/endpoint capability incompatibility, not a parameter or adapter problem. The serialized payload records `runtime_status = provider_structured_output_failed` and the raw preview.
+- Historical bounded smokes (runs `35815391187`, `35815391241`, `35816454203`, `35816454339`) failed when JurisNexo requested `response_format: json_schema`: routed responses contained prose rather than the required object. Those runs prove that **that routed configuration** failed; they do not prove that DeepSeek V4.1 Flash lacks vision or structured-output capability.
+- Current vendor evidence says V4.1 Flash accepts images and OpenRouter exposes structured output/tool calling, while provider capabilities vary underneath the same model slug. JurisNexo therefore no longer attributes the failure to the model itself without isolating the routed provider.
+- Remediation implemented: DeepSeek structured calls default to forced tool calling, with `json_schema` and `json_object` retained as explicit comparison modes. Tool requests use `require_parameters=true`; optional provider order can pin a provider for reproducible diagnostics. Results persist the routed provider and structured mode when OpenRouter returns that metadata. The JSON parser accepts forced tool-call arguments as a first-class structured response.
+- The labeled/manual live workflows now use tool mode explicitly and `workflow_dispatch` genuinely runs the job instead of being skipped by a PR-label-only condition. Live re-validation of the repaired route remains the authority for promotion.
 - The JEV path is unaffected: the same run resolved `typesafe/jev-1.13-20260917` through `/api/alpha/decisions`, produced typed Choice/Noul/Score answers and cost US$0.0000794. On the sampled judged pages JEV reported high uncertainty (`legal_critical_damage ≈0.48`, `needs_visual_review ≈0.82`), i.e. it would route to review.
 - Consequence: DeepSeek structured-output and visual-verification capability is **not established** in this configuration. Do not claim DeepSeek challenger or visual verification as proven; a provider/model/parameter change is required and must be re-benchmarked. Failed calls are recorded as evidence rather than crashing the lane silently.
 
@@ -96,7 +100,7 @@ See `43-jev-system-one-engineering-guidelines.md` for the canonical System One d
 - `xhigh` is comparison-only until measured evidence justifies a policy change.
 - Benchmarks preserve requested/effective model, token usage, reasoning tokens, latency and provider-reported cost where available.
 - The same model can accept images and is the current bounded visual-verifier candidate; this does not make it legal ground truth.
-- Structured-output capability is NOT established for the chat-completions path in this configuration: the model returned reasoning prose instead of the JSON object requested by `response_format: json_schema` (see the provider-capability finding). The adapter keeps parsing tolerant of content-part lists, code fences and surrounding prose, but it cannot invent a JSON object the provider did not return. The model/parameter/provider choice must be revisited before claiming DeepSeek challenger or visual verification.
+- Structured-output capability was not established by the earlier `json_schema` routed smokes. The implementation now prefers forced tool calling and records routed-provider/structured-mode diagnostics; `json_schema` and native-style `json_object` remain comparison modes. Do not claim DeepSeek challenger or visual verification proven until the repaired live smokes pass.
 
 ## Hard claims that are currently supported
 
@@ -134,7 +138,7 @@ Do not claim any of the following until the corresponding evidence has passed:
 1. obtain exact-head deterministic CI green;
 2. extend the corpus suite from the bounded 12-document sample toward the full Principales corpus, and add a stratified/adversarial gold set (tables, footnotes, dissents, signatures, mixed/scan and older/failed layouts) with every-page coverage of selected documents, not only a spread sample;
 3. expand JEV calibration/holdout to promotion-sized source-verified samples while preserving split independence;
-4. resolve the DeepSeek structured-output capability gap (model/parameters/provider) and re-run one explicitly labeled JEV + DeepSeek challenger smoke and one two-call visual verifier smoke; the current bounded smokes recorded `provider_structured_output_failed`;
+4. re-run the repaired tool-first JEV + DeepSeek challenger smoke and two-call visual verifier smoke; if either fails, pin providers and compare `tool`, `json_schema` and `json_object` before changing models;
 5. analyze model probabilities, false negatives, calibration, token/cost/latency evidence and durable observation lineage (the persistence contract is already proven with provider doubles and real PostgreSQL);
 6. execute broader Principales canary, interruption/resume drill and reconciliation audit;
 7. run OOD SCJ sample;
