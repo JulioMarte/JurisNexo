@@ -6,7 +6,10 @@ from typing import Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from jurisnexo.model_providers.chat_message import extract_structured_object
+from jurisnexo.model_providers.chat_message import (
+    extract_structured_object,
+    validate_structured_object,
+)
 from jurisnexo.model_providers.contracts import (
     JsonObject,
     ModelProviderError,
@@ -105,6 +108,7 @@ class OpenRouterStructuredModelProvider:
             choice = _json_object_value(choices[0], "choice")
             message = _json_object_value(choice["message"], "message")
             value = extract_structured_object(message)
+            validate_structured_object(value, json_schema)
         except (
             KeyError,
             IndexError,
