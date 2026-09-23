@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -15,6 +15,8 @@ from jurisnexo.model_providers.contracts import (
     StructuredGenerationResult,
 )
 
+StructuredMode = Literal["tool", "json_schema", "json_object"]
+
 
 @dataclass(slots=True)
 class OpenRouterVisualModelProvider:
@@ -23,6 +25,9 @@ class OpenRouterVisualModelProvider:
     base_url: str = "https://openrouter.ai/api/v1"
     timeout_seconds: float = 120.0
     reasoning_effort: str = "high"
+    structured_mode: StructuredMode = "tool"
+    provider_order: tuple[str, ...] = ()
+    allow_provider_fallbacks: bool = True
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
@@ -33,6 +38,8 @@ class OpenRouterVisualModelProvider:
             raise ValueError(
                 "visual reasoning_effort must be none, high or xhigh"
             )
+        if self.structured_mode not in {"tool", "json_schema", "json_object"}:
+            raise ValueError("unsupported visual structured_mode")
 
     def verify_image_text(
         self,
@@ -44,13 +51,14 @@ class OpenRouterVisualModelProvider:
         max_output_tokens: int,
     ) -> StructuredGenerationResult:
         encoded = base64.b64encode(image).decode("ascii")
+        request_prompt = prompt
         payload: JsonObject = {
             "model": self.model,
             "messages": [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt},
+                        {"type": "text", "text": request_prompt},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -61,17 +69,13 @@ class OpenRouterVisualModelProvider:
                 }
             ],
             "max_tokens": max_output_tokens,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "jurisnexo_visual_verification",
-                    "strict": True,
-                    "schema": json_schema,
-                },
-            },
-            "provider": {"sort": "price", "require_parameters": True},
+            "provider": self._provider_routing(),
             "usage": {"include": True},
         }
+        self._apply_structured_output(
+            payload=payload,
+            json_schema=json_schema,
+        )
         if self.reasoning_effort != "none":
             payload["reasoning"] = {"effort": self.reasoning_effort}
         request = Request(
@@ -113,8 +117,10 @@ class OpenRouterVisualModelProvider:
             ValueError,
             json.JSONDecodeError,
         ) as exc:
+            provider = body.get("provider") if "body" in locals() else None
             raise ModelProviderError(
-                f"OpenRouter returned an invalid visual structured response: {exc}"
+                "OpenRouter returned an invalid visual structured response "
+                f"(mode={self.structured_mode}, provider={provider!r}): {exc}"
             ) from exc
 
         usage_raw = body.get("usage")
@@ -125,6 +131,7 @@ class OpenRouterVisualModelProvider:
         )
         model = str(body.get("model") or self.model)
         response_id = body.get("id")
+        routed_provider = body.get("provider")
         return StructuredGenerationResult(
             value=value,
             provider="openrouter",
@@ -141,8 +148,71 @@ class OpenRouterVisualModelProvider:
             provider_metadata={
                 "requested_model": self.model,
                 "requested_reasoning_effort": self.reasoning_effort,
+                "structured_mode": self.structured_mode,
+                "routed_provider": (
+                    str(routed_provider) if routed_provider is not None else ""
+                ),
+                "provider_order": list(self.provider_order),
+                "allow_provider_fallbacks": self.allow_provider_fallbacks,
             },
         )
+
+    def _provider_routing(self) -> JsonObject:
+        routing: JsonObject = {
+            "require_parameters": True,
+            "allow_fallbacks": self.allow_provider_fallbacks,
+        }
+        if self.provider_order:
+            routing["order"] = list(self.provider_order)
+        else:
+            routing["sort"] = "price"
+        return routing
+
+    def _apply_structured_output(
+        self,
+        *,
+        payload: JsonObject,
+        json_schema: JsonObject,
+    ) -> None:
+        name = "jurisnexo_visual_verification"
+        if self.structured_mode == "tool":
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": (
+                            "Return the visual transcription verification result."
+                        ),
+                        "parameters": json_schema,
+                    },
+                }
+            ]
+            payload["tool_choice"] = {
+                "type": "function",
+                "function": {"name": name},
+            }
+            return
+        if self.structured_mode == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+            messages = cast(list[dict[str, object]], payload["messages"])
+            content = cast(list[dict[str, object]], messages[0]["content"])
+            text_part = content[0]
+            original = str(text_part.get("text") or "")
+            text_part["text"] = (
+                original
+                + "\n\nReturn only one valid JSON object. Do not include "
+                "reasoning, Markdown, code fences, or prose outside the JSON."
+            )
+            return
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
 
 
 def _int_or_none(value: object) -> int | None:
@@ -150,6 +220,8 @@ def _int_or_none(value: object) -> int | None:
         return None
     if isinstance(value, int):
         return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     return None
 
 
