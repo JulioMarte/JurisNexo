@@ -12,6 +12,7 @@ from typing import Any
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.bootstrap.settings import (
+    get_normalization_model_settings,
     get_openrouter_settings,
 )
 from jurisnexo.model_providers.contracts import ModelProviderError
@@ -56,6 +57,8 @@ class VisualCaseResult:
     cost_usd: float | None
     latency_ms: int
     material_differences: tuple[str, ...]
+    routed_provider: str
+    structured_mode: str
 
 
 def _first_suitable_source(
@@ -193,6 +196,8 @@ def _run_case(
         cost_usd=result.cost_usd,
         latency_ms=latency_ms,
         material_differences=differences,
+        routed_provider=str(result.provider_metadata.get("routed_provider") or ""),
+        structured_mode=str(result.provider_metadata.get("structured_mode") or ""),
     )
 
 
@@ -204,6 +209,12 @@ def main() -> int:
     if openrouter.api_key is None:
         raise RuntimeError("OPENROUTER_API_KEY is required for visual smoke")
 
+    models = get_normalization_model_settings()
+    provider_order = tuple(
+        part.strip()
+        for part in models.deepseek_provider_order.split(",")
+        if part.strip()
+    )
     store = build_s3_object_store()
     object_key, source, page_index, native_text = _first_suitable_source(store)
     image = _render_page(source, page_index)
@@ -215,6 +226,8 @@ def main() -> int:
         model=MODEL,
         base_url=openrouter.base_url,
         reasoning_effort=VISUAL_REASONING,
+        structured_mode=models.deepseek_structured_mode,
+        provider_order=provider_order,
     )
 
     good: VisualCaseResult | None = None
@@ -286,6 +299,8 @@ def main() -> int:
         "page_index": page_index,
         "model": MODEL,
         "reasoning_effort": VISUAL_REASONING,
+        "structured_mode": models.deepseek_structured_mode,
+        "provider_order": list(provider_order),
         "model_call_count": len(cases),
         "observed_cost_usd": running_cost,
         "max_cost_usd": MAX_COST_USD,
