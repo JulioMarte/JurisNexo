@@ -440,6 +440,16 @@ evidence = ["benchmark"]
 
 [[proofs]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/principales_corpus_suite.py"
+evidence = ["benchmark"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_benchmark_suite.py"
+evidence = ["unit", "contract"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 path = "backend/tests/integration/test_normalization_model_evidence_persistence.py"
 evidence = ["invariant", "integration", "provenance"]
 

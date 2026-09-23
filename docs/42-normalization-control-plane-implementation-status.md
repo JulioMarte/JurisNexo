@@ -18,7 +18,7 @@ This document tracks implementation and proof status for the V3 normalization co
 | 0. Substrate/provenance | IMPLEMENTED | PostgreSQL integration, baseline equivalence and lineage invariants exist; exact-head CI remains the merge authority |
 | 1. Docling + Tika spike | IMPLEMENTED | Engine spike covers born-digital/scanned/mixed PDF, DOCX, RTF, HTML and corrupt PDF |
 | 2. Replaceability boundaries | IMPLEMENTED | Architecture fitness + protocol/unit proof |
-| 3. Gold Set/contracts | IMPLEMENTED IN PART | Generic fixtures plus legal-critical CER/WER/token/order scoring, an extended Dominican legal-identifier detector and document-level worst-page/critical-loss scoring exist. A bounded real-source SCJ Principales judgment-page calibration/holdout exists for the born-digital PDF-aware route (6 documents × 2 pages); a stratified/adversarial gold set remains PENDING EVIDENCE |
+| 3. Gold Set/contracts | IMPLEMENTED IN PART | Generic fixtures plus legal-critical CER/WER/token/order scoring, an extended Dominican legal-identifier detector and document-level worst-page/critical-loss scoring exist. A bounded real-source SCJ Principales judgment-page calibration/holdout exists for the born-digital PDF-aware route, and a resumable corpus suite compares `pdf_aware` vs `full_ocr` on quality, speed and cost. A stratified/adversarial gold set remains PENDING EVIDENCE |
 | 4. Planner/durable execution | IMPLEMENTED | deterministic planning, idempotency, durable checkpoints, retry classes, circuit breaker and interrupted-run resume exist |
 | 5. Docling/Tika production adapters | IMPLEMENTED | object-storage derivatives, lineage, PDF-aware OCR, language configuration and optional isolated Docling subprocess exist |
 | 6. Deterministic QA | IMPLEMENTED | text health/legal-critical signals exist; page/region OCR behavior uses Docling PDF-aware OCR; semantic quality thresholds remain benchmark-owned |
@@ -46,9 +46,24 @@ This document tracks implementation and proof status for the V3 normalization co
 - `score_text_fidelity` reports `token_order_preservation` (longest-common-subsequence ratio of content tokens) so reordering can be distinguished from content loss or edits. `score_document_fidelity` aggregates page scores into worst-page WER and any-critical-loss so a good page average cannot hide a damaged dispositive identifier.
 - The legal-critical detector now covers dates, money, articles, laws, decrees, resolutions, `Gaceta Oficial`, RNC, cédula, matrícula, cadastre, case/expediente and citation patterns. It remains an incremental detector, so `legal-critical recall = 1.0` means "all spans the current detector recognises", not "every legally important datum".
 
+### Corpus-scale configuration suite
+
+- `benchmark/normalization/principales_corpus_suite.py` processes a configurable slice of the Principales corpus across configuration routes (`pdf_aware`, `full_ocr`), scoring quality, speed and cost per page and per document, gating on document-level critical loss, and checkpointing records in object storage (`derived/normalization/benchmark/principales-corpus-suite/latest/records.jsonl`) so successive runs accumulate and resume.
+- Live run `35817108708` (head `8c0a5b8`): 12 documents × 2 spread pages per route (48 page evaluations).
+
+| route | pages | mean WER | p95 WER | recall | precision | order | legal-critical | doc pass | s/page |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pdf_aware | 24 | 0.031 | 0.069 | 0.994 | 0.995 | 0.985 | 1.000 | 1.000 | 7.34 |
+| full_ocr | 24 | 0.115 | 0.246 | 0.928 | 0.974 | 0.918 | 0.857 | 0.583 | 6.30 |
+
+- Provider/model cost is US$0.00 for both routes: technical normalization runs locally. The comparable operational cost is compute time and output size, reported as seconds/page, pages/second and bytes/page.
+- Observation: on this sample the quality gap is decisive (legal-critical recall and document pass rate) while the speed gap is small and even slightly favours full OCR. Configuration selection must therefore be driven by quality/document-pass, not by throughput.
+- Pure aggregation/config logic lives in `backend/src/jurisnexo/normalization/benchmark_suite.py` with unit proofs, so the suite's scoring is independently testable without S3 or Docling.
+- This is a significant sample, not the full corpus; the checkpoint lets repeated labeled runs extend coverage toward "all Principales" without recomputing completed pages.
+
 ### Live provider-capability finding (DeepSeek structured output)
 
-- The bounded JEV + DeepSeek smoke (run `35815391187`) and the two-call visual smoke (run `35815391241`) both failed to obtain a structured response from `deepseek/deepseek-v4.1-flash` through OpenRouter `/chat/completions`. The model returned reasoning prose in `message.content` instead of the requested JSON object, so JSON-schema structured output could not be parsed. The serialized payload records `runtime_status = provider_structured_output_failed` and the raw preview.
+- The bounded JEV + DeepSeek smoke (run `35815391187`) and the two-call visual smoke (run `35815391241`) failed to obtain a structured response from `deepseek/deepseek-v4.1-flash` through OpenRouter `/chat/completions`. The model returned reasoning prose in `message.content` instead of the requested JSON object. A follow-up attempt with reasoning disabled (`reasoning_effort = none`) produced the same reasoning prose (runs `35816454203`/`35816454339`), so this is a model/endpoint capability incompatibility, not a parameter or adapter problem. The serialized payload records `runtime_status = provider_structured_output_failed` and the raw preview.
 - The JEV path is unaffected: the same run resolved `typesafe/jev-1.13-20260917` through `/api/alpha/decisions`, produced typed Choice/Noul/Score answers and cost US$0.0000794. On the sampled judged pages JEV reported high uncertainty (`legal_critical_damage ≈0.48`, `needs_visual_review ≈0.82`), i.e. it would route to review.
 - Consequence: DeepSeek structured-output and visual-verification capability is **not established** in this configuration. Do not claim DeepSeek challenger or visual verification as proven; a provider/model/parameter change is required and must be re-benchmarked. Failed calls are recorded as evidence rather than crashing the lane silently.
 
@@ -117,7 +132,7 @@ Do not claim any of the following until the corresponding evidence has passed:
 ## Remaining closure sequence
 
 1. obtain exact-head deterministic CI green;
-2. build a stratified/adversarial Principales gold set (tables, footnotes, dissents, signatures, mixed/scan and older/failed layouts) and cover every page of selected documents rather than a spread sample;
+2. extend the corpus suite from the bounded 12-document sample toward the full Principales corpus, and add a stratified/adversarial gold set (tables, footnotes, dissents, signatures, mixed/scan and older/failed layouts) with every-page coverage of selected documents, not only a spread sample;
 3. expand JEV calibration/holdout to promotion-sized source-verified samples while preserving split independence;
 4. resolve the DeepSeek structured-output capability gap (model/parameters/provider) and re-run one explicitly labeled JEV + DeepSeek challenger smoke and one two-call visual verifier smoke; the current bounded smokes recorded `provider_structured_output_failed`;
 5. analyze model probabilities, false negatives, calibration, token/cost/latency evidence and durable observation lineage (the persistence contract is already proven with provider doubles and real PostgreSQL);
