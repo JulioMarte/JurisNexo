@@ -53,6 +53,7 @@ class NormalizationModelSettings(BaseSettings):
     deepseek_reasoning_effort: Literal["high", "xhigh"] = "high"
     deepseek_structured_mode: Literal["tool", "json_schema", "json_object"] = "tool"
     deepseek_provider_order: str = ""
+    deepseek_allow_provider_fallbacks: bool = True
     visual_model: str | None = None
 
 
