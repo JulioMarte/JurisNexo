@@ -7,6 +7,7 @@ on:
       - development
     paths:
       - "backend/scripts/scj_principales_visual_smoke.py"
+      - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/model_providers/openrouter_visual.py"
       - ".github/workflows/scj-principales-visual-smoke.yml"
   workflow_dispatch:

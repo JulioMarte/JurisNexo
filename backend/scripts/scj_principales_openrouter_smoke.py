@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from pypdf import PdfReader, PdfWriter
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.bootstrap.settings import (
@@ -20,6 +24,15 @@ from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.quality import (
     assess_text_quality,
     extract_text_from_structural_json,
+)
+
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[2] / "benchmark" / "normalization"),
+)
+from scj_page_selection import (  # noqa: E402
+    has_native_text,
+    select_reference_page,
 )
 
 OUT = Path(
@@ -137,39 +150,68 @@ def _listed_principales_keys(store: Any) -> tuple[str, ...]:
     return tuple(sorted(keys))
 
 
+def _download(store: Any, object_key: str) -> bytes:
+    response = store.client.get_object(
+        Bucket=store.config.bucket,
+        Key=object_key,
+    )
+    payload = response["Body"].read()
+    return payload if isinstance(payload, bytes) else bytes(payload)
+
+
+def _single_page_pdf(pdf_bytes: bytes, page_index: int) -> bytes:
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    writer.add_page(reader.pages[page_index])
+    output = io.BytesIO()
+    writer.write(output)
+    payload = output.getvalue()
+    if not payload.startswith(b"%PDF-"):
+        raise RuntimeError("single-page PDF extraction did not produce a PDF")
+    return payload
+
+
 def _prepare_cases(
     *,
     store: Any,
     normalizer: DoclingStructuralNormalizer,
     object_keys: tuple[str, ...],
+    limit: int,
 ) -> tuple[PreparedCase, ...]:
     prepared: list[PreparedCase] = []
-    for index, object_key in enumerate(object_keys):
-        response = store.client.get_object(
-            Bucket=store.config.bucket,
-            Key=object_key,
-        )
-        source = response["Body"].read()
-        if not isinstance(source, bytes):
-            source = bytes(source)
-        source_sha256 = hashlib.sha256(source).hexdigest()
-        normalized = normalizer.normalize(
+    for object_key in object_keys:
+        if len(prepared) >= limit:
+            break
+        source = _download(store, object_key)
+        if not has_native_text(source):
+            continue
+        selected = select_reference_page(
             source,
+            min_reference_chars=800,
+            max_pages_to_scan=120,
+        )
+        if selected is None:
+            continue
+        page_pdf = _single_page_pdf(source, selected.page_index)
+        normalized = normalizer.normalize(
+            page_pdf,
             FormatInspection(
                 media_type="application/pdf",
                 detected_format="application/pdf",
                 metadata={},
             ),
-            filename=object_key.rsplit("/", 1)[-1],
+            filename=f"{object_key.rsplit('/', 1)[-1]}-p{selected.page_index + 1}.pdf",
         )
         text = extract_text_from_structural_json(normalized.payload)
         excerpt = text[:TEXT_LIMIT]
+        if not excerpt.strip():
+            continue
         deterministic = assess_text_quality(excerpt)
         prepared.append(
             PreparedCase(
-                record_id=f"case_{index + 1}",
+                record_id=f"case_{len(prepared) + 1}",
                 object_key=object_key,
-                source_sha256=source_sha256,
+                source_sha256=hashlib.sha256(source).hexdigest(),
                 source_bytes=len(source),
                 normalized_chars=len(text),
                 excerpt=excerpt,
@@ -281,7 +323,10 @@ def main() -> int:
         model=models.deepseek_model,
         base_url=openrouter.base_url,
     )
-    normalizer = DoclingStructuralNormalizer(ocr_language_tags=("iso:es",))
+    normalizer = DoclingStructuralNormalizer(
+        ocr_language_tags=("iso:es",),
+        pdf_aware_ocr=True,
+    )
     store = build_s3_object_store()
 
     all_keys = _listed_principales_keys(store)
@@ -293,8 +338,14 @@ def main() -> int:
     prepared = _prepare_cases(
         store=store,
         normalizer=normalizer,
-        object_keys=all_keys[:LIMIT],
+        object_keys=all_keys,
+        limit=LIMIT,
     )
+    if len(prepared) < LIMIT:
+        raise RuntimeError(
+            f"only {len(prepared)} Principales volumes exposed a "
+            "native-text judgment page"
+        )
 
     jev_started = time.perf_counter()
     jev_result = jev_provider.decide(

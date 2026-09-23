@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,6 +17,15 @@ from jurisnexo.bootstrap.settings import (
 )
 from jurisnexo.model_providers.openrouter_visual import (
     OpenRouterVisualModelProvider,
+)
+
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[2] / "benchmark" / "normalization"),
+)
+from scj_page_selection import (  # noqa: E402
+    has_native_text,
+    select_reference_page,
 )
 
 OUTPUT = Path(
@@ -47,7 +57,15 @@ class VisualCaseResult:
     material_differences: tuple[str, ...]
 
 
-def _first_principales_pdf(store: Any) -> str:
+def _first_suitable_source(
+    store: Any,
+) -> tuple[str, bytes, int, str]:
+    """Return the first Principales volume with a real judgment body page.
+
+    Front matter (cover, credits, ISBN, catalog card, table of contents) has no
+    corruptible legal token and is not legal-document text, so it is skipped.
+    """
+
     response = store.client.list_objects_v2(
         Bucket=store.config.bucket,
         Prefix=PREFIX,
@@ -60,26 +78,38 @@ def _first_principales_pdf(store: Any) -> str:
     )
     if not keys:
         raise RuntimeError("no SCJ Principales PDF found in object storage")
-    return keys[0]
+    for object_key in keys:
+        source = store.client.get_object(
+            Bucket=store.config.bucket,
+            Key=object_key,
+        )["Body"].read()
+        if not isinstance(source, bytes):
+            source = bytes(source)
+        if not has_native_text(source):
+            continue
+        selected = select_reference_page(
+            source,
+            min_reference_chars=800,
+            max_pages_to_scan=120,
+        )
+        if selected is None:
+            continue
+        return object_key, source, selected.page_index, selected.text
+    raise RuntimeError("no Principales volume exposed a native-text judgment page")
 
 
-def _render_and_extract_first_page(pdf_bytes: bytes) -> tuple[bytes, str]:
+def _render_page(pdf_bytes: bytes, page_index: int) -> bytes:
     import pypdfium2 as pdfium
 
     document = pdfium.PdfDocument(pdf_bytes)
     try:
-        page = document[0]
+        page = document[page_index]
         try:
-            text_page = page.get_textpage()
-            try:
-                text = text_page.get_text_range()
-            finally:
-                text_page.close()
             bitmap = page.render(scale=1.5)
             image = bitmap.to_pil()
             output = io.BytesIO()
             image.save(output, format="PNG")
-            return output.getvalue(), text
+            return output.getvalue()
         finally:
             page.close()
     finally:
@@ -175,16 +205,8 @@ def main() -> int:
         raise RuntimeError("OPENROUTER_API_KEY is required for visual smoke")
 
     store = build_s3_object_store()
-    object_key = _first_principales_pdf(store)
-    response = store.client.get_object(
-        Bucket=store.config.bucket,
-        Key=object_key,
-    )
-    source = response["Body"].read()
-    if not isinstance(source, bytes):
-        source = bytes(source)
-
-    image, native_text = _render_and_extract_first_page(source)
+    object_key, source, page_index, native_text = _first_suitable_source(store)
+    image = _render_page(source, page_index)
     candidate = native_text[:2500]
     corrupted = _corrupt_legal_token(candidate)
 
@@ -241,6 +263,7 @@ def main() -> int:
         "source": "scj",
         "collection": "principales-sentencias",
         "object_key": object_key,
+        "page_index": page_index,
         "model": MODEL,
         "reasoning_effort": models.deepseek_reasoning_effort,
         "model_call_count": 2,
