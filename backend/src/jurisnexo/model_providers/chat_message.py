@@ -115,3 +115,120 @@ def _content_to_text(content: object) -> str:
         if isinstance(piece, str):
             parts.append(piece)
     return "".join(parts)
+
+
+def validate_structured_object(
+    value: JsonObject,
+    schema: Mapping[str, object],
+) -> None:
+    """Validate the JSON-Schema subset used by JurisNexo model contracts.
+
+    Provider-side structured output is useful but not trusted as the only
+    validator. This intentionally small validator covers the object/array,
+    required, enum, primitive type, maxItems and additionalProperties features
+    used by current normalization schemas.
+    """
+
+    _validate_schema_value(value, schema, path="$")
+
+
+def _validate_schema_value(
+    value: object,
+    schema: Mapping[str, object],
+    *,
+    path: str,
+) -> None:
+    declared = schema.get("type")
+    allowed = (
+        tuple(item for item in declared if isinstance(item, str))
+        if isinstance(declared, list)
+        else ((declared,) if isinstance(declared, str) else ())
+    )
+    if allowed and not _matches_type(value, allowed):
+        raise ValueError(
+            f"structured response schema mismatch at {path}: "
+            f"expected {allowed}, got {type(value).__name__}"
+        )
+
+    enum = schema.get("enum")
+    if isinstance(enum, list) and value not in enum:
+        raise ValueError(
+            f"structured response schema mismatch at {path}: "
+            f"value {value!r} not in enum"
+        )
+
+    if isinstance(value, dict):
+        properties_raw = schema.get("properties")
+        properties = (
+            cast(dict[str, object], properties_raw)
+            if isinstance(properties_raw, dict)
+            else {}
+        )
+        required_raw = schema.get("required")
+        required = (
+            tuple(item for item in required_raw if isinstance(item, str))
+            if isinstance(required_raw, list)
+            else ()
+        )
+        missing = [key for key in required if key not in value]
+        if missing:
+            raise ValueError(
+                f"structured response schema mismatch at {path}: "
+                f"missing required keys {missing}"
+            )
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                raise ValueError(
+                    f"structured response schema mismatch at {path}: "
+                    f"unexpected keys {extras}"
+                )
+        for key, child in value.items():
+            child_schema = properties.get(key)
+            if isinstance(child_schema, dict):
+                _validate_schema_value(
+                    child,
+                    cast(dict[str, object], child_schema),
+                    path=f"{path}.{key}",
+                )
+        return
+
+    if isinstance(value, list):
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(value) > max_items:
+            raise ValueError(
+                f"structured response schema mismatch at {path}: "
+                f"{len(value)} items exceeds maxItems={max_items}"
+            )
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            typed_schema = cast(dict[str, object], item_schema)
+            for index, item in enumerate(value):
+                _validate_schema_value(
+                    item,
+                    typed_schema,
+                    path=f"{path}[{index}]",
+                )
+
+
+def _matches_type(value: object, allowed: tuple[str, ...]) -> bool:
+    for item in allowed:
+        if item == "null" and value is None:
+            return True
+        if item == "object" and isinstance(value, dict):
+            return True
+        if item == "array" and isinstance(value, list):
+            return True
+        if item == "string" and isinstance(value, str):
+            return True
+        if item == "boolean" and isinstance(value, bool):
+            return True
+        if item == "integer" and isinstance(value, int) and not isinstance(value, bool):
+            return True
+        if (
+            item == "number"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
+            return True
+    return False
