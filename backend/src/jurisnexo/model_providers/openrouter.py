@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -14,20 +14,20 @@ from jurisnexo.model_providers.contracts import (
     StructuredGenerationResult,
 )
 
+StructuredMode = Literal["tool", "json_schema", "json_object"]
+
 
 @dataclass(slots=True)
 class OpenRouterStructuredModelProvider:
-    """Minimal provider-neutral structured-output client for OpenRouter.
-
-    This adapter intentionally depends only on the JurisNexo ModelProvider
-    contract and the Python standard library. It is suitable for controlled
-    normalization benchmarks and keeps SDK response types out of durable code.
-    """
+    """Minimal provider-neutral structured-output client for OpenRouter."""
 
     api_key: str
     model: str
     base_url: str = "https://openrouter.ai/api/v1"
     timeout_seconds: float = 120.0
+    structured_mode: StructuredMode = "json_schema"
+    provider_order: tuple[str, ...] = ()
+    allow_provider_fallbacks: bool = True
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
@@ -36,6 +36,8 @@ class OpenRouterStructuredModelProvider:
             raise ValueError("OpenRouter model is required")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")
+        if self.structured_mode not in {"tool", "json_schema", "json_object"}:
+            raise ValueError("unsupported structured_mode")
 
     @property
     def provider_name(self) -> str:
@@ -53,21 +55,21 @@ class OpenRouterStructuredModelProvider:
         max_output_tokens: int,
         thinking_level: str,
     ) -> StructuredGenerationResult:
+        request_prompt = prompt
+        if self.structured_mode == "json_object":
+            request_prompt += (
+                "\n\nReturn only one valid JSON object matching the requested "
+                "fields. Do not include reasoning, Markdown, code fences, or prose "
+                "outside the JSON object."
+            )
         payload: JsonObject = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": request_prompt}],
             "max_tokens": max_output_tokens,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "jurisnexo_structured_output",
-                    "strict": True,
-                    "schema": json_schema,
-                },
-            },
-            "provider": {"sort": "price", "require_parameters": True},
+            "provider": self._provider_routing(),
             "usage": {"include": True},
         }
+        self._apply_structured_output(payload=payload, json_schema=json_schema)
         if thinking_level and thinking_level != "none":
             payload["reasoning"] = {"effort": thinking_level}
 
@@ -90,7 +92,9 @@ class OpenRouterStructuredModelProvider:
                 f"OpenRouter HTTP {exc.code}: {detail}"
             ) from exc
         except URLError as exc:
-            raise ModelProviderError(f"OpenRouter transport error: {exc.reason}") from exc
+            raise ModelProviderError(
+                f"OpenRouter transport error: {exc.reason}"
+            ) from exc
 
         try:
             body = _json_object(raw)
@@ -108,8 +112,10 @@ class OpenRouterStructuredModelProvider:
             ValueError,
             json.JSONDecodeError,
         ) as exc:
+            provider = body.get("provider") if "body" in locals() else None
             raise ModelProviderError(
-                f"OpenRouter returned an invalid structured response: {exc}"
+                "OpenRouter returned an invalid structured response "
+                f"(mode={self.structured_mode}, provider={provider!r}): {exc}"
             ) from exc
 
         usage_raw = body.get("usage")
@@ -135,10 +141,61 @@ class OpenRouterStructuredModelProvider:
             ),
             cost_usd=_float_or_none(usage_map.get("cost")),
             provider_metadata={
-                "routed_provider": str(provider_raw) if provider_raw else "",
+                "routed_provider": (
+                    str(provider_raw) if provider_raw is not None else ""
+                ),
                 "requested_model": self.model,
+                "structured_mode": self.structured_mode,
+                "provider_order": list(self.provider_order),
+                "allow_provider_fallbacks": self.allow_provider_fallbacks,
             },
         )
+
+    def _provider_routing(self) -> JsonObject:
+        routing: JsonObject = {
+            "require_parameters": True,
+            "allow_fallbacks": self.allow_provider_fallbacks,
+        }
+        if self.provider_order:
+            routing["order"] = list(self.provider_order)
+        else:
+            routing["sort"] = "price"
+        return routing
+
+    def _apply_structured_output(
+        self,
+        *,
+        payload: JsonObject,
+        json_schema: JsonObject,
+    ) -> None:
+        name = "jurisnexo_structured_output"
+        if self.structured_mode == "tool":
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": "Return the structured JurisNexo result.",
+                        "parameters": json_schema,
+                    },
+                }
+            ]
+            payload["tool_choice"] = {
+                "type": "function",
+                "function": {"name": name},
+            }
+            return
+        if self.structured_mode == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+            return
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "strict": True,
+                "schema": json_schema,
+            },
+        }
 
 
 def _int_or_none(value: object) -> int | None:
