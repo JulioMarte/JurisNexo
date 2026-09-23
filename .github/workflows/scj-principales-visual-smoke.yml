@@ -9,6 +9,8 @@ on:
       - "backend/scripts/scj_principales_visual_smoke.py"
       - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/model_providers/openrouter_visual.py"
+      - "backend/src/jurisnexo/model_providers/chat_message.py"
+      - "backend/src/jurisnexo/bootstrap/settings.py"
       - ".github/workflows/scj-principales-visual-smoke.yml"
   workflow_dispatch:
 
