@@ -28,7 +28,10 @@ MIN_REFERENCE_CHARS = int(
     os.environ.get("SCJ_PDF_POLICY_HOLDOUT_MIN_REFERENCE_CHARS", "800")
 )
 MAX_PAGES_TO_SCAN = int(
-    os.environ.get("SCJ_PDF_POLICY_HOLDOUT_MAX_PAGES_TO_SCAN", "6")
+    os.environ.get("SCJ_PDF_POLICY_HOLDOUT_MAX_PAGES_TO_SCAN", "120")
+)
+MAX_DOCUMENTS_TO_ATTEMPT = int(
+    os.environ.get("SCJ_PDF_POLICY_HOLDOUT_MAX_DOCUMENTS", "40")
 )
 MAX_HOLDOUT_MEAN_WER = float(
     os.environ.get("SCJ_PDF_POLICY_MAX_HOLDOUT_MEAN_WER", "0.10")
@@ -46,6 +49,47 @@ MAX_DIAGNOSTIC_TEXT_CHARS = int(
     os.environ.get("SCJ_PDF_POLICY_MAX_DIAGNOSTIC_TEXT_CHARS", "6000")
 )
 
+# Compiled Principales volumes begin with cover, credits, ISBN and library
+# catalog-card front matter and a table of contents. Selecting the first page
+# with enough native text therefore samples bibliographic front matter, never a
+# judgment, and cannot measure legal-document normalization. Require real
+# adjudicative structure instead.
+_FRONT_MATTER_MARKERS = (
+    "isbn",
+    "coordinación general",
+    "1a. ed.",
+    "r426p",
+    "índice",
+    "indice",
+    "impreso en",
+    "www.poderjudicial.gob.do",
+    "diagramación",
+    "división de publicaciones",
+    "división de jurisprudencia",
+    "catalogación",
+    "edición:",
+    "ejemplares",
+)
+_NATIVE_ARTIFACT = "\ufffe"
+
+
+def _normalize_native_reference(text: str) -> str:
+    # pypdfium2 emits U+FFFE for glyphs it cannot decode (frequently a
+    # line-break hyphen). Removing it avoids charging a reference artifact to
+    # the candidate as a fidelity error.
+    return text.replace(_NATIVE_ARTIFACT, "").strip()
+
+
+def _looks_like_body_page(text: str) -> bool:
+    folded = text.casefold()
+    if any(marker in folded for marker in _FRONT_MATTER_MARKERS):
+        return False
+    if folded.count("considerando") >= 2:
+        return True
+    if "en nombre de la república" in folded:
+        return True
+    return "vistos" in folded and ("falla" in folded or "fallamos" in folded)
+
 
 @dataclass(frozen=True, slots=True)
 class PdfPolicyCase:
@@ -53,6 +97,7 @@ class PdfPolicyCase:
     object_key: str
     source_sha256: str
     page_index: int
+    document_page_count: int
     reference_chars: int
     candidate_chars: int
     character_error_rate: float
@@ -101,27 +146,54 @@ def _download(store: Any, key: str) -> bytes:
     return payload if isinstance(payload, bytes) else bytes(payload)
 
 
-def _reference_page(pdf_bytes: bytes) -> tuple[int, str] | None:
+def _reference_page(pdf_bytes: bytes) -> tuple[int, str, int] | None:
     import pypdfium2 as pdfium
 
     document = pdfium.PdfDocument(pdf_bytes)
     try:
-        page_limit = min(len(document), MAX_PAGES_TO_SCAN)
+        page_count = len(document)
+        page_limit = min(page_count, MAX_PAGES_TO_SCAN)
         for page_index in range(page_limit):
             page = document[page_index]
             try:
                 text_page = page.get_textpage()
                 try:
-                    reference = text_page.get_text_range().strip()
+                    reference = _normalize_native_reference(
+                        text_page.get_text_range()
+                    )
                 finally:
                     text_page.close()
-                if len(reference) >= MIN_REFERENCE_CHARS:
-                    return page_index, reference
+                if len(reference) < MIN_REFERENCE_CHARS:
+                    continue
+                if not _looks_like_body_page(reference):
+                    continue
+                return page_index, reference, page_count
             finally:
                 page.close()
     finally:
         document.close()
     return None
+
+
+def _has_native_text(pdf_bytes: bytes, probe_pages: int = 3) -> bool:
+    import pypdfium2 as pdfium
+
+    document = pdfium.PdfDocument(pdf_bytes)
+    try:
+        for page_index in range(min(len(document), probe_pages)):
+            page = document[page_index]
+            try:
+                text_page = page.get_textpage()
+                try:
+                    if len(text_page.get_text_range().strip()) >= 200:
+                        return True
+                finally:
+                    text_page.close()
+            finally:
+                page.close()
+    finally:
+        document.close()
+    return False
 
 
 def _single_page_pdf(pdf_bytes: bytes, page_index: int) -> bytes:
@@ -193,14 +265,20 @@ def main() -> int:
     )
 
     cases: list[PdfPolicyCase] = []
+    attempted = 0
     for object_key in _list_pdf_keys(store):
         if len(cases) >= TARGET_CASES:
             break
+        if attempted >= MAX_DOCUMENTS_TO_ATTEMPT:
+            break
+        attempted += 1
         source = _download(store, object_key)
+        if not _has_native_text(source):
+            continue
         reference_page = _reference_page(source)
         if reference_page is None:
             continue
-        page_index, reference = reference_page
+        page_index, reference, document_page_count = reference_page
         page_pdf = _single_page_pdf(source, page_index)
 
         normalized = normalizer.normalize(
@@ -225,6 +303,7 @@ def main() -> int:
                 object_key=object_key,
                 source_sha256=hashlib.sha256(source).hexdigest(),
                 page_index=page_index,
+                document_page_count=document_page_count,
                 reference_chars=len(reference),
                 candidate_chars=len(candidate),
                 character_error_rate=score.character_error_rate,
@@ -247,7 +326,8 @@ def main() -> int:
 
     if len(cases) < TARGET_CASES:
         raise RuntimeError(
-            f"only {len(cases)} Principales PDFs exposed suitable native-text pages"
+            f"only {len(cases)} Principales PDFs exposed a native-text "
+            "judgment page after front matter"
         )
 
     calibration = tuple(case for case in cases if case.split == "calibration")
@@ -279,7 +359,9 @@ def main() -> int:
         "collection": "principales-sentencias",
         "route_under_test": "production_pdf_aware",
         "gold_method": (
-            "official born-digital PDF native text is the page reference; "
+            "official born-digital PDF native text is the page reference; the "
+            "selected page must expose real adjudicative structure (not cover, "
+            "credits, ISBN/catalog-card front matter or table of contents); "
             "that same vector-text page is extracted as a one-page PDF and "
             "normalized through the production PDF-aware Docling policy"
         ),
@@ -307,7 +389,9 @@ def main() -> int:
             "1.0 means content survived in order; a low value with high "
             "token_content_recall/precision means content is present but "
             "reordered. The reference is pypdfium2 content-stream order, "
-            "which is not guaranteed to equal logical reading order."
+            "which is not guaranteed to equal logical reading order. "
+            "document_page_count and page_index record where the selected "
+            "judgment page sits in the source volume."
         ),
         "limitations": (
             "This proves the born-digital Principales production route only. "
