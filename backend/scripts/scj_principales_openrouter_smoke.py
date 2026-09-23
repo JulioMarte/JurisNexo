@@ -63,6 +63,8 @@ class ModelObservation:
     cost_usd: float | None
     latency_ms: int
     requested_reasoning_effort: str
+    routed_provider: str
+    structured_mode: str
     value: dict[str, Any]
 
 
@@ -125,6 +127,8 @@ def _deepseek_observation(
         cost_usd=result.cost_usd,
         latency_ms=latency_ms,
         requested_reasoning_effort=reasoning_effort,
+        routed_provider=str(result.provider_metadata.get("routed_provider") or ""),
+        structured_mode=str(result.provider_metadata.get("structured_mode") or ""),
         value=dict(result.value),
     )
 
@@ -323,10 +327,17 @@ def main() -> int:
         api_key=api_key,
         model=models.jev_model,
     )
+    provider_order = tuple(
+        part.strip()
+        for part in models.deepseek_provider_order.split(",")
+        if part.strip()
+    )
     deepseek_provider = OpenRouterStructuredModelProvider(
         api_key=api_key,
         model=models.deepseek_model,
         base_url=openrouter.base_url,
+        structured_mode=models.deepseek_structured_mode,
+        provider_order=provider_order,
     )
     normalizer = DoclingStructuralNormalizer(
         ocr_language_tags=("iso:es",),
@@ -436,6 +447,8 @@ def main() -> int:
         cost_usd=jev_result.cost_usd,
         latency_ms=jev_latency_ms,
         requested_reasoning_effort="decisions",
+        routed_provider="",
+        structured_mode="decisions",
         value={"answers": jev_result.answers},
     )
     payload = {
@@ -451,6 +464,8 @@ def main() -> int:
         "jev_batch": asdict(jev_batch),
         "deepseek_model": models.deepseek_model,
         "deepseek_structured_thinking": DEEPSEEK_THINKING,
+        "deepseek_structured_mode": models.deepseek_structured_mode,
+        "deepseek_provider_order": list(provider_order),
         "text_char_limit_per_case": TEXT_LIMIT,
         "max_cost_usd": MAX_COST_USD,
         "observed_cost_usd": running_cost,
