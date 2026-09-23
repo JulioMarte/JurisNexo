@@ -86,7 +86,10 @@ def test_structured_object_uses_tool_call_arguments() -> None:
                 "type": "function",
                 "function": {
                     "name": "jurisnexo_visual_verification",
-                    "arguments": '{"matches": true, "corrected_text": null, "material_differences": []}',
+                    "arguments": (
+                        '{"matches": true, "corrected_text": null, '
+                        '"material_differences": []}'
+                    ),
                 },
             }
         ],
