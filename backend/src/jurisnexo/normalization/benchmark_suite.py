@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from statistics import mean
 from typing import Any
@@ -25,6 +25,16 @@ class SuiteRecord:
     legal_critical_recall: float
     critical_expected_count: int
     critical_matched_count: int
+    benchmark_identity: str = "legacy-unversioned"
+
+
+@dataclass(frozen=True, slots=True)
+class QualityThresholds:
+    max_mean_word_error_rate: float = 0.10
+    min_mean_token_content_recall: float = 0.98
+    min_mean_token_content_precision: float = 0.98
+    min_aggregate_legal_critical_recall: float = 1.0
+    min_document_pass_rate: float = 1.0
 
 
 def parse_configs(spec: str) -> tuple[str, ...]:
@@ -43,8 +53,13 @@ def parse_configs(spec: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def resume_key(config: str, source_sha256: str, page_index: int) -> str:
-    return f"{config}|{source_sha256}|{page_index}"
+def resume_key(
+    config: str,
+    source_sha256: str,
+    page_index: int,
+    benchmark_identity: str = "legacy-unversioned",
+) -> str:
+    return f"{config}|{source_sha256}|{page_index}|{benchmark_identity}"
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -158,9 +173,9 @@ def aggregate_records(
                 ),
             },
             "cost": {
-                "model_cost_usd": 0.0,
-                "cost_per_page_usd": 0.0,
-                "cost_per_document_usd": 0.0,
+                "provider_model_cost_usd": 0.0,
+                "provider_cost_per_page_usd": 0.0,
+                "provider_cost_per_document_usd": 0.0,
                 "output_bytes_per_page": (
                     output_bytes / page_count if page_count else 0.0
                 ),
@@ -169,14 +184,78 @@ def aggregate_records(
     return report
 
 
-def format_summary(report: dict[str, Any], *, recorded: int) -> str:
+def evaluate_quality_gates(
+    report: Mapping[str, Any],
+    *,
+    required_configs: tuple[str, ...],
+    thresholds: QualityThresholds,
+) -> dict[str, Any]:
+    configs: dict[str, Any] = {}
+    for config in required_configs:
+        metrics = report.get(config)
+        if not isinstance(metrics, dict):
+            configs[config] = {
+                "passed": False,
+                "checks": {"present": False},
+            }
+            continue
+        quality = metrics["quality"]
+        checks = {
+            "present": True,
+            "mean_word_error_rate": (
+                float(quality["mean_word_error_rate"])
+                <= thresholds.max_mean_word_error_rate
+            ),
+            "mean_token_content_recall": (
+                float(quality["mean_token_content_recall"])
+                >= thresholds.min_mean_token_content_recall
+            ),
+            "mean_token_content_precision": (
+                float(quality["mean_token_content_precision"])
+                >= thresholds.min_mean_token_content_precision
+            ),
+            "aggregate_legal_critical_recall": (
+                float(quality["aggregate_legal_critical_recall"])
+                >= thresholds.min_aggregate_legal_critical_recall
+            ),
+            "document_pass_rate": (
+                float(quality["document_pass_rate"])
+                >= thresholds.min_document_pass_rate
+            ),
+        }
+        configs[config] = {
+            "passed": all(checks.values()),
+            "checks": checks,
+        }
+    return {
+        "passed": all(item["passed"] for item in configs.values()),
+        "required_configs": list(required_configs),
+        "thresholds": {
+            "max_mean_word_error_rate": thresholds.max_mean_word_error_rate,
+            "min_mean_token_content_recall": thresholds.min_mean_token_content_recall,
+            "min_mean_token_content_precision": thresholds.min_mean_token_content_precision,
+            "min_aggregate_legal_critical_recall": (
+                thresholds.min_aggregate_legal_critical_recall
+            ),
+            "min_document_pass_rate": thresholds.min_document_pass_rate,
+        },
+        "configs": configs,
+    }
+
+
+def format_summary(
+    report: dict[str, Any],
+    *,
+    recorded: int,
+    quality_gate: Mapping[str, Any] | None = None,
+) -> str:
     lines = [
         "# SCJ Principales corpus suite",
         "",
-        f"Recorded page evaluations: {recorded}",
+        f"Recorded current-identity page evaluations: {recorded}",
         "",
         "| config | pages | docs | mean WER | p95 WER | recall | precision | "
-        "order | legal-critical | doc pass | s/page | pages/s | $/page |",
+        "order | legal-critical | doc pass | s/page | pages/s | provider $/page |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | "
         "--- | --- |",
     ]
@@ -195,13 +274,29 @@ def format_summary(report: dict[str, Any], *, recorded: int) -> str:
             f"{quality['document_pass_rate']:.4f} | "
             f"{speed['mean_seconds_per_page']:.3f} | "
             f"{speed['pages_per_second']:.3f} | "
-            f"{cost['cost_per_page_usd']:.6f} |"
+            f"{cost['provider_cost_per_page_usd']:.6f} |"
+        )
+    if quality_gate is not None:
+        lines.extend(
+            [
+                "",
+                "## Quality gate",
+                "",
+                (
+                    "**PASS**"
+                    if bool(quality_gate.get("passed"))
+                    else "**FAIL**"
+                ),
+                "",
+                "Workflow execution and quality acceptance are separate: a report can "
+                "be produced successfully while a required route fails its quality gate.",
+            ]
         )
     lines.append("")
     lines.append(
-        "Cost is provider/model cost. Technical normalization runs locally, so "
-        "its provider cost is 0; interpret seconds/page as the current compute "
-        "cost proxy. Legal-critical recall counts spans recognised by the "
-        "current detector."
+        "Provider/model cost excludes local compute. Technical normalization runs "
+        "locally, so provider cost is 0; seconds/page and bytes/page are the "
+        "current operational-cost proxies. Legal-critical recall counts spans "
+        "recognised by the current detector."
     )
     return "\n".join(lines) + "\n"
