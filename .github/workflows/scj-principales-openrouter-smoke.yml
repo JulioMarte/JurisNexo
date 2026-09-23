@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   smoke:
-    if: contains(github.event.pull_request.labels.*.name, 'live-provider-smoke')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'live-provider-smoke')
     name: Two Principales / three model calls max
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -43,6 +43,7 @@ jobs:
       JURISNEXO_OPENROUTER_JEV_MODEL: "~typesafe/jev-latest"
       JURISNEXO_OPENROUTER_DEEPSEEK_REASONING_EFFORT: "high"
       JURISNEXO_OPENROUTER_DEEPSEEK_MODEL: "deepseek/deepseek-v4.1-flash"
+      JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE: "tool"
     steps:
       - uses: actions/checkout@v6
 
