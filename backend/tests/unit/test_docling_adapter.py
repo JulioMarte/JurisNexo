@@ -144,10 +144,13 @@ def test_pdf_input_can_disable_ocr_for_native_text_diagnostics(
         "docling": docling_package,
     }
 
+    def fake_import_module_no_ocr(name: str) -> object:
+        return modules[name]
+
     monkeypatch.setattr(
         adapter.importlib,
         "import_module",
-        lambda name: modules[name],
+        fake_import_module_no_ocr,
     )
 
     result = DoclingStructuralNormalizer(
