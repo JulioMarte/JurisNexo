@@ -117,3 +117,55 @@ def test_image_input_uses_full_page_spanish_ocr(monkeypatch: Any) -> None:
     assert image_option.pipeline_options.ocr_options.lang == ["iso:es"]
     assert result.metadata["ocr_policy"] == "full_page"
     assert result.metadata["ocr_language_tags"] == ["iso:es"]
+
+
+
+def test_pdf_input_can_disable_ocr_for_native_text_diagnostics(
+    monkeypatch: Any,
+) -> None:
+    converter_module = SimpleNamespace(
+        DocumentConverter=_Converter,
+        PdfFormatOption=_FormatOption,
+        ImageFormatOption=_FormatOption,
+    )
+    base_models = SimpleNamespace(
+        DocumentStream=_DocumentStream,
+        InputFormat=_InputFormat,
+    )
+    pipeline_module = SimpleNamespace(
+        PdfPipelineOptions=_PipelineOptions,
+        OcrMode=_OcrMode,
+    )
+    docling_package = SimpleNamespace(__version__="2.129.0")
+    modules = {
+        "docling.document_converter": converter_module,
+        "docling.datamodel.base_models": base_models,
+        "docling.datamodel.pipeline_options": pipeline_module,
+        "docling": docling_package,
+    }
+
+    monkeypatch.setattr(
+        adapter.importlib,
+        "import_module",
+        lambda name: modules[name],
+    )
+
+    result = DoclingStructuralNormalizer(
+        ocr_language_tags=("iso:es",),
+        enable_ocr=False,
+    ).normalize(
+        b"fake-pdf",
+        FormatInspection(
+            media_type="application/pdf",
+            detected_format="application/pdf",
+            metadata={},
+        ),
+        filename="page.png",
+    )
+
+    options = _Converter.last_format_options
+    assert options is not None
+    pdf_option = options[_InputFormat.PDF]
+    assert pdf_option.pipeline_options.do_ocr is False
+    assert pdf_option.pipeline_options.ocr_options.lang == []
+    assert result.metadata["ocr_policy"] == "disabled"
