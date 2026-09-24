@@ -41,7 +41,7 @@ jobs:
       SUITE_CONFIGS: "pdf_aware,full_ocr"
       SUITE_DOCUMENT_LIMIT: ${{ github.event_name == 'workflow_dispatch' && '0' || '6' }}
       SUITE_PAGES_PER_DOCUMENT: "2"
-      SUITE_MAX_PAGES_TO_SCAN: "120"
+      SUITE_MAX_PAGES_TO_SCAN: ${{ github.event_name == 'workflow_dispatch' && '10000' || '120' }}
       SUITE_RESUME: "1"
       SUITE_SHARD_INDEX: ${{ matrix.shard_index }}
       SUITE_SHARD_COUNT: "4"
