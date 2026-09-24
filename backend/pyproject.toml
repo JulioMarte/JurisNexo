@@ -16,6 +16,14 @@ dependencies = [
 
 [project.scripts]
 jurisnexo-db-bootstrap = "jurisnexo.entrypoints.cli.database_bootstrap:main"
+jurisnexo-normalize-run = "jurisnexo.entrypoints.worker.normalization:main"
+
+[project.optional-dependencies]
+normalization = [
+    "boto3==1.43.93",
+    "docling==2.129.0",
+    "pypdfium2==5.13.0",
+]
 
 [dependency-groups]
 dev = [
