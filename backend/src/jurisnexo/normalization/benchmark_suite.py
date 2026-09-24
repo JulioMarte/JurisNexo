@@ -258,7 +258,6 @@ def evaluate_quality_gates(
     for config in required_configs:
         metrics_raw = report.get(config)
         if not isinstance(metrics_raw, Mapping):
-
             configs[config] = {
                 "passed": False,
                 "checks": {"present": False},
