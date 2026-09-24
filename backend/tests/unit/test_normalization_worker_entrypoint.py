@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
+import jurisnexo.entrypoints.worker.normalization as normalization_worker
 from jurisnexo.acquisition.s3_object_store import (
     S3ObjectStore,
     S3ObjectStoreConfig,
@@ -114,3 +115,29 @@ def test_worker_validation_accepts_explicit_resume_identity() -> None:
     args = _valid_args()
     args.resume_run_id = "run-123"
     validate_args(args)
+
+
+def test_worker_main_returns_distinct_retryable_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        normalization_worker,
+        "run",
+        lambda args: {
+            "run_id": "run-1",
+            "final_status": "retryable_pending",
+        },
+    )
+    exit_code = normalization_worker.main(
+        [
+            "--scope-id",
+            "scope-1",
+            "--manifest-key",
+            "manifest.json",
+            "--pipeline-version",
+            "normalization-v1",
+            "--config-sha256",
+            "a" * 64,
+        ]
+    )
+    assert exit_code == 3
