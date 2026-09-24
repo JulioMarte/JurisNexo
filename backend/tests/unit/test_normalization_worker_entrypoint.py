@@ -8,7 +8,7 @@ from jurisnexo.acquisition.s3_object_store import (
     S3ObjectStore,
     S3ObjectStoreConfig,
 )
-from jurisnexo.entrypoints.worker.normalization import _parser, _read_manifest
+from jurisnexo.entrypoints.worker.normalization import build_parser, read_manifest
 
 
 @dataclass
@@ -41,7 +41,7 @@ def _store(payload: bytes, metadata: dict[str, str]) -> S3ObjectStore:
 
 
 def test_worker_cli_requires_durable_run_identity_arguments() -> None:
-    parsed = _parser().parse_args(
+    parsed = build_parser().parse_args(
         [
             "--scope-id",
             "scope-1",
@@ -61,7 +61,7 @@ def test_worker_cli_requires_durable_run_identity_arguments() -> None:
 
 def test_worker_manifest_reader_rejects_metadata_hash_mismatch() -> None:
     with pytest.raises(RuntimeError, match="payload hash"):
-        _read_manifest(
+        read_manifest(
             _store(b"{}", {"payload_sha256": "0" * 64}),
             "manifest.json",
         )
