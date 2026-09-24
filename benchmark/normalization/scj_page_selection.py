@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from jurisnexo.normalization.gold import (
+    ReferenceTextHealth,
+    assess_reference_text_health,
+)
+
 # Compiled Principales volumes begin with cover, credits, ISBN and library
 # catalog-card front matter and one or more tables of contents. Selecting the
 # first page with enough native text therefore samples bibliographic front
@@ -31,16 +36,33 @@ RUNNING_NAVIGATION_MARKERS: tuple[str, ...] = (
 # a fidelity error.
 NATIVE_ARTIFACT = "\ufffe"
 
+# These glyphs were observed in official Principales native text layers where
+# Spanish accents/letters were mapped through a broken legacy encoding. They are
+# benchmark-reference warnings, not normalization-core language rules.
+SCJ_NATIVE_MOJIBAKE_MARKERS = frozenset(
+    {"⁄", "˙", "Û", "Ì", "È", "Ò", "Ø", "œ", "Æ", "æ"}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ReferencePage:
     page_index: int
     document_page_count: int
     text: str
+    reference_risk_flags: tuple[str, ...] = ()
 
 
 def normalize_native_reference(text: str) -> str:
     return text.replace(NATIVE_ARTIFACT, "").strip()
+
+
+def assess_scj_native_reference(text: str) -> ReferenceTextHealth:
+    return assess_reference_text_health(
+        text,
+        suspicious_characters=SCJ_NATIVE_MOJIBAKE_MARKERS,
+        minimum_suspicious_count=3,
+        maximum_suspicious_rate=0.002,
+    )
 
 
 def looks_like_body_page(text: str) -> bool:
@@ -134,6 +156,9 @@ def select_reference_pages(
                         page_index=page_index,
                         document_page_count=page_count,
                         text=reference,
+                        reference_risk_flags=(
+                            assess_scj_native_reference(reference).risk_flags
+                        ),
                     )
                 )
             finally:
