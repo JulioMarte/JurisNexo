@@ -8,7 +8,11 @@ from jurisnexo.acquisition.s3_object_store import (
     S3ObjectStore,
     S3ObjectStoreConfig,
 )
-from jurisnexo.entrypoints.worker.normalization import build_parser, read_manifest
+from jurisnexo.entrypoints.worker.normalization import (
+    build_parser,
+    read_manifest,
+    validate_args,
+)
 
 
 @dataclass
@@ -40,8 +44,8 @@ def _store(payload: bytes, metadata: dict[str, str]) -> S3ObjectStore:
     )
 
 
-def test_worker_cli_requires_durable_run_identity_arguments() -> None:
-    parsed = build_parser().parse_args(
+def _valid_args():
+    return build_parser().parse_args(
         [
             "--scope-id",
             "scope-1",
@@ -53,6 +57,10 @@ def test_worker_cli_requires_durable_run_identity_arguments() -> None:
             "a" * 64,
         ]
     )
+
+
+def test_worker_cli_requires_durable_run_identity_arguments() -> None:
+    parsed = _valid_args()
     assert parsed.scope_id == "scope-1"
     assert parsed.manifest_key == "manifest.json"
     assert parsed.pipeline_version == "normalization-v1"
@@ -67,26 +75,11 @@ def test_worker_manifest_reader_rejects_metadata_hash_mismatch() -> None:
         )
 
 
-def _valid_args() -> object:
-    return _parser().parse_args(
-        [
-            "--scope-id",
-            "scope-1",
-            "--manifest-key",
-            "manifest.json",
-            "--pipeline-version",
-            "normalization-v1",
-            "--config-sha256",
-            "a" * 64,
-        ]
-    )
-
-
 def test_worker_validation_rejects_non_hex_digest() -> None:
     args = _valid_args()
     args.config_sha256 = "z" * 64
     with pytest.raises(ValueError, match="hexadecimal"):
-        _validate_args(args)
+        validate_args(args)
 
 
 @pytest.mark.parametrize(
@@ -106,17 +99,17 @@ def test_worker_validation_rejects_non_positive_limits(
     args = _valid_args()
     setattr(args, field, value)
     with pytest.raises(ValueError, match=message):
-        _validate_args(args)
+        validate_args(args)
 
 
 def test_worker_validation_rejects_empty_resume_identity() -> None:
     args = _valid_args()
     args.resume_run_id = "   "
     with pytest.raises(ValueError, match="resume-run-id"):
-        _validate_args(args)
+        validate_args(args)
 
 
 def test_worker_validation_accepts_explicit_resume_identity() -> None:
     args = _valid_args()
     args.resume_run_id = "run-123"
-    _validate_args(args)
+    validate_args(args)
