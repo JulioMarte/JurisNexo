@@ -18,10 +18,6 @@ from jurisnexo.normalization.decision_batching import (
     DecisionRecord,
 )
 from jurisnexo.normalization.jev_batch_evaluator import JevBatchQualityEvaluator
-from jurisnexo.normalization.jev_claims import (
-    EvidenceClaim,
-    evaluate_claim_support_batch,
-)
 from jurisnexo.normalization.jev_calibration import (
     BinaryRoutingObservation,
     assess_promotion_readiness,
@@ -29,6 +25,11 @@ from jurisnexo.normalization.jev_calibration import (
     evaluate_frozen_candidate_on_holdout,
     select_candidate_threshold,
 )
+from jurisnexo.normalization.jev_claims import (
+    EvidenceClaim,
+    evaluate_claim_support_batch,
+)
+from scj_page_selection import select_reference_pages
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 OUTPUT = Path(
@@ -37,10 +38,17 @@ OUTPUT = Path(
         ".artifacts/jev-principales-benchmark.json",
     )
 )
-SOURCE_CASES = int(os.environ.get("JEV_PRINCIPALES_SOURCE_CASES", "4"))
+SOURCE_CASES = int(os.environ.get("JEV_PRINCIPALES_SOURCE_CASES", "36"))
+PAGES_PER_SOURCE = int(os.environ.get("JEV_PRINCIPALES_PAGES_PER_SOURCE", "3"))
 EXCERPT_CHARS = int(os.environ.get("JEV_PRINCIPALES_EXCERPT_CHARS", "3500"))
 MAX_COST_USD = float(
-    os.environ.get("JEV_PRINCIPALES_MAX_COST_USD", "0.003")
+    os.environ.get("JEV_PRINCIPALES_MAX_COST_USD", "0.05")
+)
+MIN_POSITIVE_CASES = int(
+    os.environ.get("JEV_PRINCIPALES_MIN_POSITIVE_CASES", "25")
+)
+MIN_NEGATIVE_CASES = int(
+    os.environ.get("JEV_PRINCIPALES_MIN_NEGATIVE_CASES", "25")
 )
 
 _IDENTIFIER_PATTERNS = (
@@ -51,10 +59,7 @@ _IDENTIFIER_PATTERNS = (
         r"([A-Z0-9./-]{4,})",
         re.IGNORECASE,
     ),
-    re.compile(
-        r"\bart(?:í|i)culo\s+(\d+(?:[.-]\d+)*)",
-        re.IGNORECASE,
-    ),
+    re.compile(r"\bart(?:í|i)culo\s+(\d+(?:[.-]\d+)*)", re.IGNORECASE),
     re.compile(
         r"\bley\s+(?:núm(?:ero)?\.?\s*)?(\d+[\d-]*)",
         re.IGNORECASE,
@@ -67,6 +72,7 @@ class LabeledQualityRecord:
     record_id: str
     expected_corrupted: bool
     source_key: str
+    page_index: int
     text: str
 
 
@@ -116,24 +122,23 @@ def _list_pdf_keys(store: Any) -> tuple[str, ...]:
 
 
 def _download(store: Any, key: str) -> bytes:
-    response = store.client.get_object(
-        Bucket=store.config.bucket,
-        Key=key,
-    )
+    response = store.client.get_object(Bucket=store.config.bucket, Key=key)
     payload = response["Body"].read()
     return payload if isinstance(payload, bytes) else bytes(payload)
 
 
-def _native_excerpt(pdf_bytes: bytes) -> str:
+def _adjudicative_excerpts(pdf_bytes: bytes) -> tuple[tuple[int, str], ...]:
     pages = select_reference_pages(
         pdf_bytes,
         min_reference_chars=800,
         max_pages_to_scan=120,
-        max_pages_per_document=1,
+        max_pages_per_document=PAGES_PER_SOURCE,
     )
-    if not pages:
-        return ""
-    return pages[0].text[:EXCERPT_CHARS]
+    return tuple(
+        (page.page_index, page.text[:EXCERPT_CHARS])
+        for page in pages
+        if len(page.text) >= 1000
+    )
 
 
 def _visible_corruption(text: str) -> str:
@@ -149,8 +154,10 @@ def _visible_corruption(text: str) -> str:
                 chars[index] = "�"
                 return text[:start] + "".join(chars) + text[end:]
 
-    words = re.finditer(r"\b[A-Za-zÁÉÍÓÚáéíóúÑñ]{8,}\b", text)
-    match = next(words, None)
+    match = next(
+        re.finditer(r"\b[A-Za-zÁÉÍÓÚáéíóúÑñ]{8,}\b", text),
+        None,
+    )
     if match is None:
         raise RuntimeError("could not create visible corruption")
     token = match.group(0)
@@ -162,9 +169,8 @@ def _visible_corruption(text: str) -> str:
 def _extract_identifier(text: str) -> str | None:
     for pattern in _IDENTIFIER_PATTERNS:
         match = pattern.search(text)
-        if match is None:
-            continue
-        return match.group(1) if match.lastindex else match.group(0)
+        if match is not None:
+            return match.group(1) if match.lastindex else match.group(0)
     return None
 
 
@@ -195,16 +201,18 @@ def _split_record_id(record_id: str) -> str:
 
 
 def main() -> int:
-    if not 2 <= SOURCE_CASES <= 8:
-        raise ValueError(
-            "JEV_PRINCIPALES_SOURCE_CASES must be between 2 and 8"
-        )
+    if not 2 <= SOURCE_CASES <= 64:
+        raise ValueError("JEV_PRINCIPALES_SOURCE_CASES must be between 2 and 64")
+    if not 1 <= PAGES_PER_SOURCE <= 5:
+        raise ValueError("JEV_PRINCIPALES_PAGES_PER_SOURCE must be between 1 and 5")
     if not 1000 <= EXCERPT_CHARS <= 6000:
         raise ValueError(
             "JEV_PRINCIPALES_EXCERPT_CHARS must be between 1000 and 6000"
         )
-    if not 0 < MAX_COST_USD <= 0.01:
-        raise ValueError("JEV benchmark cost cap must be > 0 and <= 0.01")
+    if not 0 < MAX_COST_USD <= 0.05:
+        raise ValueError("JEV benchmark cost cap must be > 0 and <= 0.05")
+    if MIN_POSITIVE_CASES < 1 or MIN_NEGATIVE_CASES < 1:
+        raise ValueError("JEV promotion sample minima must be positive")
 
     settings = get_openrouter_settings()
     models = get_normalization_model_settings()
@@ -217,38 +225,48 @@ def main() -> int:
     )
     store = build_s3_object_store()
     keys = _list_pdf_keys(store)
-    if len(keys) < SOURCE_CASES:
-        raise RuntimeError(
-            f"expected at least {SOURCE_CASES} Principales PDFs, found {len(keys)}"
-        )
+    if not keys:
+        raise RuntimeError("Principales corpus listing returned no PDFs")
 
     labeled: list[LabeledQualityRecord] = []
     claims: list[EvidenceClaim] = []
     claim_expectations: dict[str, str] = {}
+    used_sources: list[str] = []
+    skipped_sources: list[dict[str, str]] = []
 
-    for case_index, key in enumerate(keys[:SOURCE_CASES], start=1):
-        excerpt = _native_excerpt(_download(store, key))
-        if len(excerpt) < 1000:
-            raise RuntimeError(
-                f"Principales case {key} has insufficient native text "
-                "for JEV benchmark"
+    for key in keys:
+        if len(used_sources) >= SOURCE_CASES:
+            break
+        excerpts = _adjudicative_excerpts(_download(store, key))
+        if not excerpts:
+            skipped_sources.append(
+                {"source_key": key, "reason": "no_adjudicative_excerpt"}
+            )
+            continue
+
+        case_index = len(used_sources) + 1
+        used_sources.append(key)
+        for page_ordinal, (page_index, excerpt) in enumerate(excerpts, start=1):
+            prefix = f"case_{case_index}_page_{page_ordinal}"
+            labeled.extend(
+                (
+                    LabeledQualityRecord(
+                        f"{prefix}_clean", False, key, page_index, excerpt
+                    ),
+                    LabeledQualityRecord(
+                        f"{prefix}_corrupt",
+                        True,
+                        key,
+                        page_index,
+                        _visible_corruption(excerpt),
+                    ),
+                )
             )
 
-        clean_id = f"case_{case_index}_clean"
-        corrupt_id = f"case_{case_index}_corrupt"
-        labeled.extend(
-            (
-                LabeledQualityRecord(clean_id, False, key, excerpt),
-                LabeledQualityRecord(
-                    corrupt_id,
-                    True,
-                    key,
-                    _visible_corruption(excerpt),
-                ),
-            )
-        )
-
-        identifier = _extract_identifier(excerpt)
+        # Claim verification is deliberately limited to one excerpt per source
+        # so quality-routing scale can grow without multiplying provider cost.
+        claim_excerpt = excerpts[0][1]
+        identifier = _extract_identifier(claim_excerpt)
         if identifier is not None:
             supported_id = f"case_{case_index}_claim_supported"
             contradicted_id = f"case_{case_index}_claim_contradicted"
@@ -256,13 +274,13 @@ def main() -> int:
                 (
                     EvidenceClaim(
                         claim_id=supported_id,
-                        evidence=excerpt,
+                        evidence=claim_excerpt,
                         proposed_value=identifier,
                         field_name="legal_identifier",
                     ),
                     EvidenceClaim(
                         claim_id=contradicted_id,
-                        evidence=excerpt,
+                        evidence=claim_excerpt,
                         proposed_value=_wrong_value(identifier),
                         field_name="legal_identifier",
                     ),
@@ -270,6 +288,9 @@ def main() -> int:
             )
             claim_expectations[supported_id] = "supported"
             claim_expectations[contradicted_id] = "contradicted"
+
+    if len(used_sources) < 2:
+        raise RuntimeError("fewer than two Principales sources exposed adjudicative text")
 
     quality_evaluator = JevBatchQualityEvaluator(
         provider=provider,
@@ -288,29 +309,28 @@ def main() -> int:
                 metadata={
                     "source": "SCJ",
                     "collection": "principales-sentencias",
+                    "source_key": item.source_key,
+                    "page_index": item.page_index,
                     "expected_corrupted": item.expected_corrupted,
                 },
             )
             for item in labeled
         ),
         state_description=(
-            "Records are source-derived SCJ Principales text excerpts. Some were "
-            "left untouched and some contain a controlled visible transcription "
-            "corruption. Judge only observable transcription quality."
+            "Records are source-derived SCJ Principales adjudicative-page excerpts. "
+            "Some were left untouched and some contain a controlled visible "
+            "transcription corruption. Judge only observable transcription quality."
         ),
     )
     quality_by_id = {
-        item.record_id: item.probabilities
-        for item in quality_result.records
+        item.record_id: item.probabilities for item in quality_result.records
     }
     quality_metrics = tuple(
         QualityMetric(
             record_id=item.record_id,
             expected_corrupted=item.expected_corrupted,
             acceptable_probability=quality_by_id[item.record_id].acceptable,
-            material_error_probability=(
-                quality_by_id[item.record_id].material_error
-            ),
+            material_error_probability=quality_by_id[item.record_id].material_error,
             uncertain_probability=quality_by_id[item.record_id].uncertain,
             legal_critical_damage_probability=(
                 quality_by_id[item.record_id].legal_critical_damage
@@ -322,22 +342,33 @@ def main() -> int:
         for item in labeled
     )
 
-    claim_evaluation = evaluate_claim_support_batch(
-        provider,
-        claims=tuple(claims),
-    )
-    claim_metrics = tuple(
-        ClaimMetric(
-            claim_id=item.claim_id,
-            expected=claim_expectations[item.claim_id],
-            support_probability=item.support_probability,
-            contradiction_probability=item.contradiction_probability,
-            insufficient_probability=item.insufficient_probability,
+    claim_metrics: tuple[ClaimMetric, ...] = ()
+    claim_telemetry: list[dict[str, object]] = []
+    claim_cost = 0.0
+    if claims:
+        claim_evaluation = evaluate_claim_support_batch(
+            provider,
+            claims=tuple(claims),
         )
-        for item in claim_evaluation.decisions
-    )
+        claim_metrics = tuple(
+            ClaimMetric(
+                claim_id=item.claim_id,
+                expected=claim_expectations[item.claim_id],
+                support_probability=item.support_probability,
+                contradiction_probability=item.contradiction_probability,
+                insufficient_probability=item.insufficient_probability,
+            )
+            for item in claim_evaluation.decisions
+        )
+        claim_telemetry = [
+            asdict(item) for item in claim_evaluation.telemetry
+        ]
+        claim_cost = sum(
+            telemetry.cost_usd or 0.0
+            for telemetry in claim_evaluation.telemetry
+        )
 
-    thresholds = (0.25, 0.50, 0.75)
+    thresholds = tuple(index / 20 for index in range(1, 20))
     calibration_quality = tuple(
         item
         for item in quality_metrics
@@ -364,6 +395,7 @@ def main() -> int:
         )
         for item in holdout_quality
     )
+
     candidate = select_candidate_threshold(
         calibration_observations,
         thresholds=thresholds,
@@ -410,14 +442,8 @@ def main() -> int:
         if claim_metrics
         else 0.0
     )
-
     quality_cost = sum(
-        batch.cost_usd or 0.0
-        for batch in quality_result.batches
-    )
-    claim_cost = sum(
-        telemetry.cost_usd or 0.0
-        for telemetry in claim_evaluation.telemetry
+        batch.cost_usd or 0.0 for batch in quality_result.batches
     )
     total_cost = quality_cost + claim_cost
     if total_cost > MAX_COST_USD:
@@ -426,15 +452,21 @@ def main() -> int:
         )
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "model": models.jev_model,
-        "source_case_count": SOURCE_CASES,
+        "requested_source_case_count": SOURCE_CASES,
+        "used_source_case_count": len(used_sources),
+        "pages_per_source": PAGES_PER_SOURCE,
+        "used_sources": used_sources,
+        "skipped_sources": skipped_sources,
         "quality_record_count": len(quality_metrics),
         "claim_record_count": len(claim_metrics),
+        "runtime_policy": "shadow",
         "context_policy": {
             "max_context_tokens": 32_000,
             "target_total_tokens": 24_000,
             "reserved_instruction_tokens": 4_000,
+            "max_records_per_batch": 20,
         },
         "quality_batch_telemetry": [
             asdict(batch) for batch in quality_result.batches
@@ -447,29 +479,32 @@ def main() -> int:
         "candidate_material_error_threshold": candidate.threshold,
         "candidate_calibration_metrics": asdict(candidate.calibration),
         "candidate_holdout_metrics": asdict(candidate_holdout),
-        "material_error_brier_score": binary_brier,
+        "calibration_material_error_brier_score": calibration_brier,
+        "holdout_material_error_brier_score": holdout_brier,
+        "promotion_sample_minima": {
+            "positive_per_split": MIN_POSITIVE_CASES,
+            "negative_per_split": MIN_NEGATIVE_CASES,
+        },
         "promotion_assessment": asdict(promotion),
         "claim_metrics": [asdict(item) for item in claim_metrics],
         "claim_argmax_accuracy": claim_accuracy,
-        "claim_telemetry": [
-            asdict(item) for item in claim_evaluation.telemetry
-        ],
+        "claim_telemetry": claim_telemetry,
         "observed_quality_cost_usd": quality_cost,
         "observed_claim_cost_usd": claim_cost,
         "observed_total_cost_usd": total_cost,
         "limitations": [
             (
-                "Visible-corruption routing measures text-observable damage only. "
-                "JEV cannot know that a plausible identifier is wrong without reference."
+                "Controlled corruption measures text-observable damage; it is not "
+                "a substitute for naturally occurring production-error prevalence."
             ),
             (
-                "Claim verification supplies evidence and therefore measures a "
-                "different capability from transcription-quality routing."
+                "Claim verification supplies source evidence and therefore measures "
+                "a different capability from transcription-quality routing."
             ),
             (
-                "Calibration and holdout are deterministically separated. This "
-                "bounded benchmark is still not sufficient by itself to promote "
-                "JEV from shadow to active production routing."
+                "All excerpts from one source volume stay in the same split. "
+                "Benchmark eligibility is evidence only: runtime remains shadow "
+                "until a separate production-policy change is reviewed."
             ),
         ],
     }
