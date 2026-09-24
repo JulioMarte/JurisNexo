@@ -459,6 +459,16 @@ path = "backend/tests/unit/test_normalization_gold.py"
 evidence = ["unit", "contract"]
 
 [[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_source_fidelity.py"
+evidence = ["unit", "contract", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/principales_failed_page_diagnostics.py"
+evidence = ["benchmark", "adversarial"]
+
+[[proofs]]
 guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 path = "backend/tests/architecture/test_normalization_source_agnostic.py"
 evidence = ["fitness"]
@@ -476,4 +486,4 @@ evidence = ["integration"]
 [[gaps]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 missing_evidence = ["benchmark"]
-reason = "Durable append-only persistence of JEV/visual observations and proposed corrections through the supported normalization path is proven against real PostgreSQL with provider doubles at the external model boundary. What remains unproven is a successful real OpenRouter provider run flowing through that path after the tool-first structured-output repair; earlier json_schema routed smokes failed and are retained as historical evidence, not as proof that the DeepSeek model itself lacks the capability."
+reason = "Tool-first live OpenRouter smokes now prove that the repaired JEV/structured-text provider routes can return valid live responses, and durable append-only JEV/visual observation persistence is separately proven against real PostgreSQL with provider doubles. What remains unproven is one supported run in which a real external provider response flows through the durable PostgreSQL/S3 evidence-persistence path end to end. Visual promotion also remains blocked on independently human-verified clean visual gold."
