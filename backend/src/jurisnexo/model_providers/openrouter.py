@@ -160,6 +160,18 @@ class OpenRouterStructuredModelProvider:
             model = body.get("model")
             response_id = body.get("id")
             provider_raw = body.get("provider")
+            provider_metadata: JsonObject = {
+                "routed_provider": (
+                    str(provider_raw) if provider_raw is not None else ""
+                ),
+                "requested_model": self.model,
+                "structured_mode": self.structured_mode,
+                "provider_order": list(self.provider_order),
+                "allow_provider_fallbacks": self.allow_provider_fallbacks,
+                "structured_attempt_count": attempt,
+                "invalid_structured_attempts": invalid_attempts,
+                "ignored_providers_on_retry": ignored_providers,
+            }
             return StructuredGenerationResult(
                 value=value,
                 provider=self.provider_name,
@@ -173,18 +185,7 @@ class OpenRouterStructuredModelProvider:
                     total_tokens=aggregate_total,
                 ),
                 cost_usd=aggregate_cost,
-                provider_metadata={
-                    "routed_provider": (
-                        str(provider_raw) if provider_raw is not None else ""
-                    ),
-                    "requested_model": self.model,
-                    "structured_mode": self.structured_mode,
-                    "provider_order": list(self.provider_order),
-                    "allow_provider_fallbacks": self.allow_provider_fallbacks,
-                    "structured_attempt_count": attempt,
-                    "invalid_structured_attempts": invalid_attempts,
-                    "ignored_providers_on_retry": ignored_providers,
-                },
+                provider_metadata=provider_metadata,
             )
 
         raise AssertionError("structured-attempt loop terminated unexpectedly")
