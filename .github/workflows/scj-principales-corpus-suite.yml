@@ -15,6 +15,10 @@ on:
       - ".github/workflows/scj-principales-corpus-suite.yml"
   workflow_dispatch:
     inputs:
+      mode:
+        description: "suite or failed_pages diagnostic"
+        required: true
+        default: "suite"
       shard_index:
         description: "Zero-based content-hash shard index"
         required: true
@@ -79,13 +83,20 @@ jobs:
             "pillow==12.3.0"
 
       - name: Run configuration-comparison corpus suite
+        if: inputs.mode != 'failed_pages'
         env:
           SUITE_OUTPUT_DIR: ${{ runner.temp }}/principales-corpus-suite
         run: |
           python benchmark/normalization/principales_corpus_suite.py
 
+      - name: Reproduce failed pages and preserve text diffs
+        if: inputs.mode == 'failed_pages'
+        env:
+          FAILURE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/principales-failed-pages
+        run: python benchmark/normalization/principales_failed_page_diagnostics.py
+
       - name: Publish suite summary
-        if: always()
+        if: always() && inputs.mode != 'failed_pages'
         run: |
           python - <<'PY'
           import os
@@ -111,6 +122,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scj-principales-corpus-suite-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/principales-corpus-suite/**
+          path: |
+            ${{ runner.temp }}/principales-corpus-suite/**
+            ${{ runner.temp }}/principales-failed-pages/**
           if-no-files-found: warn
           retention-days: 90

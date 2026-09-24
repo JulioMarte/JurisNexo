@@ -1,0 +1,18 @@
+{
+  "source_run": 35940805815,
+  "inventory_sha256": "31de3eb9e72b66001f329e859c8b45d434c40a58e9c8ee21f21721c7a8ea7023",
+  "cases": [
+    {
+      "source_sha256": "8d2e3cd868670069da07f1548ceb16ed5e1f05dc3ea9c6d7c926771a427acaf2",
+      "page_index": 26
+    },
+    {
+      "source_sha256": "fbba89b7bf822eb622dfa56e4116e897601b0fd8083c3fef70ef3d7743081d52",
+      "page_index": 52
+    },
+    {
+      "source_sha256": "fbba89b7bf822eb622dfa56e4116e897601b0fd8083c3fef70ef3d7743081d52",
+      "page_index": 90
+    }
+  ]
+}
