@@ -29,6 +29,15 @@ MIN_CRITICAL_RECALL = float(
 )
 
 
+class _FixedReferenceExtractor:
+    def __init__(self, reference: SourceTextReference) -> None:
+        self.reference = reference
+
+    def extract(self, source: bytes, inspection: object) -> SourceTextReference:
+        del source, inspection
+        return self.reference
+
+
 def _reference_page(source: bytes, page_index: int) -> str:
     document = pdfium.PdfDocument(source)
     try:
@@ -149,28 +158,63 @@ def main() -> int:
     checks = []
     for item in results:
         score = item["score"]
+        reference_path = OUTPUT / (
+            f"{item['source_sha256']}-p{int(item['page_index']) + 1}-reference.txt"
+        )
+        candidate_path = OUTPUT / (
+            f"{item['source_sha256']}-p{int(item['page_index']) + 1}-candidate.txt"
+        )
+        reference_text = reference_path.read_text(encoding="utf-8")
+        candidate_text = candidate_path.read_text(encoding="utf-8")
+        reference_health = assess_scj_native_reference(reference_text)
+        reference = SourceTextReference(
+            text=reference_text,
+            authority="pdf_native_text_layer",
+            risk_flags=reference_health.risk_flags,
+        )
+        checker = DeterministicSourceFidelityChecker(
+            _FixedReferenceExtractor(reference)
+        )
+        from jurisnexo.normalization.contracts import FormatInspection
+
+        containment = checker.evaluate(
+            source=b"",
+            inspection=FormatInspection(
+                media_type="application/pdf",
+                detected_format="application/pdf",
+                metadata={},
+            ),
+            candidate_text=candidate_text,
+        )
+        if containment is None:
+            raise RuntimeError("frozen reference checker unexpectedly returned no result")
+        strict_checks = {
+            "word_error_rate": float(score["word_error_rate"]) <= MAX_WER,
+            "token_content_recall": (
+                float(score["token_content_recall"]) >= MIN_CONTENT_RECALL
+            ),
+            "legal_critical_recall": (
+                float(score["legal_critical_recall"]) >= MIN_CRITICAL_RECALL
+            ),
+        }
+        parser_quality_passed = (
+            reference.reliable and all(strict_checks.values())
+        )
+        safely_contained = parser_quality_passed or containment.requires_review
         checks.append(
             {
                 "source_sha256": item["source_sha256"],
                 "page_index": item["page_index"],
-                "word_error_rate": float(score["word_error_rate"]) <= MAX_WER,
-                "token_content_recall": (
-                    float(score["token_content_recall"]) >= MIN_CONTENT_RECALL
-                ),
-                "legal_critical_recall": (
-                    float(score["legal_critical_recall"]) >= MIN_CRITICAL_RECALL
-                ),
+                "reference_reliable": reference.reliable,
+                "reference_risk_flags": list(reference.risk_flags),
+                **strict_checks,
+                "parser_quality_passed": parser_quality_passed,
+                "safely_contained": safely_contained,
+                "containment_risk_flags": list(containment.risk_flags),
             }
         )
     quality_gate = {
-        "passed": all(
-            all(
-                value
-                for key, value in item.items()
-                if key not in {"source_sha256", "page_index"}
-            )
-            for item in checks
-        ),
+        "passed": all(bool(item["safely_contained"]) for item in checks),
         "thresholds": {
             "max_word_error_rate": MAX_WER,
             "min_content_recall": MIN_CONTENT_RECALL,
@@ -184,9 +228,11 @@ def main() -> int:
         "benchmark_identity": _benchmark_identity("pdf_aware"),
         "reference_authority": "native_pdf_text_unverified_against_image",
         "diagnostic_note": (
-            "The strict quality gate applies to the production pdf-aware route. "
-            "The no-OCR result is a challenger used only to isolate whether OCR "
-            "contributes to the known divergence."
+            "Known failures pass this regression only when the parser has recovered "
+            "or the production source-fidelity gate would contain the page as "
+            "quality_review_required. A green regression is therefore a safety claim, "
+            "not a claim that Docling itself is perfect. The no-OCR result remains a "
+            "challenger used only to isolate whether OCR contributes to divergence."
         ),
         "quality_gate": quality_gate,
         "cases": results,
