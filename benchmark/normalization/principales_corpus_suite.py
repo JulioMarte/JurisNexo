@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from botocore.exceptions import ClientError
+from scj_page_selection import has_native_text, select_reference_pages
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
@@ -29,8 +30,6 @@ from jurisnexo.normalization.benchmark_suite import (
 from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
 from jurisnexo.normalization.quality import extract_text_from_structural_json
-from scj_page_selection import has_native_text, select_reference_pages
-
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 CHECKPOINT_PREFIX = "derived/normalization/benchmark/principales-corpus-suite/"
 
