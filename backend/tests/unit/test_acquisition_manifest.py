@@ -554,3 +554,41 @@ def test_parse_run_manifest_rejects_noncanonical_or_tampered_counts() -> None:
     ).encode()
     with pytest.raises(ValueError, match="status counts"):
         parse_acquisition_run_manifest(tampered_payload)
+
+
+def test_parse_run_manifest_rejects_digest_tampering() -> None:
+    builder = AcquisitionRunManifestBuilder(
+        source="tc",
+        scope="decisions",
+        storage_bucket="official-corpus",
+        ingestion_id="parse-digest-invalid",
+        started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
+    )
+    candidate = _candidate()
+    sha = sha256_hex(b"%PDF digest")
+    builder.record_existing(
+        candidate=candidate,
+        sha256=sha,
+        object_key=object_key_for(
+            source="constitutional_court",
+            collection="decisions",
+            sha256=sha,
+        ),
+    )
+    manifest = builder.build(
+        completed_at=datetime(2026, 9, 19, 12, 1, tzinfo=UTC)
+    )
+    tampered = json.loads(manifest.canonical_bytes())
+    tampered["source_inventory_sha256"] = "0" * 64
+    payload = (
+        json.dumps(
+            tampered,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+
+    with pytest.raises(ValueError, match="source inventory digest"):
+        parse_acquisition_run_manifest(payload)
