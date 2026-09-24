@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from jurisnexo.normalization.adapters.pdf_native_text import (
+    DEFAULT_PDF_NATIVE_MOJIBAKE_MARKERS,
+)
 from jurisnexo.normalization.gold import (
     ReferenceTextHealth,
     assess_reference_text_health,
@@ -39,9 +42,7 @@ NATIVE_ARTIFACT = "\ufffe"
 # These glyphs were observed in official Principales native text layers where
 # Spanish accents/letters were mapped through a broken legacy encoding. They are
 # benchmark-reference warnings, not normalization-core language rules.
-SCJ_NATIVE_MOJIBAKE_MARKERS = frozenset(
-    {"⁄", "˙", "Û", "Ì", "È", "Ò", "Ø", "œ", "Æ", "æ"}
-)
+SCJ_NATIVE_MOJIBAKE_MARKERS = DEFAULT_PDF_NATIVE_MOJIBAKE_MARKERS
 
 
 @dataclass(frozen=True, slots=True)
