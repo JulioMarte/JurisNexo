@@ -9,14 +9,18 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from principales_corpus_suite import _benchmark_identity, _download, _normalize
-from scj_page_selection import normalize_native_reference
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
 from jurisnexo.normalization.quality import extract_text_from_structural_json
+from jurisnexo.normalization.source_fidelity import (
+    DeterministicSourceFidelityChecker,
+    SourceTextReference,
+)
+from principales_corpus_suite import _benchmark_identity, _download, _normalize
+from scj_page_selection import assess_scj_native_reference, normalize_native_reference
 
 CASES_PATH = Path(__file__).with_name("principales_failed_pages.json")
 OUTPUT = Path(os.environ["FAILURE_DIAGNOSTIC_OUTPUT"])
