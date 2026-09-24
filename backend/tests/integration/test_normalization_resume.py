@@ -7,6 +7,10 @@ from typing import Any
 import psycopg
 import pytest
 
+from jurisnexo.normalization.contracts import FormatInspection, NormalizedDocument
+from jurisnexo.normalization.executor import NormalizationExecutor
+from jurisnexo.normalization.planner import NormalizationPlan, NormalizationPlanItem
+from jurisnexo.normalization.recovery import CircuitBreaker
 from jurisnexo.normalization.repository import PostgresNormalizationLedger
 
 pytestmark = [
@@ -232,3 +236,169 @@ def test_retryable_item_returns_to_pending_for_same_run_resume(
             pipeline_version="v1",
             config_sha256="4" * 64,
         )
+
+
+
+class _ResumeMemoryStore:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def exists(self, key: str) -> bool:
+        return key in self.objects
+
+    def put(
+        self,
+        *,
+        key: str,
+        content: bytes,
+        content_type: str,
+        metadata: dict[str, str],
+    ) -> None:
+        del content_type, metadata
+        self.objects.setdefault(key, content)
+
+
+class _ResumeSourceReader:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+        self.read_count = 0
+
+    def read(self, key: str) -> bytes:
+        assert key == "official/retryable.pdf"
+        self.read_count += 1
+        return self.payload
+
+
+class _PdfInspector:
+    def inspect(
+        self,
+        source: bytes,
+        *,
+        filename: str | None = None,
+    ) -> FormatInspection:
+        del source, filename
+        return FormatInspection(
+            media_type="application/pdf",
+            detected_format="application/pdf",
+            metadata={},
+        )
+
+
+class _FlakyNormalizer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def normalize(
+        self,
+        source: bytes,
+        inspection: FormatInspection,
+        *,
+        filename: str | None = None,
+    ) -> NormalizedDocument:
+        del source, inspection, filename
+        self.calls += 1
+        if self.calls == 1:
+            raise TimeoutError("temporary parser timeout")
+        payload = (
+            b'{"texts":[{"text":"Sentencia SCJ-SS-22-1191 Articulo 5"}]}'
+        )
+        return NormalizedDocument(
+            media_type="application/vnd.docling+json",
+            payload=payload,
+            engine="fixture-docling",
+            engine_version="1",
+            metadata={},
+        )
+
+
+def test_executor_timeout_can_resume_same_run_without_duplicate_item(
+    connection: psycopg.Connection[Any],
+) -> None:
+    scope_id = "00000000-0000-0000-0000-000000000001"
+    source_sha = "5" * 64
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            insert into corpus.source_artifacts
+                (sha256, mime_type, byte_size)
+            values (%s, 'application/pdf', 10)
+            returning id::text
+            """,
+            (source_sha,),
+        )
+        source_row = cursor.fetchone()
+        assert source_row is not None
+        source_artifact_id = str(source_row[0])
+
+        plan = NormalizationPlan(
+            manifest_sha256="6" * 64,
+            pipeline_version="v1",
+            config_sha256="7" * 64,
+            items=(
+                NormalizationPlanItem(
+                    source_identifier="retryable.pdf",
+                    source_sha256=source_sha,
+                    object_key="official/retryable.pdf",
+                    content_type="application/pdf",
+                    disposition="normalize",
+                    idempotency_key="8" * 64,
+                ),
+            ),
+        )
+        store = _ResumeMemoryStore()
+        reader = _ResumeSourceReader(b"%PDF-fixture")
+        normalizer = _FlakyNormalizer()
+        ledger = PostgresNormalizationLedger(connection)
+        executor = NormalizationExecutor(
+            inspector=_PdfInspector(),
+            normalizer=normalizer,
+            source_reader=reader,
+            derived_store=store,
+            ledger=ledger,
+            pipeline_version="v1",
+            config_sha256="7" * 64,
+            circuit_breaker=CircuitBreaker(threshold=3),
+        )
+
+        first = executor.execute(
+            plan=plan,
+            scope_id=scope_id,
+            manifest_locator="s3://manifest/retryable.json",
+        )
+        assert first.retryable_pending == 1
+        assert first.failed == 0
+
+        checkpoint = ledger.item_checkpoint(
+            scope_id=scope_id,
+            run_id=first.run_id,
+            source_artifact_id=source_artifact_id,
+        )
+        assert checkpoint is not None
+        assert checkpoint.status == "pending"
+
+        second = executor.execute(
+            plan=plan,
+            scope_id=scope_id,
+            manifest_locator="s3://manifest/retryable.json",
+            resume_run_id=first.run_id,
+        )
+        assert second.run_id == first.run_id
+        assert second.retryable_pending == 0
+        assert second.normalized == 1
+        assert normalizer.calls == 2
+        assert reader.read_count == 2
+
+        cursor.execute(
+            """
+            select status,
+                   (select count(*) from corpus.normalization_run_items i
+                    where i.run_id=r.id)
+            from corpus.normalization_runs r
+            where id=%s
+            """,
+            (first.run_id,),
+        )
+        row = cursor.fetchone()
+        assert row is not None
+        assert row[0] == "reconciling"
+        assert row[1] == 1
