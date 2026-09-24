@@ -188,6 +188,71 @@ class AcquisitionRunManifest:
         ).encode("utf-8")
 
 
+def parse_acquisition_run_manifest(payload: bytes) -> AcquisitionRunManifest:
+    """Parse and validate a canonical acquisition run manifest.
+
+    Invalid JSON, unknown/missing fields, invalid run items, or unsupported
+    schema versions fail closed instead of being tolerated by normalization.
+    """
+
+    try:
+        raw = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid acquisition run manifest JSON") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("acquisition run manifest root must be an object")
+    schema_version = raw.get("schema_version")
+    if schema_version != _RUN_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported acquisition run manifest schema_version={schema_version!r}"
+        )
+    items_raw = raw.get("items")
+    if not isinstance(items_raw, list):
+        raise ValueError("acquisition run manifest items must be an array")
+    try:
+        items = tuple(
+            AcquisitionRunItem(**item)
+            for item in items_raw
+            if isinstance(item, dict)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid acquisition run manifest item") from exc
+    if len(items) != len(items_raw):
+        raise ValueError("acquisition run manifest items must be objects")
+    manifest_raw = dict(raw)
+    manifest_raw["items"] = items
+    try:
+        manifest = AcquisitionRunManifest(**manifest_raw)
+    except TypeError as exc:
+        raise ValueError("invalid acquisition run manifest shape") from exc
+
+    if manifest.discovered_count != len(manifest.items):
+        raise ValueError("acquisition run manifest discovered_count does not match items")
+    counts = {
+        "uploaded": sum(item.status == "uploaded" for item in manifest.items),
+        "already_present": sum(
+            item.status == "already_present" for item in manifest.items
+        ),
+        "unavailable": sum(item.status == "unavailable" for item in manifest.items),
+        "failed": sum(item.status == "failed" for item in manifest.items),
+    }
+    declared = {
+        "uploaded": manifest.uploaded_count,
+        "already_present": manifest.already_present_count,
+        "unavailable": manifest.unavailable_count,
+        "failed": manifest.failed_count,
+    }
+    if counts != declared:
+        raise ValueError("acquisition run manifest status counts do not match items")
+    canonical = manifest.canonical_bytes()
+    if hashlib.sha256(canonical).digest() != hashlib.sha256(payload).digest():
+        # The semantic manifest is valid, but normalization identity must use the
+        # exact immutable bytes stored by acquisition. Non-canonical encodings
+        # are rejected so hashes cannot silently drift across equivalent JSON.
+        raise ValueError("acquisition run manifest is not canonical JSON")
+    return manifest
+
+
 @dataclass(frozen=True, slots=True)
 class StoredAcquisitionRunManifest:
     manifest: AcquisitionRunManifest
