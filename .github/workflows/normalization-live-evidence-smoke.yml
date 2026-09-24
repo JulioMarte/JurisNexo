@@ -43,6 +43,15 @@ jobs:
       - name: Build backend test image
         run: docker compose --profile test build test
 
+      - name: Validate live smoke before spending provider credits
+        run: |
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD:/repo:ro" \
+            test ruff check /repo/backend/scripts/normalization_live_evidence_smoke.py
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD:/repo:ro" \
+            test python -m py_compile /repo/backend/scripts/normalization_live_evidence_smoke.py
+
       - name: Start PostgreSQL and apply migrations
         run: docker compose up -d db && docker compose run --rm migrate
 
