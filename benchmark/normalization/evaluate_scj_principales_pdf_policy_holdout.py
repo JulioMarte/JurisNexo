@@ -233,11 +233,15 @@ def main() -> int:
         source = _download(store, object_key)
         if not has_native_text(source):
             continue
-        pages = select_reference_pages(
-            source,
-            min_reference_chars=MIN_REFERENCE_CHARS,
-            max_pages_to_scan=MAX_PAGES_TO_SCAN,
-            max_pages_per_document=PAGES_PER_DOCUMENT,
+        pages = tuple(
+            page
+            for page in select_reference_pages(
+                source,
+                min_reference_chars=MIN_REFERENCE_CHARS,
+                max_pages_to_scan=MAX_PAGES_TO_SCAN,
+                max_pages_per_document=PAGES_PER_DOCUMENT,
+            )
+            if not page.reference_risk_flags
         )
         if not pages:
             continue
