@@ -109,7 +109,7 @@ def test_aggregate_records_reports_page_document_and_compute_quality() -> None:
         _record(config="full_ocr", sha="a" * 64, page=1, wer=0.30, seconds=6.0),
     )
 
-    report = aggregate_records(records)
+    report = aggregate_records(records, compute_hourly_usd=3.60)
 
     assert set(report) == {"pdf_aware", "full_ocr"}
     pdf = report["pdf_aware"]
@@ -122,6 +122,10 @@ def test_aggregate_records_reports_page_document_and_compute_quality() -> None:
     assert pdf["speed"]["total_seconds"] == pytest.approx(8.0)
     assert pdf["cost"]["provider_model_cost_usd"] == 0.0
     assert pdf["cost"]["provider_cost_per_page_usd"] == 0.0
+    assert pdf["cost"]["assumed_compute_hourly_usd"] == pytest.approx(3.60)
+    assert pdf["cost"]["modeled_normalization_compute_usd"] == pytest.approx(0.008)
+    assert pdf["cost"]["modeled_compute_cost_per_page_usd"] == pytest.approx(0.008 / 3)
+    assert pdf["cost"]["modeled_compute_cost_per_document_usd"] == pytest.approx(0.004)
     assert pdf["cost"]["output_bytes_per_page"] == pytest.approx(1000.0)
 
 
