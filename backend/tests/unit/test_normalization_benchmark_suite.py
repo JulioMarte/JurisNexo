@@ -101,7 +101,7 @@ def test_document_aggregates_detects_critical_loss() -> None:
     assert pass_rate == pytest.approx(0.5)
 
 
-def test_aggregate_records_reports_page_and_document_quality() -> None:
+def test_aggregate_records_reports_page_document_and_compute_quality() -> None:
     records = (
         _record(config="pdf_aware", sha="a" * 64, page=1, wer=0.02, seconds=2.0),
         _record(config="pdf_aware", sha="a" * 64, page=2, wer=0.04, seconds=4.0),
@@ -183,3 +183,21 @@ def test_format_summary_labels_sampled_document_semantics() -> None:
     assert "not a full-document production verdict" in summary
     assert "provider $/page" in summary
     assert "**PASS**" in summary
+
+
+def test_compute_cost_is_null_without_explicit_rate() -> None:
+    report = aggregate_records(
+        (_record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),)
+    )
+    cost = report["pdf_aware"]["cost"]
+    assert cost["assumed_compute_hourly_usd"] is None
+    assert cost["modeled_normalization_compute_usd"] is None
+    assert cost["modeled_compute_cost_per_page_usd"] is None
+
+
+def test_negative_compute_rate_is_rejected() -> None:
+    with pytest.raises(ValueError, match="non-negative"):
+        aggregate_records(
+            (_record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),),
+            compute_hourly_usd=-1.0,
+        )
