@@ -7,7 +7,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from jurisnexo.acquisition.official_corpus import (
     ArtifactCatalog,
@@ -196,11 +196,12 @@ def parse_acquisition_run_manifest(payload: bytes) -> AcquisitionRunManifest:
     """
 
     try:
-        raw = json.loads(payload)
+        loaded: object = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid acquisition run manifest JSON") from exc
-    if not isinstance(raw, dict):
+    if not isinstance(loaded, dict):
         raise ValueError("acquisition run manifest root must be an object")
+    raw = cast(dict[str, object], loaded)
     schema_version = raw.get("schema_version")
     if schema_version != _RUN_SCHEMA_VERSION:
         raise ValueError(
@@ -209,20 +210,21 @@ def parse_acquisition_run_manifest(payload: bytes) -> AcquisitionRunManifest:
     items_raw = raw.get("items")
     if not isinstance(items_raw, list):
         raise ValueError("acquisition run manifest items must be an array")
+    item_values = cast(list[object], items_raw)
     try:
         items = tuple(
-            AcquisitionRunItem(**item)
-            for item in items_raw
+            AcquisitionRunItem(**cast(Any, item))
+            for item in item_values
             if isinstance(item, dict)
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid acquisition run manifest item") from exc
-    if len(items) != len(items_raw):
+    if len(items) != len(item_values):
         raise ValueError("acquisition run manifest items must be objects")
-    manifest_raw = dict(raw)
+    manifest_raw: dict[str, object] = dict(raw)
     manifest_raw["items"] = items
     try:
-        manifest = AcquisitionRunManifest(**manifest_raw)
+        manifest = AcquisitionRunManifest(**cast(Any, manifest_raw))
     except TypeError as exc:
         raise ValueError("invalid acquisition run manifest shape") from exc
 
