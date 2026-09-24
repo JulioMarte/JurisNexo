@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from statistics import mean
-from typing import Any
+from typing import Any, cast
 
 ROUTES = ("pdf_aware", "full_ocr")
 
@@ -224,6 +224,13 @@ def aggregate_records(
     return report
 
 
+def _metric_float(metrics: Mapping[str, object], key: str) -> float:
+    value = metrics.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"quality metric {key!r} is not numeric")
+    return float(value)
+
+
 def evaluate_quality_gates(
     report: Mapping[str, Any],
     *,
@@ -239,27 +246,34 @@ def evaluate_quality_gates(
                 "checks": {"present": False},
             }
             continue
-        quality = metrics["quality"]
+        quality_raw = metrics.get("quality")
+        if not isinstance(quality_raw, dict):
+            configs[config] = {
+                "passed": False,
+                "checks": {"present": False},
+            }
+            continue
+        quality = cast(dict[str, object], quality_raw)
         checks = {
             "present": True,
             "mean_word_error_rate": (
-                float(quality["mean_word_error_rate"])
+                _metric_float(quality, "mean_word_error_rate")
                 <= thresholds.max_mean_word_error_rate
             ),
             "mean_token_content_recall": (
-                float(quality["mean_token_content_recall"])
+                _metric_float(quality, "mean_token_content_recall")
                 >= thresholds.min_mean_token_content_recall
             ),
             "mean_token_content_precision": (
-                float(quality["mean_token_content_precision"])
+                _metric_float(quality, "mean_token_content_precision")
                 >= thresholds.min_mean_token_content_precision
             ),
             "aggregate_legal_critical_recall": (
-                float(quality["aggregate_legal_critical_recall"])
+                _metric_float(quality, "aggregate_legal_critical_recall")
                 >= thresholds.min_aggregate_legal_critical_recall
             ),
             "sampled_document_pass_rate": (
-                float(quality["sampled_document_pass_rate"])
+                _metric_float(quality, "sampled_document_pass_rate")
                 >= thresholds.min_sampled_document_pass_rate
             ),
         }
