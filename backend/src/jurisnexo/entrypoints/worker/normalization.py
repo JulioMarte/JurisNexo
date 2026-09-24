@@ -93,12 +93,7 @@ def _connection_factory() -> Any:
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
-    if len(args.config_sha256) != 64:
-        raise ValueError("--config-sha256 must be a SHA-256 digest")
-    if args.docling_timeout_seconds <= 0:
-        raise ValueError("--docling-timeout-seconds must be positive")
-    if args.docling_max_source_bytes < 1 or args.docling_max_output_bytes < 1:
-        raise ValueError("Docling byte limits must be positive")
+    _validate_args(args)
 
     store = build_s3_object_store()
     manifest_payload, _ = read_manifest(store, args.manifest_key)
