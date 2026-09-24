@@ -10,7 +10,11 @@ import pypdfium2 as pdfium
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from principales_corpus_suite import CHECKPOINT_PREFIX, _download
-from scj_page_selection import looks_like_body_page, normalize_native_reference
+from scj_page_selection import (
+    FRONT_MATTER_MARKERS,
+    looks_like_body_page,
+    normalize_native_reference,
+)
 
 SOURCE_RUN = "github-35940805815-attempt-1"
 EXPECTED_INVENTORY_SHA256 = (
@@ -19,13 +23,17 @@ EXPECTED_INVENTORY_SHA256 = (
 OUTPUT = Path(os.environ["SELECTOR_AUDIT_OUTPUT"])
 
 
-def _scan_all_pages(source: bytes) -> dict[str, int | None]:
+def _scan_all_pages(source: bytes) -> dict[str, object]:
     document = pdfium.PdfDocument(source)
     try:
         native_pages = 0
         long_native_pages = 0
         qualifying_pages = 0
         first_qualifying_page: int | None = None
+        pages_with_body_markers = 0
+        pages_with_body_and_front_markers = 0
+        front_marker_page_counts = {marker: 0 for marker in FRONT_MATTER_MARKERS}
+        examples: list[dict[str, object]] = []
         for index in range(len(document)):
             page = document[index]
             try:
@@ -42,6 +50,43 @@ def _scan_all_pages(source: bytes) -> dict[str, int | None]:
                 native_pages += 1
             if len(reference) >= 800:
                 long_native_pages += 1
+                folded = reference.casefold()
+                body_markers = [
+                    marker
+                    for marker, present in (
+                        ("considerando_twice", folded.count("considerando") >= 2),
+                        ("en_nombre", "en nombre de la república" in folded),
+                        (
+                            "vistos_falla",
+                            "vistos" in folded
+                            and ("falla" in folded or "fallamos" in folded),
+                        ),
+                    )
+                    if present
+                ]
+                front_markers = [
+                    marker for marker in FRONT_MATTER_MARKERS if marker in folded
+                ]
+                for marker in front_markers:
+                    front_marker_page_counts[marker] += 1
+                if body_markers:
+                    pages_with_body_markers += 1
+                    if front_markers:
+                        pages_with_body_and_front_markers += 1
+                capture_example = index in {
+                    0,
+                    min(len(document) - 1, 20),
+                    len(document) // 2,
+                } or (body_markers and len(examples) < 4)
+                if capture_example and len(examples) < 7:
+                    examples.append(
+                        {
+                            "page_index": index,
+                            "body_markers": body_markers,
+                            "front_markers": front_markers,
+                            "sample_text": reference[:700],
+                        }
+                    )
                 if looks_like_body_page(reference):
                     qualifying_pages += 1
                     if first_qualifying_page is None:
@@ -52,6 +97,10 @@ def _scan_all_pages(source: bytes) -> dict[str, int | None]:
             "native_pages_at_least_800_chars": long_native_pages,
             "qualifying_body_pages": qualifying_pages,
             "first_qualifying_page_index": first_qualifying_page,
+            "pages_with_body_markers_before_front_rejection": pages_with_body_markers,
+            "pages_with_body_and_front_markers": pages_with_body_and_front_markers,
+            "front_marker_page_counts": front_marker_page_counts,
+            "examples": examples,
         }
     finally:
         document.close()
