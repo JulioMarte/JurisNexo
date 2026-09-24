@@ -168,6 +168,11 @@ def aggregate_records(
             document_aggregates(tuple(config_records))
         )
         output_bytes = sum(record.output_bytes for record in config_records)
+        modeled_compute_usd = (
+            None
+            if compute_hourly_usd is None
+            else (total_seconds / 3600.0) * compute_hourly_usd
+        )
         quality = {
             "mean_word_error_rate": mean(
                 record.word_error_rate for record in config_records
@@ -219,6 +224,18 @@ def aggregate_records(
                 "output_bytes_per_page": (
                     output_bytes / page_count if page_count else 0.0
                 ),
+                "assumed_compute_hourly_usd": compute_hourly_usd,
+                "modeled_normalization_compute_usd": modeled_compute_usd,
+                "modeled_compute_cost_per_page_usd": (
+                    None
+                    if modeled_compute_usd is None or page_count == 0
+                    else modeled_compute_usd / page_count
+                ),
+                "modeled_compute_cost_per_document_usd": (
+                    None
+                    if modeled_compute_usd is None or documents == 0
+                    else modeled_compute_usd / documents
+                ),
             },
         }
     return report
@@ -232,28 +249,30 @@ def _metric_float(metrics: Mapping[str, object], key: str) -> float:
 
 
 def evaluate_quality_gates(
-    report: Mapping[str, Any],
+    report: Mapping[str, object],
     *,
     required_configs: tuple[str, ...],
     thresholds: QualityThresholds,
 ) -> dict[str, Any]:
     configs: dict[str, Any] = {}
     for config in required_configs:
-        metrics = report.get(config)
-        if not isinstance(metrics, dict):
+        metrics_raw = report.get(config)
+        if not isinstance(metrics_raw, Mapping):
+
             configs[config] = {
                 "passed": False,
                 "checks": {"present": False},
             }
             continue
+        metrics = cast(Mapping[str, object], metrics_raw)
         quality_raw = metrics.get("quality")
-        if not isinstance(quality_raw, dict):
+        if not isinstance(quality_raw, Mapping):
             configs[config] = {
                 "passed": False,
                 "checks": {"present": False},
             }
             continue
-        quality = cast(dict[str, object], quality_raw)
+        quality = cast(Mapping[str, object], quality_raw)
         checks = {
             "present": True,
             "mean_word_error_rate": (
