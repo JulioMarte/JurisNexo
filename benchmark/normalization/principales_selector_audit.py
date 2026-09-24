@@ -14,6 +14,8 @@ from scj_page_selection import (
     normalize_native_reference,
 )
 
+from jurisnexo.acquisition.s3_object_store import build_s3_object_store
+
 SOURCE_RUN = "github-35940805815-attempt-1"
 EXPECTED_INVENTORY_SHA256 = (
     "31de3eb9e72b66001f329e859c8b45d434c40a58e9c8ee21f21721c7a8ea7023"
