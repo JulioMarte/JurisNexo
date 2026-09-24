@@ -274,6 +274,9 @@ def main() -> int:
     )
 
     keys = _list_pdf_keys(store)
+    inventory_sha256 = hashlib.sha256(
+        json.dumps(keys, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
     keyed = tuple((key, source_sha_from_key(key)) for key in keys)
     shard_keys = tuple(
         (key, sha)
@@ -428,12 +431,16 @@ def main() -> int:
         "required_configs": list(REQUIRED_CONFIGS),
         "benchmark_identities": identities,
         "inventory_pdf_count": len(keys),
+        "inventory_sha256": inventory_sha256,
         "shard_index": SHARD_INDEX,
         "shard_count": SHARD_COUNT,
         "shard_pdf_count": len(shard_keys),
         "document_limit": DOCUMENT_LIMIT,
         "pages_per_document": PAGES_PER_DOCUMENT,
         "coverage_complete": len(coverage) == len(shard_keys),
+        "uninspected_object_keys": [
+            key for key, _ in shard_keys[len(coverage):]
+        ],
         "coverage_counts": {
             status: sum(item["status"] == status for item in coverage)
             for status in ("sampled", "no_native_text", "no_reference_pages")
