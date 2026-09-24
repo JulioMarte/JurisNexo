@@ -14,6 +14,7 @@ from scj_page_selection import normalize_native_reference
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
+from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
 from jurisnexo.normalization.quality import extract_text_from_structural_json
 
@@ -175,8 +176,6 @@ def main() -> int:
         checker = DeterministicSourceFidelityChecker(
             _FixedReferenceExtractor(reference)
         )
-        from jurisnexo.normalization.contracts import FormatInspection
-
         containment = checker.evaluate(
             source=b"",
             inspection=FormatInspection(
