@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from jurisnexo.normalization.adapters.pdf_native_text import (
+    PdfNativeTextReferenceExtractor,
+)
 from jurisnexo.normalization.contracts import FormatInspection
+from jurisnexo.normalization.gold import assess_reference_text_health
 from jurisnexo.normalization.source_fidelity import (
     DeterministicSourceFidelityChecker,
     SourceTextReference,
@@ -107,3 +111,16 @@ def test_source_fidelity_healthy_candidate_can_pass() -> None:
     assert not result.requires_review
     assert result.score is not None
     assert result.score.legal_critical_recall == 1.0
+
+
+
+def test_pdf_native_reference_defaults_detect_probable_mojibake() -> None:
+    extractor = PdfNativeTextReferenceExtractor()
+    text = ("Rep⁄blica DecisiÛn n˙m. " * 20).strip()
+    health = assess_reference_text_health(
+        text,
+        suspicious_characters=extractor.suspicious_characters,
+        minimum_suspicious_count=extractor.minimum_suspicious_count,
+        maximum_suspicious_rate=extractor.maximum_suspicious_rate,
+    )
+    assert "probable_mojibake" in health.risk_flags
