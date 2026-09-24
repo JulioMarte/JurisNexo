@@ -169,3 +169,29 @@ def test_document_fidelity_tracks_worst_page_and_critical_loss() -> None:
 def test_document_fidelity_requires_pages() -> None:
     with pytest.raises(ValueError):
         score_document_fidelity(())
+
+
+def test_reference_health_rejects_probable_mojibake_without_language_policy_in_core() -> None:
+    from jurisnexo.normalization.gold import assess_reference_text_health
+
+    healthy = assess_reference_text_health(
+        "REPÚBLICA DOMINICANA Constitución decisión número expediente " * 20,
+        suspicious_characters=frozenset({"Û", "Ì", "˙", "⁄"}),
+    )
+    assert healthy.is_reliable is True
+    assert healthy.risk_flags == ()
+
+    corrupted = assess_reference_text_health(
+        ("REP⁄BLICA DOMINICANA DecisiÛn ConstituciÛn n˙m. " * 20),
+        suspicious_characters=frozenset({"Û", "Ì", "˙", "⁄"}),
+    )
+    assert corrupted.is_reliable is False
+    assert "probable_mojibake" in corrupted.risk_flags
+
+
+def test_reference_health_always_rejects_unicode_replacement_characters() -> None:
+    from jurisnexo.normalization.gold import assess_reference_text_health
+
+    health = assess_reference_text_health("sentencia SCJ-SS-22-1191 �")
+    assert health.is_reliable is False
+    assert health.risk_flags == ("replacement_characters",)
