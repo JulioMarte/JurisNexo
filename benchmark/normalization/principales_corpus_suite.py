@@ -67,9 +67,12 @@ QUALITY_THRESHOLDS = QualityThresholds(
             os.environ.get("SUITE_MIN_DOCUMENT_PASS_RATE", "1.0"),
         )
     ),
+    max_unreliable_reference_pages=int(
+        os.environ.get("SUITE_MAX_UNRELIABLE_REFERENCE_PAGES", "0")
+    ),
 )
 OCR_LANGUAGE_TAGS = ("iso:es",)
-BENCHMARK_SCHEMA_VERSION = 4
+BENCHMARK_SCHEMA_VERSION = 5
 
 
 def _shard_prefix() -> str:
@@ -365,6 +368,16 @@ def main() -> int:
                     "selected_page_count": len(pages),
                     "document_page_count": pages[0].document_page_count,
                     "selected_page_indices": [page.page_index for page in pages],
+                    "reference_unreliable_page_indices": [
+                        page.page_index
+                        for page in pages
+                        if page.reference_risk_flags
+                    ],
+                    "reference_risk_flags": {
+                        str(page.page_index): list(page.reference_risk_flags)
+                        for page in pages
+                        if page.reference_risk_flags
+                    },
                 }
             )
             for page in pages:
@@ -414,6 +427,8 @@ def main() -> int:
                             item.matched for item in score.critical.values()
                         ),
                         benchmark_identity=benchmark_identity,
+                        reference_reliable=not page.reference_risk_flags,
+                        reference_risk_flags=page.reference_risk_flags,
                     )
                     records.append(record)
                     completed.add(key)
