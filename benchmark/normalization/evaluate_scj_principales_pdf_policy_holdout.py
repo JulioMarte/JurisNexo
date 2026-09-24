@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from pypdf import PdfReader, PdfWriter
+from scj_page_selection import has_native_text, select_reference_pages
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
 from jurisnexo.normalization.quality import extract_text_from_structural_json
-from scj_page_selection import has_native_text, select_reference_pages
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 OUTPUT = Path(
