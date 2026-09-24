@@ -218,7 +218,7 @@ def main() -> int:
     store = build_s3_object_store()
     object_key, source, page_index, native_text = _first_suitable_source(store)
     image = _render_page(source, page_index)
-    candidate = native_text[:2500]
+    candidate = native_text
     corrupted = _corrupt_legal_token(candidate)
 
     provider = OpenRouterVisualModelProvider(
@@ -289,7 +289,7 @@ def main() -> int:
         else None
     )
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "source": "scj",
         "collection": "principales-sentencias",
         "runtime_status": (
@@ -298,6 +298,8 @@ def main() -> int:
         "provider_errors": provider_errors,
         "object_key": object_key,
         "page_index": page_index,
+        "candidate_characters": len(candidate),
+        "reference_kind": "native_pdf_text_unverified_against_image",
         "model": MODEL,
         "reasoning_effort": VISUAL_REASONING,
         "structured_mode": models.deepseek_structured_mode,
