@@ -69,7 +69,7 @@ QUALITY_THRESHOLDS = QualityThresholds(
     ),
 )
 OCR_LANGUAGE_TAGS = ("iso:es",)
-BENCHMARK_SCHEMA_VERSION = 3
+BENCHMARK_SCHEMA_VERSION = 4
 
 
 def _shard_prefix() -> str:
@@ -99,7 +99,9 @@ def _benchmark_identity(config: str) -> str:
         "docling_version": _package_version("docling"),
         "normalizer_source": inspect.getsource(DoclingStructuralNormalizer),
         "scoring_source": inspect.getsource(score_text_fidelity),
-        "selector_source": inspect.getsource(select_reference_pages),
+        "selector_source": Path(inspect.getfile(select_reference_pages)).read_text(
+            encoding="utf-8"
+        ),
     }
     encoded = json.dumps(
         material, ensure_ascii=False, sort_keys=True

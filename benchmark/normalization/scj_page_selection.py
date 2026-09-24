@@ -6,21 +6,24 @@ from dataclasses import dataclass
 # catalog-card front matter and one or more tables of contents. Selecting the
 # first page with enough native text therefore samples bibliographic front
 # matter, never a judgment, and cannot measure legal-document normalization.
-# These markers reject such pages so the benchmarks measure adjudicative text.
+# Editorial navigation labels and the court URL also occur as running headers or
+# footers on real judgment pages. They cannot reject a whole page by substring.
 FRONT_MATTER_MARKERS: tuple[str, ...] = (
     "isbn",
     "coordinación general",
     "1a. ed.",
     "r426p",
-    "índice",
-    "indice",
     "impreso en",
-    "www.poderjudicial.gob.do",
     "diagramación",
     "división de publicaciones",
     "división de jurisprudencia",
     "catalogación",
     "ejemplares",
+)
+RUNNING_NAVIGATION_MARKERS: tuple[str, ...] = (
+    "índice",
+    "indice",
+    "www.poderjudicial.gob.do",
 )
 
 # pypdfium2 emits U+FFFE for glyphs it cannot decode (frequently a line-break
