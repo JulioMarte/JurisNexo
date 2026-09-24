@@ -91,18 +91,28 @@ class ClaimMetric:
 
 
 def _list_pdf_keys(store: Any) -> tuple[str, ...]:
-    response = store.client.list_objects_v2(
-        Bucket=store.config.bucket,
-        Prefix=PREFIX,
-        MaxKeys=100,
-    )
-    return tuple(
-        sorted(
+    keys: list[str] = []
+    token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "Bucket": store.config.bucket,
+            "Prefix": PREFIX,
+            "MaxKeys": 1000,
+        }
+        if token:
+            kwargs["ContinuationToken"] = token
+        response = store.client.list_objects_v2(**kwargs)
+        keys.extend(
             str(item.get("Key") or "")
             for item in response.get("Contents", [])
             if str(item.get("Key") or "").endswith(".pdf")
         )
-    )
+        if not response.get("IsTruncated"):
+            break
+        token = str(response.get("NextContinuationToken") or "")
+        if not token:
+            raise RuntimeError("truncated S3 listing omitted continuation token")
+    return tuple(sorted(keys))
 
 
 def _download(store: Any, key: str) -> bytes:
@@ -115,29 +125,15 @@ def _download(store: Any, key: str) -> bytes:
 
 
 def _native_excerpt(pdf_bytes: bytes) -> str:
-    import pypdfium2 as pdfium
-
-    document = pdfium.PdfDocument(pdf_bytes)
-    try:
-        parts: list[str] = []
-        for page_index in range(min(len(document), 3)):
-            page = document[page_index]
-            try:
-                text_page = page.get_textpage()
-                try:
-                    text = text_page.get_text_range().strip()
-                finally:
-                    text_page.close()
-                if text:
-                    parts.append(text)
-                joined = "\n".join(parts)
-                if len(joined) >= EXCERPT_CHARS:
-                    return joined[:EXCERPT_CHARS]
-            finally:
-                page.close()
-        return "\n".join(parts)[:EXCERPT_CHARS]
-    finally:
-        document.close()
+    pages = select_reference_pages(
+        pdf_bytes,
+        min_reference_chars=800,
+        max_pages_to_scan=120,
+        max_pages_per_document=1,
+    )
+    if not pages:
+        return ""
+    return pages[0].text[:EXCERPT_CHARS]
 
 
 def _visible_corruption(text: str) -> str:
@@ -398,20 +394,14 @@ def main() -> int:
         for threshold in thresholds
     }
 
-    binary_brier = brier_score(
-        tuple(
-            BinaryRoutingObservation(
-                record_id=item.record_id,
-                expected_positive=item.expected_corrupted,
-                probability=item.material_error_probability,
-            )
-            for item in quality_metrics
-        )
-    )
+    calibration_brier = brier_score(calibration_observations)
+    holdout_brier = brier_score(holdout_observations)
     promotion = assess_promotion_readiness(
         calibration=candidate.calibration,
         holdout=candidate_holdout,
-        brier=binary_brier,
+        brier=holdout_brier,
+        minimum_positive_cases=MIN_POSITIVE_CASES,
+        minimum_negative_cases=MIN_NEGATIVE_CASES,
     )
 
     claim_accuracy = (
