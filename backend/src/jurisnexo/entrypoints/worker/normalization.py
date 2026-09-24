@@ -8,6 +8,7 @@ from typing import Any, cast
 from jurisnexo.acquisition.manifest import parse_acquisition_run_manifest
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, build_s3_object_store
 from jurisnexo.bootstrap.settings import get_postgres_settings
+from jurisnexo.observability import normalization_span
 from jurisnexo.normalization.adapters.pdf_native_text import PdfNativeTextReferenceExtractor
 from jurisnexo.normalization.adapters.tika import TikaServerFormatInspector
 from jurisnexo.normalization.executor import NormalizationExecutor
@@ -153,12 +154,31 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 PdfNativeTextReferenceExtractor()
             ),
         )
-        execution = executor.execute(
-            plan=plan,
+        with normalization_span(
+            "normalization.execute",
             scope_id=args.scope_id,
-            manifest_locator=store.config.locator_for(args.manifest_key),
-            resume_run_id=args.resume_run_id,
-        )
+            pipeline_version=args.pipeline_version,
+            selected_count=plan.selected_count,
+            resume=bool(args.resume_run_id),
+        ) as span:
+            execution = executor.execute(
+                plan=plan,
+                scope_id=args.scope_id,
+                manifest_locator=store.config.locator_for(args.manifest_key),
+                resume_run_id=args.resume_run_id,
+            )
+            span.set_attribute("normalization.run_id", execution.run_id)
+            span.set_attribute("normalization.normalized", execution.normalized)
+            span.set_attribute("normalization.reused", execution.reused)
+            span.set_attribute(
+                "normalization.review_required",
+                execution.review_required,
+            )
+            span.set_attribute("normalization.failed", execution.failed)
+            span.set_attribute(
+                "normalization.retryable_pending",
+                execution.retryable_pending,
+            )
         if execution.retryable_pending:
             return {
                 "run_id": execution.run_id,
@@ -174,16 +194,25 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "normalization_manifest_object_key": None,
             }
 
-        finalization = NormalizationFinalizer(
-            ledger=ledger,
-            object_store=store,
-        ).finalize(
-            plan=plan,
+        with normalization_span(
+            "normalization.finalize",
             run_id=execution.run_id,
             scope_id=args.scope_id,
-            pipeline_version=args.pipeline_version,
-            config_sha256=args.config_sha256,
-        )
+        ) as span:
+            finalization = NormalizationFinalizer(
+                ledger=ledger,
+                object_store=store,
+            ).finalize(
+                plan=plan,
+                run_id=execution.run_id,
+                scope_id=args.scope_id,
+                pipeline_version=args.pipeline_version,
+                config_sha256=args.config_sha256,
+            )
+            span.set_attribute(
+                "normalization.final_status",
+                finalization.status,
+            )
 
     return {
         "run_id": execution.run_id,
