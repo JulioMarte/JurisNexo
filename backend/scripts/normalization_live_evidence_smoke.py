@@ -9,7 +9,10 @@ from typing import Any
 
 import psycopg
 
-from jurisnexo.bootstrap.settings import get_normalization_model_settings, get_openrouter_settings
+from jurisnexo.bootstrap.settings import (
+    get_normalization_model_settings,
+    get_openrouter_settings,
+)
 from jurisnexo.model_providers.openrouter_decisions import OpenRouterDecisionProvider
 from jurisnexo.normalization.contracts import FormatInspection, NormalizedDocument
 from jurisnexo.normalization.decision_batching import DecisionBatchPolicy
@@ -123,8 +126,6 @@ def _insert_source(connection: psycopg.Connection[Any]) -> str:
             insert into corpus.source_artifacts
                 (scope_id, sha256, mime_type, byte_size)
             values (%s, %s, 'application/pdf', %s)
-            on conflict (scope_id, sha256) do update
-                set sha256=excluded.sha256
             returning id::text
             """,
             (SCOPE_ID, SOURCE_SHA, len(SOURCE_BYTES)),
