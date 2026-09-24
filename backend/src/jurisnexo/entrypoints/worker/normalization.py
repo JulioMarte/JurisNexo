@@ -159,6 +159,21 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             manifest_locator=store.config.locator_for(args.manifest_key),
             resume_run_id=args.resume_run_id,
         )
+        if execution.retryable_pending:
+            return {
+                "run_id": execution.run_id,
+                "manifest_sha256": manifest_sha256,
+                "selected": plan.selected_count,
+                "normalized": execution.normalized,
+                "reused": execution.reused,
+                "review_required": execution.review_required,
+                "failed": execution.failed,
+                "retryable_pending": execution.retryable_pending,
+                "final_status": "retryable_pending",
+                "normalization_manifest_sha256": None,
+                "normalization_manifest_object_key": None,
+            }
+
         finalization = NormalizationFinalizer(
             ledger=ledger,
             object_store=store,
@@ -178,6 +193,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "reused": execution.reused,
         "review_required": execution.review_required,
         "failed": execution.failed,
+        "retryable_pending": execution.retryable_pending,
         "final_status": finalization.status,
         "normalization_manifest_sha256": finalization.manifest_sha256,
         "normalization_manifest_object_key": finalization.manifest_object_key,
@@ -188,7 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     result = run(args)
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["final_status"] == "succeeded" else 2
+    if result["final_status"] == "succeeded":
+        return 0
+    if result["final_status"] == "retryable_pending":
+        return 3
+    return 2
 
 
 if __name__ == "__main__":
