@@ -247,7 +247,7 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
     return records, keys
 
 
-def _inventory_summary(inventory: list[dict[str, Any]]) -> dict[str, int]:
+def _inventory_digest(items: list[tuple[str, str]]) -> str:\n    material = "\\n".join(\n        f"{object_key}|{source_sha256}"\n        for object_key, source_sha256 in sorted(items)\n    ).encode("utf-8")\n    return hashlib.sha256(material).hexdigest()\n\n\ndef _inventory_summary(inventory: list[dict[str, Any]]) -> dict[str, int]:
     summary: dict[str, int] = {"assigned": len(inventory)}
     for item in inventory:
         status = str(item["status"])
@@ -328,7 +328,7 @@ def main() -> int:
                 inventory.append(
                     {
                         **base_inventory,
-                        "status": "no_native_text",
+                        "status": "native_probe_failed_first_three_pages",
                         "selected_page_count": 0,
                     }
                 )
@@ -343,7 +343,7 @@ def main() -> int:
                 inventory.append(
                     {
                         **base_inventory,
-                        "status": "no_reference_pages",
+                        "status": "no_reference_pages_in_scan_window",
                         "selected_page_count": 0,
                     }
                 )
