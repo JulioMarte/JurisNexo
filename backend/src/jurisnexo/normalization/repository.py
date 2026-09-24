@@ -530,6 +530,25 @@ class PostgresNormalizationLedger:
             error_message=error_message[:2000],
         )
 
+    def mark_retryable(
+        self,
+        *,
+        scope_id: str,
+        item_id: str,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        """Return a transiently failed item to pending for same-run resume."""
+
+        self._transition(
+            scope_id=scope_id,
+            item_id=item_id,
+            status="pending",
+            normalized_artifact_id=None,
+            error_code=error_code[:200],
+            error_message=error_message[:2000],
+        )
+
     def mark_skipped(self, *, scope_id: str, item_id: str) -> None:
         self._transition(
             scope_id=scope_id,
