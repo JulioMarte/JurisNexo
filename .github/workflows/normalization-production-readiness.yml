@@ -45,6 +45,7 @@ jobs:
             src/jurisnexo/model_providers \
             tests/unit/test_normalization_benchmark_suite.py \
             tests/unit/test_normalization_gold.py \
+            tests/unit/test_docling_adapter.py \
             tests/unit/test_isolated_docling.py \
             tests/unit/test_openrouter_structured_modes.py
           docker compose --profile test run --rm --no-deps \
@@ -60,6 +61,7 @@ jobs:
           tests/architecture/test_normalization_source_agnostic.py
           tests/unit/test_normalization_benchmark_suite.py
           tests/unit/test_normalization_gold.py
+          tests/unit/test_docling_adapter.py
           tests/unit/test_normalization_finalization.py
           tests/unit/test_normalization_operational_controls.py
           tests/unit/test_isolated_docling.py
