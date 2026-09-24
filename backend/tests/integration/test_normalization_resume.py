@@ -159,3 +159,76 @@ def test_resume_identity_and_checkpoint_are_durable(
                 pipeline_version="v1",
                 config_sha256="1" * 64,
             )
+
+
+def test_retryable_item_returns_to_pending_for_same_run_resume(
+    connection: psycopg.Connection[Any],
+) -> None:
+    with connection.transaction(force_rollback=True), connection.cursor() as cursor:
+        cursor.execute(
+            """
+            insert into corpus.source_artifacts
+                (sha256, mime_type, byte_size)
+            values (%s, 'application/pdf', 10)
+            returning id::text
+            """,
+            ("2" * 64,),
+        )
+        source = cursor.fetchone()
+        assert source is not None
+
+        cursor.execute(
+            """
+            insert into corpus.normalization_runs
+                (input_manifest_locator, input_manifest_sha256,
+                 pipeline_version, config_sha256, selected_count,
+                 status, started_at)
+            values (
+                's3://manifest/retryable.json',
+                %s, 'v1', %s, 1, 'running', clock_timestamp()
+            )
+            returning id::text
+            """,
+            ("3" * 64, "4" * 64),
+        )
+        run = cursor.fetchone()
+        assert run is not None
+
+        ledger = PostgresNormalizationLedger(connection)
+        item_id = ledger.ensure_item(
+            scope_id="00000000-0000-0000-0000-000000000001",
+            run_id=str(run[0]),
+            source_artifact_id=str(source[0]),
+        )
+        ledger.mark_running(
+            scope_id="00000000-0000-0000-0000-000000000001",
+            item_id=item_id,
+        )
+        ledger.mark_retryable(
+            scope_id="00000000-0000-0000-0000-000000000001",
+            item_id=item_id,
+            error_code="TimeoutError",
+            error_message="temporary upstream timeout",
+        )
+
+        checkpoint = ledger.item_checkpoint(
+            scope_id="00000000-0000-0000-0000-000000000001",
+            run_id=str(run[0]),
+            source_artifact_id=str(source[0]),
+        )
+        assert checkpoint is not None
+        assert checkpoint.status == "pending"
+        summary = ledger.summarize_run(
+            scope_id="00000000-0000-0000-0000-000000000001",
+            run_id=str(run[0]),
+        )
+        assert summary.pending_count == 1
+        assert summary.failed_count == 0
+
+        ledger.validate_resume_run(
+            scope_id="00000000-0000-0000-0000-000000000001",
+            run_id=str(run[0]),
+            manifest_sha256="3" * 64,
+            pipeline_version="v1",
+            config_sha256="4" * 64,
+        )
