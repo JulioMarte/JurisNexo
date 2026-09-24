@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pypdfium2 as pdfium
-
-from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from principales_corpus_suite import CHECKPOINT_PREFIX, _download
 from scj_page_selection import (
     FRONT_MATTER_MARKERS,
@@ -139,9 +137,7 @@ def main() -> int:
     payload = {
         "source_run": SOURCE_RUN,
         "inventory_sha256": EXPECTED_INVENTORY_SHA256,
-        "selector_scan_limit_in_source_run": report["max_pages_to_scan"]
-        if "max_pages_to_scan" in report
-        else 120,
+        "selector_scan_limit_in_source_run": report.get("max_pages_to_scan", 120),
         "results": results,
     }
     OUTPUT.mkdir(parents=True, exist_ok=True)
