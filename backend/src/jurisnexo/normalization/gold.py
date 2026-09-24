@@ -51,6 +51,65 @@ _CRITICAL_PATTERNS: dict[str, re.Pattern[str]] = {
 
 
 @dataclass(frozen=True, slots=True)
+class ReferenceTextHealth:
+    character_count: int
+    replacement_character_count: int
+    suspicious_character_count: int
+    suspicious_character_rate: float
+    risk_flags: tuple[str, ...]
+
+    @property
+    def is_reliable(self) -> bool:
+        return not self.risk_flags
+
+
+def assess_reference_text_health(
+    text: str,
+    *,
+    suspicious_characters: frozenset[str] = frozenset(),
+    minimum_suspicious_count: int = 3,
+    maximum_suspicious_rate: float = 0.002,
+) -> ReferenceTextHealth:
+    """Detect when an extracted reference is unsafe to treat as ground truth.
+
+    The caller owns any source/language-specific suspicious-character set.
+    The generic scorer only enforces explicit, measurable thresholds and always
+    treats Unicode replacement characters as reference corruption.
+    """
+
+    if minimum_suspicious_count < 1:
+        raise ValueError("minimum_suspicious_count must be positive")
+    if not 0.0 <= maximum_suspicious_rate <= 1.0:
+        raise ValueError("maximum_suspicious_rate must stay within [0, 1]")
+
+    character_count = len(text)
+    replacement_count = text.count("\ufffd")
+    suspicious_count = sum(
+        character in suspicious_characters for character in text
+    )
+    suspicious_rate = (
+        suspicious_count / character_count if character_count else 0.0
+    )
+    flags: list[str] = []
+    if not text.strip():
+        flags.append("empty_reference")
+    if replacement_count:
+        flags.append("replacement_characters")
+    if (
+        suspicious_count >= minimum_suspicious_count
+        and suspicious_rate > maximum_suspicious_rate
+    ):
+        flags.append("probable_mojibake")
+    return ReferenceTextHealth(
+        character_count=character_count,
+        replacement_character_count=replacement_count,
+        suspicious_character_count=suspicious_count,
+        suspicious_character_rate=suspicious_rate,
+        risk_flags=tuple(flags),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class CriticalCategoryScore:
     expected: int
     matched: int
