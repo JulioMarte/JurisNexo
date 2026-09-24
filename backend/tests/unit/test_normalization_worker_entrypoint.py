@@ -65,3 +65,58 @@ def test_worker_manifest_reader_rejects_metadata_hash_mismatch() -> None:
             _store(b"{}", {"payload_sha256": "0" * 64}),
             "manifest.json",
         )
+
+
+def _valid_args() -> object:
+    return _parser().parse_args(
+        [
+            "--scope-id",
+            "scope-1",
+            "--manifest-key",
+            "manifest.json",
+            "--pipeline-version",
+            "normalization-v1",
+            "--config-sha256",
+            "a" * 64,
+        ]
+    )
+
+
+def test_worker_validation_rejects_non_hex_digest() -> None:
+    args = _valid_args()
+    args.config_sha256 = "z" * 64
+    with pytest.raises(ValueError, match="hexadecimal"):
+        _validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("docling_timeout_seconds", 0.0, "timeout"),
+        ("docling_max_source_bytes", 0, "byte limits"),
+        ("docling_max_output_bytes", 0, "byte limits"),
+        ("circuit_breaker_threshold", 0, "circuit-breaker"),
+    ],
+)
+def test_worker_validation_rejects_non_positive_limits(
+    field: str,
+    value: float | int,
+    message: str,
+) -> None:
+    args = _valid_args()
+    setattr(args, field, value)
+    with pytest.raises(ValueError, match=message):
+        _validate_args(args)
+
+
+def test_worker_validation_rejects_empty_resume_identity() -> None:
+    args = _valid_args()
+    args.resume_run_id = "   "
+    with pytest.raises(ValueError, match="resume-run-id"):
+        _validate_args(args)
+
+
+def test_worker_validation_accepts_explicit_resume_identity() -> None:
+    args = _valid_args()
+    args.resume_run_id = "run-123"
+    _validate_args(args)
