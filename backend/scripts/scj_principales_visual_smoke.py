@@ -16,9 +16,7 @@ from jurisnexo.bootstrap.settings import (
     get_openrouter_settings,
 )
 from jurisnexo.model_providers.contracts import ModelProviderError
-from jurisnexo.model_providers.openrouter_visual import (
-    OpenRouterVisualModelProvider,
-)
+from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider
 
 sys.path.insert(
     0,
@@ -47,6 +45,16 @@ PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 
 
 @dataclass(frozen=True, slots=True)
+class VisualTarget:
+    original_token: str
+    corrupted_token: str
+    start: int
+    end: int
+    context_start: int
+    context_end: int
+
+
+@dataclass(frozen=True, slots=True)
 class VisualCaseResult:
     case: str
     expected_matches: bool | None
@@ -64,12 +72,6 @@ class VisualCaseResult:
 def _first_suitable_source(
     store: Any,
 ) -> tuple[str, bytes, int, str]:
-    """Return the first Principales volume with a real judgment body page.
-
-    Front matter (cover, credits, ISBN, catalog card, table of contents) has no
-    corruptible legal token and is not legal-document text, so it is skipped.
-    """
-
     response = store.client.list_objects_v2(
         Bucket=store.config.bucket,
         Prefix=PREFIX,
@@ -98,31 +100,20 @@ def _first_suitable_source(
         )
         if selected is None:
             continue
-        return object_key, source, selected.page_index, selected.text
-    raise RuntimeError("no Principales volume exposed a native-text judgment page")
-
-
-def _render_page(pdf_bytes: bytes, page_index: int) -> bytes:
-    import pypdfium2 as pdfium
-
-    document = pdfium.PdfDocument(pdf_bytes)
-    try:
-        page = document[page_index]
         try:
-            bitmap = page.render(scale=1.5)
-            image = bitmap.to_pil()
-            output = io.BytesIO()
-            image.save(output, format="PNG")
-            return output.getvalue()
-        finally:
-            page.close()
-    finally:
-        document.close()
+            _find_visual_target(selected.text)
+        except RuntimeError:
+            continue
+        return object_key, source, selected.page_index, selected.text
+    raise RuntimeError(
+        "no Principales judgment page exposed a targetable legal identifier"
+    )
 
 
-def _corrupt_legal_token(text: str) -> str:
+def _find_visual_target(text: str) -> VisualTarget:
     patterns = (
         re.compile(r"SCJ-[A-Z0-9-]{4,}", re.IGNORECASE),
+        re.compile(r"\b[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}\b", re.IGNORECASE),
         re.compile(r"\b\d{3,}\b"),
     )
     for pattern in patterns:
@@ -132,11 +123,107 @@ def _corrupt_legal_token(text: str) -> str:
         token = match.group(0)
         chars = list(token)
         for index in range(len(chars) - 1, -1, -1):
-            if chars[index].isdigit():
-                chars[index] = "9" if chars[index] != "9" else "8"
-                replacement = "".join(chars)
-                return text[: match.start()] + replacement + text[match.end() :]
+            if not chars[index].isdigit():
+                continue
+            chars[index] = "9" if chars[index] != "9" else "8"
+            context_start = max(0, match.start() - 140)
+            context_end = min(len(text), match.end() + 140)
+            return VisualTarget(
+                original_token=token,
+                corrupted_token="".join(chars),
+                start=match.start(),
+                end=match.end(),
+                context_start=context_start,
+                context_end=context_end,
+            )
     raise RuntimeError("could not find a deterministic legal token to corrupt")
+
+
+def _page_text_and_charboxes(
+    pdf_bytes: bytes,
+    page_index: int,
+) -> tuple[str, list[tuple[float, float, float, float]], float, float]:
+    import pypdfium2 as pdfium
+
+    document = pdfium.PdfDocument(pdf_bytes)
+    try:
+        page = document[page_index]
+        try:
+            width, height = page.get_size()
+            text_page = page.get_textpage()
+            try:
+                text = text_page.get_text_range()
+                boxes = [
+                    tuple(float(value) for value in text_page.get_charbox(index))
+                    for index in range(len(text))
+                ]
+            finally:
+                text_page.close()
+            return text, boxes, float(width), float(height)
+        finally:
+            page.close()
+    finally:
+        document.close()
+
+
+def _find_token_span(page_text: str, token: str) -> tuple[int, int]:
+    index = page_text.casefold().find(token.casefold())
+    if index < 0:
+        compact_page = re.sub(r"\s+", " ", page_text)
+        compact_token = re.sub(r"\s+", " ", token)
+        compact_index = compact_page.casefold().find(compact_token.casefold())
+        if compact_index >= 0:
+            raise RuntimeError(
+                "target token is visible only after whitespace normalization; "
+                "cannot map it safely to character boxes"
+            )
+        raise RuntimeError(f"target token not found in PDF text layer: {token!r}")
+    return index, index + len(token)
+
+
+def _render_target_crop(
+    pdf_bytes: bytes,
+    page_index: int,
+    *,
+    token: str,
+) -> bytes:
+    import pypdfium2 as pdfium
+
+    page_text, boxes, width, height = _page_text_and_charboxes(
+        pdf_bytes, page_index
+    )
+    start, end = _find_token_span(page_text, token)
+    target_boxes = boxes[start:end]
+    if not target_boxes:
+        raise RuntimeError("target token produced no character boxes")
+
+    left = min(box[0] for box in target_boxes)
+    bottom = min(box[1] for box in target_boxes)
+    right = max(box[2] for box in target_boxes)
+    top = max(box[3] for box in target_boxes)
+
+    horizontal_margin = max(80.0, (right - left) * 1.5)
+    vertical_margin = max(36.0, (top - bottom) * 4.0)
+    crop = (
+        max(0.0, left - horizontal_margin),
+        max(0.0, bottom - vertical_margin),
+        max(0.0, width - (right + horizontal_margin)),
+        max(0.0, height - (top + vertical_margin)),
+    )
+
+    document = pdfium.PdfDocument(pdf_bytes)
+    try:
+        page = document[page_index]
+        try:
+            bitmap = page.render(scale=3.0, crop=crop)
+            image = bitmap.to_pil()
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+            return output.getvalue()
+        finally:
+            page.close()
+    finally:
+        document.close()
 
 
 def _schema() -> dict[str, Any]:
@@ -148,7 +235,7 @@ def _schema() -> dict[str, Any]:
             "material_differences": {
                 "type": "array",
                 "items": {"type": "string"},
-                "maxItems": 6,
+                "maxItems": 4,
             },
         },
         "required": ["matches", "corrected_text", "material_differences"],
@@ -160,7 +247,8 @@ def _run_case(
     *,
     provider: OpenRouterVisualModelProvider,
     image: bytes,
-    candidate: str,
+    candidate_context: str,
+    target_token: str,
     case_name: str,
     expected_matches: bool | None,
 ) -> VisualCaseResult:
@@ -169,15 +257,17 @@ def _run_case(
         image=image,
         media_type="image/png",
         prompt=(
-            "Compare the visible legal text in this page image against the candidate "
-            "transcription. Judge literal transcription fidelity only. Do not infer "
-            "legal conclusions. A changed case number, date, amount, article number, "
-            "law number, party name, or dispositive wording is material. Return "
-            "matches=true only when there is no material visible difference.\n\n"
-            f"Candidate transcription:\n{candidate}"
+            "This image is a localized crop around one legal identifier. "
+            "Compare the exact visible identifier against TARGET_TOKEN. "
+            "Ignore differences elsewhere in the surrounding context, capitalization "
+            "outside the token, and layout. Return matches=true only if the visible "
+            "identifier exactly matches TARGET_TOKEN. If it differs, return "
+            "matches=false and put the visible identifier in corrected_text.\n\n"
+            f"TARGET_TOKEN: {target_token}\n\n"
+            f"Nearby candidate context:\n{candidate_context}"
         ),
         json_schema=_schema(),
-        max_output_tokens=800,
+        max_output_tokens=300,
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
     raw_differences = result.value.get("material_differences", [])
@@ -217,9 +307,20 @@ def main() -> int:
     )
     store = build_s3_object_store()
     object_key, source, page_index, native_text = _first_suitable_source(store)
-    image = _render_page(source, page_index)
-    candidate = native_text
-    corrupted = _corrupt_legal_token(candidate)
+    target = _find_visual_target(native_text)
+    image = _render_target_crop(
+        source,
+        page_index,
+        token=target.original_token,
+    )
+    clean_context = native_text[target.context_start : target.context_end]
+    relative_start = target.start - target.context_start
+    relative_end = target.end - target.context_start
+    corrupted_context = (
+        clean_context[:relative_start]
+        + target.corrupted_token
+        + clean_context[relative_end:]
+    )
 
     provider = OpenRouterVisualModelProvider(
         api_key=openrouter.api_key.get_secret_value(),
@@ -235,17 +336,20 @@ def main() -> int:
     corrupted_result: VisualCaseResult | None = None
     provider_errors: list[str] = []
     running_cost = 0.0
+
     try:
         good = _run_case(
             provider=provider,
             image=image,
-            candidate=candidate,
+            candidate_context=clean_context,
+            target_token=target.original_token,
             case_name="native_reference_audit",
             expected_matches=None,
         )
         running_cost += good.cost_usd or 0.0
     except ModelProviderError as exc:
-        provider_errors.append(f"native_candidate: {exc}")
+        provider_errors.append(f"native_reference_audit: {exc}")
+
     if running_cost > MAX_COST_USD:
         raise RuntimeError(
             f"visual smoke exceeded cost cap after first call: ${running_cost:.6f}"
@@ -255,21 +359,21 @@ def main() -> int:
         corrupted_result = _run_case(
             provider=provider,
             image=image,
-            candidate=corrupted,
+            candidate_context=corrupted_context,
+            target_token=target.corrupted_token,
             case_name="controlled_critical_corruption",
             expected_matches=False,
         )
         running_cost += corrupted_result.cost_usd or 0.0
     except ModelProviderError as exc:
         provider_errors.append(f"controlled_critical_corruption: {exc}")
+
     if running_cost > MAX_COST_USD:
         raise RuntimeError(
             f"visual smoke exceeded cost cap: ${running_cost:.6f}"
         )
 
-    cases = tuple(
-        case for case in (good, corrupted_result) if case is not None
-    )
+    cases = tuple(case for case in (good, corrupted_result) if case is not None)
     verified_clean_cases = tuple(
         result for result in cases if result.expected_matches is True
     )
@@ -293,12 +397,10 @@ def main() -> int:
         for result in cases
     )
     promotion_blockers = ["no_human_verified_clean_visual_gold"]
-    smoke_passed = (
-        not provider_errors
-        and corruption_detection_recall == 1.0
-    )
+    smoke_passed = not provider_errors and corruption_detection_recall == 1.0
+
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "source": "scj",
         "collection": "principales-sentencias",
         "runtime_status": (
@@ -307,7 +409,10 @@ def main() -> int:
         "provider_errors": provider_errors,
         "object_key": object_key,
         "page_index": page_index,
-        "candidate_characters": len(candidate),
+        "verification_scope": "localized_legal_identifier_crop",
+        "target_original_token": target.original_token,
+        "target_corrupted_token": target.corrupted_token,
+        "candidate_context_characters": len(clean_context),
         "reference_kind": "native_pdf_text_unverified_against_image",
         "model": MODEL,
         "reasoning_effort": VISUAL_REASONING,
@@ -327,6 +432,7 @@ def main() -> int:
         "cases": [asdict(item) for item in cases],
     }
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    (OUTPUT / "target-crop.png").write_bytes(image)
     (OUTPUT / "results.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
