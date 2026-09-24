@@ -50,6 +50,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_args(args: argparse.Namespace) -> None:
+    for name in ("scope_id", "manifest_key", "pipeline_version"):
+        value = str(getattr(args, name, "") or "").strip()
+        if not value:
+            raise ValueError(f"--{name.replace('_', '-')} must not be empty")
+
+    config_sha256 = str(args.config_sha256)
+    if len(config_sha256) != 64:
+        raise ValueError("--config-sha256 must be a SHA-256 digest")
+    try:
+        int(config_sha256, 16)
+    except ValueError as exc:
+        raise ValueError("--config-sha256 must be hexadecimal") from exc
+
+    if args.resume_run_id is not None and not str(args.resume_run_id).strip():
+        raise ValueError("--resume-run-id must not be empty when provided")
+    if args.docling_timeout_seconds <= 0:
+        raise ValueError("--docling-timeout-seconds must be positive")
+    if args.docling_max_source_bytes < 1 or args.docling_max_output_bytes < 1:
+        raise ValueError("Docling byte limits must be positive")
+    if args.circuit_breaker_threshold < 1:
+        raise ValueError("--circuit-breaker-threshold must be positive")
+
+
 def read_manifest(store: S3ObjectStore, key: str) -> tuple[bytes, dict[str, str]]:
     client = cast(Any, store.client)
     response = cast(
@@ -93,7 +117,7 @@ def _connection_factory() -> Any:
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
-    _validate_args(args)
+    validate_args(args)
 
     store = build_s3_object_store()
     manifest_payload, _ = read_manifest(store, args.manifest_key)
