@@ -163,6 +163,9 @@ def aggregate_records(
     report: dict[str, Any] = {}
     for config, config_records in sorted(by_config.items()):
         page_count = len(config_records)
+        all_document_count = len(
+            {record.source_sha256 for record in config_records}
+        )
         scored_records = [
             record for record in config_records if record.reference_reliable
         ]
@@ -228,9 +231,7 @@ def aggregate_records(
         quality.update(_document_quality(scored_records))
         report[config] = {
             "page_count": page_count,
-            "document_count": len(
-                {record.source_sha256 for record in config_records}
-            ),
+            "document_count": all_document_count,
             "quality_reference_document_count": documents,
             "quality": quality,
             "speed": {
@@ -260,8 +261,8 @@ def aggregate_records(
                 ),
                 "modeled_compute_cost_per_document_usd": (
                     None
-                    if modeled_compute_usd is None or documents == 0
-                    else modeled_compute_usd / documents
+                    if modeled_compute_usd is None or all_document_count == 0
+                    else modeled_compute_usd / all_document_count
                 ),
             },
         }
