@@ -39,7 +39,7 @@ jobs:
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
       SUITE_CONFIGS: "pdf_aware,full_ocr"
-      SUITE_DOCUMENT_LIMIT: "6"
+      SUITE_DOCUMENT_LIMIT: ${{ github.event_name == 'workflow_dispatch' && '0' || '6' }}
       SUITE_PAGES_PER_DOCUMENT: "2"
       SUITE_MAX_PAGES_TO_SCAN: "120"
       SUITE_RESUME: "1"
