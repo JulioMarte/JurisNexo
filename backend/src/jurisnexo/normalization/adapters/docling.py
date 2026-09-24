@@ -20,6 +20,7 @@ class DoclingStructuralNormalizer:
 
     ocr_language_tags: tuple[str, ...] = ()
     pdf_aware_ocr: bool = True
+    enable_ocr: bool = True
 
     def normalize(
         self,
@@ -57,9 +58,11 @@ class DoclingStructuralNormalizer:
             ocr_mode: Any = pipeline_module.OcrMode
 
             pipeline_options = pdf_pipeline_options()
-            pipeline_options.do_ocr = True
+            pipeline_options.do_ocr = self.enable_ocr
             if inspection.media_type == "application/pdf":
-                if self.pdf_aware_ocr:
+                if not self.enable_ocr:
+                    ocr_policy = "disabled"
+                elif self.pdf_aware_ocr:
                     pipeline_options.ocr_options.mode = (
                         ocr_mode.PDF_AWARE_LAYOUT_REGIONS
                     )
@@ -69,12 +72,15 @@ class DoclingStructuralNormalizer:
                 format_key = input_format.PDF
                 format_option = pdf_format_option
             else:
-                pipeline_options.ocr_options.mode = ocr_mode.FULL_PAGE
-                ocr_policy = "full_page"
+                if self.enable_ocr:
+                    pipeline_options.ocr_options.mode = ocr_mode.FULL_PAGE
+                    ocr_policy = "full_page"
+                else:
+                    ocr_policy = "disabled"
                 format_key = input_format.IMAGE
                 format_option = image_format_option
 
-            if self.ocr_language_tags:
+            if self.enable_ocr and self.ocr_language_tags:
                 pipeline_options.ocr_options.lang = list(
                     self.ocr_language_tags
                 )
