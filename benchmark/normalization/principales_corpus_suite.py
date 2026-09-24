@@ -6,8 +6,8 @@ import io
 import json
 import os
 import time
-from importlib.metadata import PackageNotFoundError, version
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +21,10 @@ from jurisnexo.normalization.benchmark_suite import (
     aggregate_records,
     evaluate_quality_gates,
     format_summary,
-    in_shard,
-    modeled_compute_cost,
     parse_configs,
     resume_key,
-    source_sha_from_key,
+    shard_for_sha,
+    validate_shard,
 )
 from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
@@ -34,19 +33,18 @@ from scj_page_selection import has_native_text, select_reference_pages
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 CHECKPOINT_PREFIX = "derived/normalization/benchmark/principales-corpus-suite/"
-CHECKPOINT_KEY = f"{CHECKPOINT_PREFIX}latest/records.jsonl"
 
 OUTPUT_DIR = Path(
     os.environ.get("SUITE_OUTPUT_DIR", ".artifacts/principales-corpus-suite")
 )
 CONFIGS = os.environ.get("SUITE_CONFIGS", "pdf_aware")
 DOCUMENT_LIMIT = int(os.environ.get("SUITE_DOCUMENT_LIMIT", "25"))
-SHARD_INDEX = int(os.environ.get("SUITE_SHARD_INDEX", "0"))
-SHARD_COUNT = int(os.environ.get("SUITE_SHARD_COUNT", "1"))
 PAGES_PER_DOCUMENT = int(os.environ.get("SUITE_PAGES_PER_DOCUMENT", "3"))
 MAX_PAGES_TO_SCAN = int(os.environ.get("SUITE_MAX_PAGES_TO_SCAN", "120"))
 MIN_REFERENCE_CHARS = int(os.environ.get("SUITE_MIN_REFERENCE_CHARS", "800"))
 RESUME = os.environ.get("SUITE_RESUME", "1") == "1"
+SHARD_INDEX = int(os.environ.get("SUITE_SHARD_INDEX", "0"))
+SHARD_COUNT = int(os.environ.get("SUITE_SHARD_COUNT", "1"))
 REQUIRED_CONFIGS = parse_configs(
     os.environ.get("SUITE_REQUIRED_CONFIGS", "pdf_aware")
 )
@@ -64,17 +62,26 @@ QUALITY_THRESHOLDS = QualityThresholds(
         os.environ.get("SUITE_MIN_CRITICAL_RECALL", "1.0")
     ),
     min_sampled_document_pass_rate=float(
-        os.environ.get("SUITE_MIN_SAMPLED_DOCUMENT_PASS_RATE", "1.0")
+        os.environ.get(
+            "SUITE_MIN_SAMPLED_DOCUMENT_PASS_RATE",
+            os.environ.get("SUITE_MIN_DOCUMENT_PASS_RATE", "1.0"),
+        )
     ),
 )
 OCR_LANGUAGE_TAGS = ("iso:es",)
-BENCHMARK_IDENTITY_VERSION = 3
-REPORT_SCHEMA_VERSION = 4
-COMPUTE_USD_PER_HOUR = (
-    float(os.environ["SUITE_COMPUTE_USD_PER_HOUR"])
-    if os.environ.get("SUITE_COMPUTE_USD_PER_HOUR")
-    else None
-)
+BENCHMARK_SCHEMA_VERSION = 3
+
+
+def _shard_prefix() -> str:
+    return f"{CHECKPOINT_PREFIX}shards/{SHARD_INDEX}-of-{SHARD_COUNT}/"
+
+
+def _checkpoint_key() -> str:
+    return f"{_shard_prefix()}latest/records.jsonl"
+
+
+def _inventory_key() -> str:
+    return f"{_shard_prefix()}latest/inventory.jsonl"
 
 
 def _package_version(name: str) -> str:
@@ -86,7 +93,7 @@ def _package_version(name: str) -> str:
 
 def _benchmark_identity(config: str) -> str:
     material = {
-        "schema_version": BENCHMARK_IDENTITY_VERSION,
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
         "config": config,
         "ocr_language_tags": list(OCR_LANGUAGE_TAGS),
         "docling_version": _package_version("docling"),
@@ -211,7 +218,7 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
         return records, keys
     try:
         payload = store.client.get_object(
-            Bucket=store.config.bucket, Key=CHECKPOINT_KEY
+            Bucket=store.config.bucket, Key=_checkpoint_key()
         )["Body"].read()
     except ClientError as exc:
         error = exc.response.get("Error", {})
@@ -219,11 +226,7 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
         if code in {"NoSuchKey", "404", "NotFound"}:
             return records, keys
         raise
-    text = (
-        payload.decode("utf-8")
-        if isinstance(payload, bytes)
-        else str(payload)
-    )
+    text = payload.decode("utf-8") if isinstance(payload, bytes) else str(payload)
     for line in text.splitlines():
         if not line.strip():
             continue
@@ -242,15 +245,20 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
     return records, keys
 
 
+def _inventory_summary(inventory: list[dict[str, Any]]) -> dict[str, int]:
+    summary: dict[str, int] = {"assigned": len(inventory)}
+    for item in inventory:
+        status = str(item["status"])
+        summary[status] = summary.get(status, 0) + 1
+    return summary
+
+
 def main() -> int:
     if DOCUMENT_LIMIT < 0:
-        raise ValueError(
-            "SUITE_DOCUMENT_LIMIT must be nonnegative (0 means unlimited)"
-        )
-    if SHARD_COUNT < 1 or SHARD_INDEX < 0 or SHARD_INDEX >= SHARD_COUNT:
-        raise ValueError("SUITE_SHARD_INDEX must be within SUITE_SHARD_COUNT")
+        raise ValueError("SUITE_DOCUMENT_LIMIT must be 0 (unlimited) or positive")
     if PAGES_PER_DOCUMENT < 1 or PAGES_PER_DOCUMENT > 10:
         raise ValueError("SUITE_PAGES_PER_DOCUMENT must be between 1 and 10")
+    validate_shard(shard_index=SHARD_INDEX, shard_count=SHARD_COUNT)
 
     configs = parse_configs(CONFIGS)
     missing_required = tuple(
@@ -260,9 +268,7 @@ def main() -> int:
         raise ValueError(
             f"required configurations are not enabled: {missing_required}"
         )
-    identities = {
-        config: _benchmark_identity(config) for config in configs
-    }
+    identities = {config: _benchmark_identity(config) for config in configs}
     store = build_s3_object_store()
     records, completed = _load_existing(store)
 
@@ -275,49 +281,53 @@ def main() -> int:
     )
 
     keys = _list_pdf_keys(store)
-    inventory_sha256 = hashlib.sha256(
-        json.dumps(keys, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
-    keyed = tuple((key, source_sha_from_key(key)) for key in keys)
-    shard_keys = tuple(
-        (key, sha)
-        for key, sha in keyed
-        if in_shard(sha, index=SHARD_INDEX, count=SHARD_COUNT)
-    )
-    if DOCUMENT_LIMIT and len(shard_keys) < DOCUMENT_LIMIT:
-        raise RuntimeError(
-            f"expected at least {DOCUMENT_LIMIT} PDFs in shard "
-            f"{SHARD_INDEX}/{SHARD_COUNT}, found {len(shard_keys)}"
-        )
+    if not keys:
+        raise RuntimeError("Principales corpus listing returned no PDFs")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     jsonl_path = OUTPUT_DIR / "records.jsonl"
+    inventory_path = OUTPUT_DIR / "inventory.jsonl"
     jsonl_path.write_text(
         "".join(
-            json.dumps(asdict(record), ensure_ascii=False, sort_keys=True)
-            + "\n"
+            json.dumps(asdict(record), ensure_ascii=False, sort_keys=True) + "\n"
             for record in records
         ),
         encoding="utf-8",
     )
-    coverage: list[dict[str, Any]] = []
-    visited_sha: set[str] = set()
+
+    inventory: list[dict[str, Any]] = []
+    sampled_documents = 0
     with jsonl_path.open("a", encoding="utf-8") as stream:
-        document_index = 0
-        for object_key, expected_sha in shard_keys:
-            if DOCUMENT_LIMIT and document_index >= DOCUMENT_LIMIT:
-                break
+        for object_key in keys:
             source = _download(store, object_key)
             source_sha256 = hashlib.sha256(source).hexdigest()
-            if source_sha256 != expected_sha:
-                raise RuntimeError(f"source checksum mismatch for {object_key}")
-            if not has_native_text(source):
-                coverage.append(
+            assigned_shard = shard_for_sha(
+                source_sha256, shard_count=SHARD_COUNT
+            )
+            if assigned_shard != SHARD_INDEX:
+                continue
+
+            base_inventory: dict[str, Any] = {
+                "object_key": object_key,
+                "source_sha256": source_sha256,
+                "shard_index": SHARD_INDEX,
+                "shard_count": SHARD_COUNT,
+            }
+            if DOCUMENT_LIMIT and sampled_documents >= DOCUMENT_LIMIT:
+                inventory.append(
                     {
-                        "object_key": object_key,
-                        "source_sha256": source_sha256,
-                        "status": "native_probe_failed_first_three_pages",
-                        "selected_pages": 0,
+                        **base_inventory,
+                        "status": "not_evaluated_limit",
+                        "selected_page_count": 0,
+                    }
+                )
+                continue
+            if not has_native_text(source):
+                inventory.append(
+                    {
+                        **base_inventory,
+                        "status": "no_native_text",
+                        "selected_page_count": 0,
                     }
                 )
                 continue
@@ -328,24 +338,23 @@ def main() -> int:
                 max_pages_per_document=PAGES_PER_DOCUMENT,
             )
             if not pages:
-                coverage.append(
+                inventory.append(
                     {
-                        "object_key": object_key,
-                        "source_sha256": source_sha256,
-                        "status": "no_reference_pages_in_scan_window",
-                        "selected_pages": 0,
+                        **base_inventory,
+                        "status": "no_reference_pages",
+                        "selected_page_count": 0,
                     }
                 )
                 continue
-            document_index += 1
-            visited_sha.add(source_sha256)
-            coverage.append(
+
+            sampled_documents += 1
+            inventory.append(
                 {
-                    "object_key": object_key,
-                    "source_sha256": source_sha256,
+                    **base_inventory,
                     "status": "sampled",
-                    "selected_pages": len(pages),
+                    "selected_page_count": len(pages),
                     "document_page_count": pages[0].document_page_count,
+                    "selected_page_indices": [page.page_index for page in pages],
                 }
             )
             for page in pages:
@@ -386,9 +395,7 @@ def main() -> int:
                         word_error_rate=score.word_error_rate,
                         token_content_recall=score.token_content_recall,
                         token_content_precision=score.token_content_precision,
-                        token_order_preservation=(
-                            score.token_order_preservation
-                        ),
+                        token_order_preservation=score.token_order_preservation,
                         legal_critical_recall=score.legal_critical_recall,
                         critical_expected_count=sum(
                             item.expected for item in score.critical.values()
@@ -408,63 +415,38 @@ def main() -> int:
                     )
                     stream.flush()
 
+    inventory_path.write_text(
+        "".join(
+            json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n"
+            for item in inventory
+        ),
+        encoding="utf-8",
+    )
+
     active_records = [
         record
         for record in records
         if record.config in identities
         and record.benchmark_identity == identities[record.config]
     ]
-    selected_records = [
-        record
-        for record in active_records
-        if record.source_sha256 in visited_sha
-    ]
     report = aggregate_records(active_records)
-    for metrics in report.values():
-        seconds = float(metrics["speed"]["total_seconds"])
-        metrics["cost"]["modeled_normalization_compute_usd"] = (
-            modeled_compute_cost(seconds, COMPUTE_USD_PER_HOUR)
-        )
     quality_gate = evaluate_quality_gates(
         report,
         required_configs=REQUIRED_CONFIGS,
         thresholds=QUALITY_THRESHOLDS,
     )
     report_payload = {
-        "schema_version": REPORT_SCHEMA_VERSION,
-        "benchmark_identity_version": BENCHMARK_IDENTITY_VERSION,
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
         "configs": list(configs),
         "required_configs": list(REQUIRED_CONFIGS),
         "benchmark_identities": identities,
-        "inventory_pdf_count": len(keys),
-        "inventory_sha256": inventory_sha256,
-        "shard_index": SHARD_INDEX,
-        "shard_count": SHARD_COUNT,
-        "shard_pdf_count": len(shard_keys),
         "document_limit": DOCUMENT_LIMIT,
         "pages_per_document": PAGES_PER_DOCUMENT,
-        "native_text_probe_pages": 3,
-        "max_pages_to_scan": MAX_PAGES_TO_SCAN,
-        "coverage_complete": len(coverage) == len(shard_keys),
-        "uninspected_object_keys": [
-            key for key, _ in shard_keys[len(coverage):]
-        ],
-        "coverage_counts": {
-            status: sum(item["status"] == status for item in coverage)
-            for status in (
-                "sampled",
-                "native_probe_failed_first_three_pages",
-                "no_reference_pages_in_scan_window",
-            )
-        },
-        "coverage": coverage,
-        "compute_usd_per_hour_assumption": COMPUTE_USD_PER_HOUR,
-        "compute_cost_scope": "measured_normalization_seconds_only",
-        "report_scope": "all_checkpoint_records_with_current_benchmark_identity",
-        "current_selection_report": aggregate_records(selected_records),
-        "selected_current_run_source_count": len(visited_sha),
+        "shard_index": SHARD_INDEX,
+        "shard_count": SHARD_COUNT,
         "recorded_current_identity": len(active_records),
         "checkpoint_record_count": len(records),
+        "inventory": _inventory_summary(inventory),
         "report": report,
         "quality_gate": quality_gate,
     }
@@ -473,53 +455,48 @@ def main() -> int:
         + "\n"
     ).encode("utf-8")
     (OUTPUT_DIR / "report.json").write_bytes(report_bytes)
-    (OUTPUT_DIR / "coverage.json").write_text(
-        json.dumps(coverage, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     summary = format_summary(
         report,
         recorded=len(active_records),
         quality_gate=quality_gate,
     )
     summary += (
-        f"\nShard {SHARD_INDEX}/{SHARD_COUNT}: {len(coverage)}/{len(shard_keys)} "
-        "PDFs accounted for; full shard coverage: "
-        f"{len(coverage) == len(shard_keys)}. "
-        "Statuses and missing contexts are in coverage.json.\n"
+        f"\nShard: {SHARD_INDEX + 1}/{SHARD_COUNT}; "
+        f"assigned PDFs: {len(inventory)}; sampled documents: {sampled_documents}.\n"
     )
-    summary += (
-        "Quality gate includes all checkpoint pages with the current benchmark "
-        "identity; current_selection_report in report.json isolates this run's "
-        "selected sources.\n"
-    )
-    if COMPUTE_USD_PER_HOUR is None:
-        summary += "Compute USD estimate unavailable: hourly rate not supplied.\n"
-    else:
-        summary += (
-            f"Compute rate assumption: USD {COMPUTE_USD_PER_HOUR:.4f}/hour. "
-            "Modeled cost covers measured normalization seconds only; "
-            "see report.json for per-route amounts.\n"
-        )
     (OUTPUT_DIR / "summary.md").write_text(summary, encoding="utf-8")
     print(summary)
     print(json.dumps(report_payload, indent=2, ensure_ascii=False, sort_keys=True))
+
     checkpoint_bytes = jsonl_path.read_bytes()
+    inventory_bytes = inventory_path.read_bytes()
     store.put(
-        key=CHECKPOINT_KEY,
+        key=_checkpoint_key(),
         content=checkpoint_bytes,
         content_type="application/x-ndjson",
         metadata={
             "recorded": str(len(records)),
-            "schema_version": str(REPORT_SCHEMA_VERSION),
+            "schema_version": str(BENCHMARK_SCHEMA_VERSION),
         },
     )
-    run_prefix = f"{CHECKPOINT_PREFIX}runs/{_run_id()}/"
+    store.put(
+        key=_inventory_key(),
+        content=inventory_bytes,
+        content_type="application/x-ndjson",
+        metadata={"assigned": str(len(inventory))},
+    )
+    run_prefix = f"{_shard_prefix()}runs/{_run_id()}/"
     store.put(
         key=f"{run_prefix}records.jsonl",
         content=checkpoint_bytes,
         content_type="application/x-ndjson",
         metadata={"recorded": str(len(records))},
+    )
+    store.put(
+        key=f"{run_prefix}inventory.jsonl",
+        content=inventory_bytes,
+        content_type="application/x-ndjson",
+        metadata={"assigned": str(len(inventory))},
     )
     store.put(
         key=f"{run_prefix}report.json",
@@ -528,12 +505,6 @@ def main() -> int:
         metadata={
             "quality_gate_passed": str(bool(quality_gate["passed"])).lower()
         },
-    )
-    store.put(
-        key=f"{run_prefix}coverage.json",
-        content=(OUTPUT_DIR / "coverage.json").read_bytes(),
-        content_type="application/json",
-        metadata={"shard_index": str(SHARD_INDEX), "shard_count": str(SHARD_COUNT)},
     )
     return 0 if quality_gate["passed"] else 2
 
