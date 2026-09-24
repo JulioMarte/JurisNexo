@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 
 import pytest
@@ -44,7 +45,7 @@ def _store(payload: bytes, metadata: dict[str, str]) -> S3ObjectStore:
     )
 
 
-def _valid_args():
+def _valid_args() -> argparse.Namespace:
     return build_parser().parse_args(
         [
             "--scope-id",
