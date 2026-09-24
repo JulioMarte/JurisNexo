@@ -68,7 +68,8 @@ QUALITY_THRESHOLDS = QualityThresholds(
     ),
 )
 OCR_LANGUAGE_TAGS = ("iso:es",)
-BENCHMARK_SCHEMA_VERSION = 3
+BENCHMARK_IDENTITY_VERSION = 3
+REPORT_SCHEMA_VERSION = 4
 COMPUTE_USD_PER_HOUR = (
     float(os.environ["SUITE_COMPUTE_USD_PER_HOUR"])
     if os.environ.get("SUITE_COMPUTE_USD_PER_HOUR")
@@ -85,7 +86,7 @@ def _package_version(name: str) -> str:
 
 def _benchmark_identity(config: str) -> str:
     material = {
-        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "schema_version": BENCHMARK_IDENTITY_VERSION,
         "config": config,
         "ocr_language_tags": list(OCR_LANGUAGE_TAGS),
         "docling_version": _package_version("docling"),
@@ -315,7 +316,7 @@ def main() -> int:
                     {
                         "object_key": object_key,
                         "source_sha256": source_sha256,
-                        "status": "no_native_text",
+                        "status": "native_probe_failed_first_three_pages",
                         "selected_pages": 0,
                     }
                 )
@@ -331,7 +332,7 @@ def main() -> int:
                     {
                         "object_key": object_key,
                         "source_sha256": source_sha256,
-                        "status": "no_reference_pages",
+                        "status": "no_reference_pages_in_scan_window",
                         "selected_pages": 0,
                     }
                 )
@@ -412,7 +413,11 @@ def main() -> int:
         for record in records
         if record.config in identities
         and record.benchmark_identity == identities[record.config]
-        and record.source_sha256 in visited_sha
+    ]
+    selected_records = [
+        record
+        for record in active_records
+        if record.source_sha256 in visited_sha
     ]
     report = aggregate_records(active_records)
     for metrics in report.values():
@@ -426,7 +431,8 @@ def main() -> int:
         thresholds=QUALITY_THRESHOLDS,
     )
     report_payload = {
-        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "benchmark_identity_version": BENCHMARK_IDENTITY_VERSION,
         "configs": list(configs),
         "required_configs": list(REQUIRED_CONFIGS),
         "benchmark_identities": identities,
@@ -437,17 +443,26 @@ def main() -> int:
         "shard_pdf_count": len(shard_keys),
         "document_limit": DOCUMENT_LIMIT,
         "pages_per_document": PAGES_PER_DOCUMENT,
+        "native_text_probe_pages": 3,
+        "max_pages_to_scan": MAX_PAGES_TO_SCAN,
         "coverage_complete": len(coverage) == len(shard_keys),
         "uninspected_object_keys": [
             key for key, _ in shard_keys[len(coverage):]
         ],
         "coverage_counts": {
             status: sum(item["status"] == status for item in coverage)
-            for status in ("sampled", "no_native_text", "no_reference_pages")
+            for status in (
+                "sampled",
+                "native_probe_failed_first_three_pages",
+                "no_reference_pages_in_scan_window",
+            )
         },
         "coverage": coverage,
         "compute_usd_per_hour_assumption": COMPUTE_USD_PER_HOUR,
         "compute_cost_scope": "measured_normalization_seconds_only",
+        "report_scope": "all_checkpoint_records_with_current_benchmark_identity",
+        "current_selection_report": aggregate_records(selected_records),
+        "selected_current_run_source_count": len(visited_sha),
         "recorded_current_identity": len(active_records),
         "checkpoint_record_count": len(records),
         "report": report,
@@ -473,6 +488,11 @@ def main() -> int:
         f"{len(coverage) == len(shard_keys)}. "
         "Statuses and missing contexts are in coverage.json.\n"
     )
+    summary += (
+        "Quality gate includes all checkpoint pages with the current benchmark "
+        "identity; current_selection_report in report.json isolates this run's "
+        "selected sources.\n"
+    )
     if COMPUTE_USD_PER_HOUR is None:
         summary += "Compute USD estimate unavailable: hourly rate not supplied.\n"
     else:
@@ -491,7 +511,7 @@ def main() -> int:
         content_type="application/x-ndjson",
         metadata={
             "recorded": str(len(records)),
-            "schema_version": str(BENCHMARK_SCHEMA_VERSION),
+            "schema_version": str(REPORT_SCHEMA_VERSION),
         },
     )
     run_prefix = f"{CHECKPOINT_PREFIX}runs/{_run_id()}/"
