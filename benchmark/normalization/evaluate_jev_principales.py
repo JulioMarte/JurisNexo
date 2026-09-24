@@ -7,8 +7,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from scj_page_selection import select_reference_pages
-
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.bootstrap.settings import (
     get_normalization_model_settings,
@@ -31,6 +29,8 @@ from jurisnexo.normalization.jev_claims import (
     EvidenceClaim,
     evaluate_claim_support_batch,
 )
+from scj_page_selection import select_reference_pages
+
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 OUTPUT = Path(
     os.environ.get(
