@@ -19,6 +19,14 @@ from scj_page_selection import normalize_native_reference
 
 CASES_PATH = Path(__file__).with_name("principales_failed_pages.json")
 OUTPUT = Path(os.environ["FAILURE_DIAGNOSTIC_OUTPUT"])
+REQUIRE_PASS = os.environ.get("FAILURE_DIAGNOSTIC_REQUIRE_PASS", "0") == "1"
+MAX_WER = float(os.environ.get("FAILURE_DIAGNOSTIC_MAX_WER", "0.10"))
+MIN_CONTENT_RECALL = float(
+    os.environ.get("FAILURE_DIAGNOSTIC_MIN_CONTENT_RECALL", "0.98")
+)
+MIN_CRITICAL_RECALL = float(
+    os.environ.get("FAILURE_DIAGNOSTIC_MIN_CRITICAL_RECALL", "1.0")
+)
 
 
 def _reference_page(source: bytes, page_index: int) -> str:
@@ -95,10 +103,44 @@ def main() -> int:
                 "score": asdict(score),
             }
         )
+    checks = []
+    for item in results:
+        score = item["score"]
+        checks.append(
+            {
+                "source_sha256": item["source_sha256"],
+                "page_index": item["page_index"],
+                "word_error_rate": float(score["word_error_rate"]) <= MAX_WER,
+                "token_content_recall": (
+                    float(score["token_content_recall"]) >= MIN_CONTENT_RECALL
+                ),
+                "legal_critical_recall": (
+                    float(score["legal_critical_recall"]) >= MIN_CRITICAL_RECALL
+                ),
+            }
+        )
+    quality_gate = {
+        "passed": all(
+            all(
+                value
+                for key, value in item.items()
+                if key not in {"source_sha256", "page_index"}
+            )
+            for item in checks
+        ),
+        "thresholds": {
+            "max_word_error_rate": MAX_WER,
+            "min_content_recall": MIN_CONTENT_RECALL,
+            "min_legal_critical_recall": MIN_CRITICAL_RECALL,
+        },
+        "cases": checks,
+    }
     report = {
         "source_run": fixture["source_run"],
         "inventory_sha256": fixture["inventory_sha256"],
         "benchmark_identity": _benchmark_identity("pdf_aware"),
+        "reference_authority": "native_pdf_text_unverified_against_image",
+        "quality_gate": quality_gate,
         "cases": results,
     }
     (OUTPUT / "report.json").write_text(
@@ -106,6 +148,8 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
+    if REQUIRE_PASS and not quality_gate["passed"]:
+        return 2
     return 0
 
 
