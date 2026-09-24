@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from jurisnexo.model_providers import openrouter, openrouter_visual
-
-
 SCHEMA = {
     "type": "object",
     "properties": {"ok": {"type": "boolean"}},
@@ -12,7 +9,9 @@ SCHEMA = {
 
 
 def test_text_provider_tool_mode_forces_function_call() -> None:
-    provider = openrouter.OpenRouterStructuredModelProvider(
+    from jurisnexo.model_providers.openrouter import OpenRouterStructuredModelProvider
+
+    provider = OpenRouterStructuredModelProvider(
         api_key="test-key",
         model="fixture",
         structured_mode="tool",
@@ -30,7 +29,9 @@ def test_text_provider_tool_mode_forces_function_call() -> None:
 
 
 def test_text_provider_json_object_mode_is_explicit() -> None:
-    provider = openrouter.OpenRouterStructuredModelProvider(
+    from jurisnexo.model_providers.openrouter import OpenRouterStructuredModelProvider
+
+    provider = OpenRouterStructuredModelProvider(
         api_key="test-key",
         model="fixture",
         structured_mode="json_object",
@@ -41,7 +42,9 @@ def test_text_provider_json_object_mode_is_explicit() -> None:
 
 
 def test_visual_provider_defaults_to_tool_mode() -> None:
-    provider = openrouter_visual.OpenRouterVisualModelProvider(
+    from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider
+
+    provider = OpenRouterVisualModelProvider(
         api_key="test-key",
         model="fixture",
     )
@@ -53,7 +56,9 @@ def test_visual_provider_defaults_to_tool_mode() -> None:
 
 
 def test_visual_provider_unpinned_routing_stays_parameter_safe() -> None:
-    provider = openrouter_visual.OpenRouterVisualModelProvider(
+    from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider
+
+    provider = OpenRouterVisualModelProvider(
         api_key="test-key",
         model="fixture",
     )
