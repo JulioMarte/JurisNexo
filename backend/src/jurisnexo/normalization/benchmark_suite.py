@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from statistics import mean
 from typing import Any
+
+_CONTENT_ADDRESSED_PDF = re.compile(r"(?:^|/)([0-9a-f]{64})\.pdf$")
 
 ROUTES = ("pdf_aware", "full_ocr")
 
@@ -34,7 +37,7 @@ class QualityThresholds:
     min_mean_token_content_recall: float = 0.98
     min_mean_token_content_precision: float = 0.98
     min_aggregate_legal_critical_recall: float = 1.0
-    min_document_pass_rate: float = 1.0
+    min_sampled_document_pass_rate: float = 1.0
 
 
 def parse_configs(spec: str) -> tuple[str, ...]:
@@ -60,6 +63,29 @@ def resume_key(
     benchmark_identity: str = "legacy-unversioned",
 ) -> str:
     return f"{config}|{source_sha256}|{page_index}|{benchmark_identity}"
+
+
+def source_sha_from_key(object_key: str) -> str:
+    match = _CONTENT_ADDRESSED_PDF.search(object_key)
+    if match is None:
+        raise ValueError(f"PDF key is not content-addressed: {object_key}")
+    return match.group(1)
+
+
+def in_shard(source_sha256: str, *, index: int, count: int) -> bool:
+    if count < 1 or index < 0 or index >= count:
+        raise ValueError("shard index must be within a positive shard count")
+    return int(source_sha256, 16) % count == index
+
+
+def modeled_compute_cost(
+    total_seconds: float, usd_per_hour: float | None
+) -> float | None:
+    if usd_per_hour is None:
+        return None
+    if usd_per_hour < 0:
+        raise ValueError("compute hourly rate must be nonnegative")
+    return total_seconds * usd_per_hour / 3600
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -159,7 +185,7 @@ def aggregate_records(
                     1.0 if expected == 0 else matched / expected
                 ),
                 "documents_with_critical_loss": documents_with_critical_loss,
-                "document_pass_rate": document_pass_rate,
+                "sampled_document_pass_rate": document_pass_rate,
             },
             "speed": {
                 "total_seconds": total_seconds,
@@ -218,9 +244,9 @@ def evaluate_quality_gates(
                 float(quality["aggregate_legal_critical_recall"])
                 >= thresholds.min_aggregate_legal_critical_recall
             ),
-            "document_pass_rate": (
-                float(quality["document_pass_rate"])
-                >= thresholds.min_document_pass_rate
+            "sampled_document_pass_rate": (
+                float(quality["sampled_document_pass_rate"])
+                >= thresholds.min_sampled_document_pass_rate
             ),
         }
         configs[config] = {
@@ -237,7 +263,9 @@ def evaluate_quality_gates(
             "min_aggregate_legal_critical_recall": (
                 thresholds.min_aggregate_legal_critical_recall
             ),
-            "min_document_pass_rate": thresholds.min_document_pass_rate,
+            "min_sampled_document_pass_rate": (
+                thresholds.min_sampled_document_pass_rate
+            ),
         },
         "configs": configs,
     }
@@ -255,7 +283,7 @@ def format_summary(
         f"Recorded current-identity page evaluations: {recorded}",
         "",
         "| config | pages | docs | mean WER | p95 WER | recall | precision | "
-        "order | legal-critical | doc pass | s/page | pages/s | provider $/page |",
+        "order | legal-critical | sampled doc pass | s/page | pages/s | provider $/page |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | "
         "--- | --- |",
     ]
@@ -271,7 +299,7 @@ def format_summary(
             f"{quality['mean_token_content_precision']:.4f} | "
             f"{quality['mean_token_order_preservation']:.4f} | "
             f"{quality['aggregate_legal_critical_recall']:.4f} | "
-            f"{quality['document_pass_rate']:.4f} | "
+            f"{quality['sampled_document_pass_rate']:.4f} | "
             f"{speed['mean_seconds_per_page']:.3f} | "
             f"{speed['pages_per_second']:.3f} | "
             f"{cost['provider_cost_per_page_usd']:.6f} |"
@@ -296,7 +324,8 @@ def format_summary(
     lines.append(
         "Provider/model cost excludes local compute. Technical normalization runs "
         "locally, so provider cost is 0; seconds/page and bytes/page are the "
-        "current operational-cost proxies. Legal-critical recall counts spans "
-        "recognised by the current detector."
+        "current operational-cost proxies. Sampled document pass covers only "
+        "selected pages, not whole documents. Legal-critical recall counts "
+        "spans recognised by the current detector."
     )
     return "\n".join(lines) + "\n"

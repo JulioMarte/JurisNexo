@@ -9,9 +9,12 @@ from jurisnexo.normalization.benchmark_suite import (
     document_aggregates,
     evaluate_quality_gates,
     format_summary,
+    in_shard,
+    modeled_compute_cost,
     parse_configs,
     percentile,
     resume_key,
+    source_sha_from_key,
 )
 
 
@@ -63,6 +66,24 @@ def test_resume_key_is_stable_and_versioned() -> None:
     )
 
 
+def test_content_hash_shards_are_exclusive_and_source_bound() -> None:
+    sha = "a" * 64
+    key = f"jurisdictions/do/scj/principales-sentencias/aa/{sha}.pdf"
+    assert source_sha_from_key(key) == sha
+    assert sum(in_shard(sha, index=index, count=7) for index in range(7)) == 1
+    with pytest.raises(ValueError, match="content-addressed"):
+        source_sha_from_key("principales/unversioned.pdf")
+    with pytest.raises(ValueError, match="shard index"):
+        in_shard(sha, index=7, count=7)
+
+
+def test_compute_cost_requires_explicit_rate() -> None:
+    assert modeled_compute_cost(3600.0, None) is None
+    assert modeled_compute_cost(1800.0, 0.20) == pytest.approx(0.10)
+    with pytest.raises(ValueError, match="nonnegative"):
+        modeled_compute_cost(1.0, -1.0)
+
+
 def test_percentile_interpolates() -> None:
     assert percentile([1.0, 2.0, 3.0, 4.0], 0.5) == pytest.approx(2.5)
     assert percentile([], 0.95) == 0.0
@@ -106,6 +127,8 @@ def test_aggregate_records_reports_quality_speed_and_cost() -> None:
     assert pdf["cost"]["provider_model_cost_usd"] == 0.0
     assert pdf["cost"]["provider_cost_per_page_usd"] == 0.0
     assert pdf["cost"]["output_bytes_per_page"] == pytest.approx(1000.0)
+    assert pdf["quality"]["sampled_document_pass_rate"] == 1.0
+    assert "document_pass_rate" not in pdf["quality"]
     assert report["full_ocr"]["quality"]["mean_word_error_rate"] == pytest.approx(
         0.30
     )
@@ -156,7 +179,7 @@ def test_quality_gate_fails_on_critical_document_loss() -> None:
         thresholds=QualityThresholds(),
     )
     assert gate["passed"] is False
-    assert gate["configs"]["pdf_aware"]["checks"]["document_pass_rate"] is False
+    assert gate["configs"]["pdf_aware"]["checks"]["sampled_document_pass_rate"] is False
 
 
 def test_summary_labels_provider_cost_and_quality_verdict() -> None:

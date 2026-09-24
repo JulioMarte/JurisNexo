@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-from jurisnexo.model_providers.openrouter import (
-    OpenRouterStructuredModelProvider,
-)
-from jurisnexo.model_providers.openrouter_visual import (
-    OpenRouterVisualModelProvider,
-)
+from jurisnexo.model_providers.openrouter import OpenRouterStructuredModelProvider
+from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider
 
 
 SCHEMA = {

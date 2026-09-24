@@ -21,8 +21,11 @@ from jurisnexo.normalization.benchmark_suite import (
     aggregate_records,
     evaluate_quality_gates,
     format_summary,
+    in_shard,
+    modeled_compute_cost,
     parse_configs,
     resume_key,
+    source_sha_from_key,
 )
 from jurisnexo.normalization.contracts import FormatInspection
 from jurisnexo.normalization.gold import score_text_fidelity
@@ -38,6 +41,8 @@ OUTPUT_DIR = Path(
 )
 CONFIGS = os.environ.get("SUITE_CONFIGS", "pdf_aware")
 DOCUMENT_LIMIT = int(os.environ.get("SUITE_DOCUMENT_LIMIT", "25"))
+SHARD_INDEX = int(os.environ.get("SUITE_SHARD_INDEX", "0"))
+SHARD_COUNT = int(os.environ.get("SUITE_SHARD_COUNT", "1"))
 PAGES_PER_DOCUMENT = int(os.environ.get("SUITE_PAGES_PER_DOCUMENT", "3"))
 MAX_PAGES_TO_SCAN = int(os.environ.get("SUITE_MAX_PAGES_TO_SCAN", "120"))
 MIN_REFERENCE_CHARS = int(os.environ.get("SUITE_MIN_REFERENCE_CHARS", "800"))
@@ -58,12 +63,17 @@ QUALITY_THRESHOLDS = QualityThresholds(
     min_aggregate_legal_critical_recall=float(
         os.environ.get("SUITE_MIN_CRITICAL_RECALL", "1.0")
     ),
-    min_document_pass_rate=float(
-        os.environ.get("SUITE_MIN_DOCUMENT_PASS_RATE", "1.0")
+    min_sampled_document_pass_rate=float(
+        os.environ.get("SUITE_MIN_SAMPLED_DOCUMENT_PASS_RATE", "1.0")
     ),
 )
 OCR_LANGUAGE_TAGS = ("iso:es",)
-BENCHMARK_SCHEMA_VERSION = 2
+BENCHMARK_SCHEMA_VERSION = 3
+COMPUTE_USD_PER_HOUR = (
+    float(os.environ["SUITE_COMPUTE_USD_PER_HOUR"])
+    if os.environ.get("SUITE_COMPUTE_USD_PER_HOUR")
+    else None
+)
 
 
 def _package_version(name: str) -> str:
@@ -232,8 +242,12 @@ def _load_existing(store: Any) -> tuple[list[SuiteRecord], set[str]]:
 
 
 def main() -> int:
-    if DOCUMENT_LIMIT < 1:
-        raise ValueError("SUITE_DOCUMENT_LIMIT must be at least 1")
+    if DOCUMENT_LIMIT < 0:
+        raise ValueError(
+            "SUITE_DOCUMENT_LIMIT must be nonnegative (0 means unlimited)"
+        )
+    if SHARD_COUNT < 1 or SHARD_INDEX < 0 or SHARD_INDEX >= SHARD_COUNT:
+        raise ValueError("SUITE_SHARD_INDEX must be within SUITE_SHARD_COUNT")
     if PAGES_PER_DOCUMENT < 1 or PAGES_PER_DOCUMENT > 10:
         raise ValueError("SUITE_PAGES_PER_DOCUMENT must be between 1 and 10")
 
@@ -260,10 +274,16 @@ def main() -> int:
     )
 
     keys = _list_pdf_keys(store)
-    if len(keys) < DOCUMENT_LIMIT:
+    keyed = tuple((key, source_sha_from_key(key)) for key in keys)
+    shard_keys = tuple(
+        (key, sha)
+        for key, sha in keyed
+        if in_shard(sha, index=SHARD_INDEX, count=SHARD_COUNT)
+    )
+    if DOCUMENT_LIMIT and len(shard_keys) < DOCUMENT_LIMIT:
         raise RuntimeError(
-            f"expected at least {DOCUMENT_LIMIT} Principales PDFs, "
-            f"found {len(keys)}"
+            f"expected at least {DOCUMENT_LIMIT} PDFs in shard "
+            f"{SHARD_INDEX}/{SHARD_COUNT}, found {len(shard_keys)}"
         )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -276,13 +296,26 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
+    coverage: list[dict[str, Any]] = []
+    visited_sha: set[str] = set()
     with jsonl_path.open("a", encoding="utf-8") as stream:
         document_index = 0
-        for object_key in keys:
-            if document_index >= DOCUMENT_LIMIT:
+        for object_key, expected_sha in shard_keys:
+            if DOCUMENT_LIMIT and document_index >= DOCUMENT_LIMIT:
                 break
             source = _download(store, object_key)
+            source_sha256 = hashlib.sha256(source).hexdigest()
+            if source_sha256 != expected_sha:
+                raise RuntimeError(f"source checksum mismatch for {object_key}")
             if not has_native_text(source):
+                coverage.append(
+                    {
+                        "object_key": object_key,
+                        "source_sha256": source_sha256,
+                        "status": "no_native_text",
+                        "selected_pages": 0,
+                    }
+                )
                 continue
             pages = select_reference_pages(
                 source,
@@ -291,9 +324,26 @@ def main() -> int:
                 max_pages_per_document=PAGES_PER_DOCUMENT,
             )
             if not pages:
+                coverage.append(
+                    {
+                        "object_key": object_key,
+                        "source_sha256": source_sha256,
+                        "status": "no_reference_pages",
+                        "selected_pages": 0,
+                    }
+                )
                 continue
             document_index += 1
-            source_sha256 = hashlib.sha256(source).hexdigest()
+            visited_sha.add(source_sha256)
+            coverage.append(
+                {
+                    "object_key": object_key,
+                    "source_sha256": source_sha256,
+                    "status": "sampled",
+                    "selected_pages": len(pages),
+                    "document_page_count": pages[0].document_page_count,
+                }
+            )
             for page in pages:
                 for config in configs:
                     benchmark_identity = identities[config]
@@ -359,8 +409,14 @@ def main() -> int:
         for record in records
         if record.config in identities
         and record.benchmark_identity == identities[record.config]
+        and record.source_sha256 in visited_sha
     ]
     report = aggregate_records(active_records)
+    for metrics in report.values():
+        seconds = float(metrics["speed"]["total_seconds"])
+        metrics["cost"]["modeled_normalization_compute_usd"] = (
+            modeled_compute_cost(seconds, COMPUTE_USD_PER_HOUR)
+        )
     quality_gate = evaluate_quality_gates(
         report,
         required_configs=REQUIRED_CONFIGS,
@@ -371,8 +427,20 @@ def main() -> int:
         "configs": list(configs),
         "required_configs": list(REQUIRED_CONFIGS),
         "benchmark_identities": identities,
+        "inventory_pdf_count": len(keys),
+        "shard_index": SHARD_INDEX,
+        "shard_count": SHARD_COUNT,
+        "shard_pdf_count": len(shard_keys),
         "document_limit": DOCUMENT_LIMIT,
         "pages_per_document": PAGES_PER_DOCUMENT,
+        "coverage_complete": len(coverage) == len(shard_keys),
+        "coverage_counts": {
+            status: sum(item["status"] == status for item in coverage)
+            for status in ("sampled", "no_native_text", "no_reference_pages")
+        },
+        "coverage": coverage,
+        "compute_usd_per_hour_assumption": COMPUTE_USD_PER_HOUR,
+        "compute_cost_scope": "measured_normalization_seconds_only",
         "recorded_current_identity": len(active_records),
         "checkpoint_record_count": len(records),
         "report": report,
@@ -383,15 +451,32 @@ def main() -> int:
         + "\n"
     ).encode("utf-8")
     (OUTPUT_DIR / "report.json").write_bytes(report_bytes)
+    (OUTPUT_DIR / "coverage.json").write_text(
+        json.dumps(coverage, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     summary = format_summary(
         report,
         recorded=len(active_records),
         quality_gate=quality_gate,
     )
+    summary += (
+        f"\nShard {SHARD_INDEX}/{SHARD_COUNT}: {len(coverage)}/{len(shard_keys)} "
+        "PDFs accounted for; full shard coverage: "
+        f"{len(coverage) == len(shard_keys)}. "
+        "Statuses and missing contexts are in coverage.json.\n"
+    )
+    if COMPUTE_USD_PER_HOUR is None:
+        summary += "Compute USD estimate unavailable: hourly rate not supplied.\n"
+    else:
+        summary += (
+            f"Compute rate assumption: USD {COMPUTE_USD_PER_HOUR:.4f}/hour. "
+            "Modeled cost covers measured normalization seconds only; "
+            "see report.json for per-route amounts.\n"
+        )
     (OUTPUT_DIR / "summary.md").write_text(summary, encoding="utf-8")
     print(summary)
     print(json.dumps(report_payload, indent=2, ensure_ascii=False, sort_keys=True))
-
     checkpoint_bytes = jsonl_path.read_bytes()
     store.put(
         key=CHECKPOINT_KEY,
@@ -416,6 +501,12 @@ def main() -> int:
         metadata={
             "quality_gate_passed": str(bool(quality_gate["passed"])).lower()
         },
+    )
+    store.put(
+        key=f"{run_prefix}coverage.json",
+        content=(OUTPUT_DIR / "coverage.json").read_bytes(),
+        content_type="application/json",
+        metadata={"shard_index": str(SHARD_INDEX), "shard_count": str(SHARD_COUNT)},
     )
     return 0 if quality_gate["passed"] else 2
 
