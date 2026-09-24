@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from statistics import mean
-from typing import Any, cast
-
-_CONTENT_ADDRESSED_PDF = re.compile(r"(?:^|/)([0-9a-f]{64})\.pdf$")
+from typing import Any
 
 ROUTES = ("pdf_aware", "full_ocr")
 
@@ -41,9 +38,7 @@ class QualityThresholds:
 
 
 def parse_configs(spec: str) -> tuple[str, ...]:
-    requested = tuple(
-        part.strip() for part in spec.split(",") if part.strip()
-    )
+    requested = tuple(part.strip() for part in spec.split(",") if part.strip())
     if not requested:
         raise ValueError("at least one configuration route is required")
     unknown = [item for item in requested if item not in ROUTES]
@@ -56,6 +51,24 @@ def parse_configs(spec: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def validate_shard(*, shard_index: int, shard_count: int) -> None:
+    if shard_count < 1:
+        raise ValueError("shard_count must be at least 1")
+    if shard_index < 0 or shard_index >= shard_count:
+        raise ValueError("shard_index must satisfy 0 <= index < shard_count")
+
+
+def shard_for_sha(source_sha256: str, *, shard_count: int) -> int:
+    validate_shard(shard_index=0, shard_count=shard_count)
+    if len(source_sha256) < 16:
+        raise ValueError("source_sha256 must contain at least 16 hexadecimal characters")
+    try:
+        prefix = int(source_sha256[:16], 16)
+    except ValueError as exc:
+        raise ValueError("source_sha256 must be hexadecimal") from exc
+    return prefix % shard_count
+
+
 def resume_key(
     config: str,
     source_sha256: str,
@@ -63,29 +76,6 @@ def resume_key(
     benchmark_identity: str = "legacy-unversioned",
 ) -> str:
     return f"{config}|{source_sha256}|{page_index}|{benchmark_identity}"
-
-
-def source_sha_from_key(object_key: str) -> str:
-    match = _CONTENT_ADDRESSED_PDF.search(object_key)
-    if match is None:
-        raise ValueError(f"PDF key is not content-addressed: {object_key}")
-    return match.group(1)
-
-
-def in_shard(source_sha256: str, *, index: int, count: int) -> bool:
-    if count < 1 or index < 0 or index >= count:
-        raise ValueError("shard index must be within a positive shard count")
-    return int(source_sha256, 16) % count == index
-
-
-def modeled_compute_cost(
-    total_seconds: float, usd_per_hour: float | None
-) -> float | None:
-    if usd_per_hour is None:
-        return None
-    if usd_per_hour < 0:
-        raise ValueError("compute hourly rate must be nonnegative")
-    return total_seconds * usd_per_hour / 3600
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -117,24 +107,46 @@ def document_aggregates(
     )
     if not grouped:
         return 0, 0, 1.0
-    document_pass_rate = (
+    sampled_document_pass_rate = (
         sum(
             1
             for document_records in grouped.values()
             if all(
-                record.critical_matched_count
-                >= record.critical_expected_count
+                record.critical_matched_count >= record.critical_expected_count
                 for record in document_records
             )
         )
         / len(grouped)
     )
-    return len(grouped), documents_with_critical_loss, document_pass_rate
+    return len(grouped), documents_with_critical_loss, sampled_document_pass_rate
 
 
-def aggregate_records(
-    records: Iterable[SuiteRecord],
-) -> dict[str, Any]:
+def _document_quality(config_records: list[SuiteRecord]) -> dict[str, float]:
+    grouped: dict[str, list[SuiteRecord]] = {}
+    for record in config_records:
+        grouped.setdefault(record.source_sha256, []).append(record)
+    if not grouped:
+        return {
+            "mean_document_word_error_rate": 0.0,
+            "median_document_word_error_rate": 0.0,
+            "p95_document_worst_page_word_error_rate": 0.0,
+        }
+    document_means = [
+        mean(record.word_error_rate for record in document_records)
+        for document_records in grouped.values()
+    ]
+    document_worst = [
+        max(record.word_error_rate for record in document_records)
+        for document_records in grouped.values()
+    ]
+    return {
+        "mean_document_word_error_rate": mean(document_means),
+        "median_document_word_error_rate": percentile(document_means, 0.5),
+        "p95_document_worst_page_word_error_rate": percentile(document_worst, 0.95),
+    }
+
+
+def aggregate_records(records: Iterable[SuiteRecord]) -> dict[str, Any]:
     by_config: dict[str, list[SuiteRecord]] = {}
     for record in records:
         by_config.setdefault(record.config, []).append(record)
@@ -144,49 +156,45 @@ def aggregate_records(
         page_count = len(config_records)
         elapsed = [record.elapsed_seconds for record in config_records]
         total_seconds = sum(elapsed)
-        expected = sum(
-            record.critical_expected_count for record in config_records
-        )
-        matched = sum(
-            record.critical_matched_count for record in config_records
-        )
-        documents, documents_with_critical_loss, document_pass_rate = (
+        expected = sum(record.critical_expected_count for record in config_records)
+        matched = sum(record.critical_matched_count for record in config_records)
+        documents, documents_with_critical_loss, sampled_document_pass_rate = (
             document_aggregates(tuple(config_records))
         )
         output_bytes = sum(record.output_bytes for record in config_records)
+        quality = {
+            "mean_word_error_rate": mean(
+                record.word_error_rate for record in config_records
+            ),
+            "median_word_error_rate": percentile(
+                [record.word_error_rate for record in config_records], 0.5
+            ),
+            "p95_word_error_rate": percentile(
+                [record.word_error_rate for record in config_records], 0.95
+            ),
+            "mean_character_error_rate": mean(
+                record.character_error_rate for record in config_records
+            ),
+            "mean_token_content_recall": mean(
+                record.token_content_recall for record in config_records
+            ),
+            "mean_token_content_precision": mean(
+                record.token_content_precision for record in config_records
+            ),
+            "mean_token_order_preservation": mean(
+                record.token_order_preservation for record in config_records
+            ),
+            "aggregate_legal_critical_recall": (
+                1.0 if expected == 0 else matched / expected
+            ),
+            "documents_with_critical_loss": documents_with_critical_loss,
+            "sampled_document_pass_rate": sampled_document_pass_rate,
+        }
+        quality.update(_document_quality(config_records))
         report[config] = {
             "page_count": page_count,
             "document_count": documents,
-            "quality": {
-                "mean_word_error_rate": mean(
-                    record.word_error_rate for record in config_records
-                ),
-                "median_word_error_rate": percentile(
-                    [record.word_error_rate for record in config_records], 0.5
-                ),
-                "p95_word_error_rate": percentile(
-                    [record.word_error_rate for record in config_records], 0.95
-                ),
-                "mean_character_error_rate": mean(
-                    record.character_error_rate for record in config_records
-                ),
-                "mean_token_content_recall": mean(
-                    record.token_content_recall for record in config_records
-                ),
-                "mean_token_content_precision": mean(
-                    record.token_content_precision
-                    for record in config_records
-                ),
-                "mean_token_order_preservation": mean(
-                    record.token_order_preservation
-                    for record in config_records
-                ),
-                "aggregate_legal_critical_recall": (
-                    1.0 if expected == 0 else matched / expected
-                ),
-                "documents_with_critical_loss": documents_with_critical_loss,
-                "sampled_document_pass_rate": document_pass_rate,
-            },
+            "quality": quality,
             "speed": {
                 "total_seconds": total_seconds,
                 "mean_seconds_per_page": (
@@ -211,7 +219,7 @@ def aggregate_records(
 
 
 def evaluate_quality_gates(
-    report: Mapping[str, object],
+    report: Mapping[str, Any],
     *,
     required_configs: tuple[str, ...],
     thresholds: QualityThresholds,
@@ -225,35 +233,27 @@ def evaluate_quality_gates(
                 "checks": {"present": False},
             }
             continue
-        typed_metrics = cast(dict[str, object], metrics)
-        quality_raw = typed_metrics.get("quality")
-        if not isinstance(quality_raw, dict):
-            configs[config] = {
-                "passed": False,
-                "checks": {"quality_present": False},
-            }
-            continue
-        quality = cast(dict[str, object], quality_raw)
+        quality = metrics["quality"]
         checks = {
             "present": True,
             "mean_word_error_rate": (
-                _quality_metric(quality, "mean_word_error_rate")
+                float(quality["mean_word_error_rate"])
                 <= thresholds.max_mean_word_error_rate
             ),
             "mean_token_content_recall": (
-                _quality_metric(quality, "mean_token_content_recall")
+                float(quality["mean_token_content_recall"])
                 >= thresholds.min_mean_token_content_recall
             ),
             "mean_token_content_precision": (
-                _quality_metric(quality, "mean_token_content_precision")
+                float(quality["mean_token_content_precision"])
                 >= thresholds.min_mean_token_content_precision
             ),
             "aggregate_legal_critical_recall": (
-                _quality_metric(quality, "aggregate_legal_critical_recall")
+                float(quality["aggregate_legal_critical_recall"])
                 >= thresholds.min_aggregate_legal_critical_recall
             ),
             "sampled_document_pass_rate": (
-                _quality_metric(quality, "sampled_document_pass_rate")
+                float(quality["sampled_document_pass_rate"])
                 >= thresholds.min_sampled_document_pass_rate
             ),
         }
@@ -277,13 +277,6 @@ def evaluate_quality_gates(
         },
         "configs": configs,
     }
-
-
-def _quality_metric(quality: Mapping[str, object], name: str) -> float:
-    value = quality.get(name)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"quality metric {name} must be numeric")
-    return float(value)
 
 
 def format_summary(
@@ -325,11 +318,7 @@ def format_summary(
                 "",
                 "## Quality gate",
                 "",
-                (
-                    "**PASS**"
-                    if bool(quality_gate.get("passed"))
-                    else "**FAIL**"
-                ),
+                "**PASS**" if bool(quality_gate.get("passed")) else "**FAIL**",
                 "",
                 "Workflow execution and quality acceptance are separate: a report can "
                 "be produced successfully while a required route fails its quality gate.",
@@ -339,8 +328,8 @@ def format_summary(
     lines.append(
         "Provider/model cost excludes local compute. Technical normalization runs "
         "locally, so provider cost is 0; seconds/page and bytes/page are the "
-        "current operational-cost proxies. Sampled document pass covers only "
-        "selected pages, not whole documents. Legal-critical recall counts "
-        "spans recognised by the current detector."
+        "current operational-cost proxies. Legal-critical recall counts spans "
+        "recognised by the current detector. 'Sampled doc pass' only covers pages "
+        "actually evaluated; it is not a full-document production verdict."
     )
     return "\n".join(lines) + "\n"
