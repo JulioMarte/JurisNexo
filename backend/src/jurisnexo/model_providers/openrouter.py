@@ -12,6 +12,7 @@ from jurisnexo.model_providers.chat_message import (
 )
 from jurisnexo.model_providers.contracts import (
     JsonObject,
+    JsonValue,
     ModelProviderError,
     ModelUsage,
     StructuredGenerationResult,
@@ -166,11 +167,13 @@ class OpenRouterStructuredModelProvider:
                 ),
                 "requested_model": self.model,
                 "structured_mode": self.structured_mode,
-                "provider_order": list(self.provider_order),
+                "provider_order": cast(list[JsonValue], list(self.provider_order)),
                 "allow_provider_fallbacks": self.allow_provider_fallbacks,
                 "structured_attempt_count": attempt,
-                "invalid_structured_attempts": invalid_attempts,
-                "ignored_providers_on_retry": ignored_providers,
+                "invalid_structured_attempts": cast(list[JsonValue], invalid_attempts),
+                "ignored_providers_on_retry": cast(
+                    list[JsonValue], ignored_providers
+                ),
             }
             return StructuredGenerationResult(
                 value=value,
