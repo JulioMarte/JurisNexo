@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from scj_page_selection import has_native_text, select_reference_page
+from scj_page_selection import has_native_text, select_reference_pages
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
@@ -105,10 +105,18 @@ def _download(store: Any, key: str) -> bytes:
 def _reference_page(pdf_bytes: bytes) -> tuple[int, str, bytes, int] | None:
     import pypdfium2 as pdfium
 
-    selected = select_reference_page(
-        pdf_bytes,
-        min_reference_chars=MIN_REFERENCE_CHARS,
-        max_pages_to_scan=MAX_PAGES_TO_SCAN,
+    selected = next(
+        (
+            page
+            for page in select_reference_pages(
+                pdf_bytes,
+                min_reference_chars=MIN_REFERENCE_CHARS,
+                max_pages_to_scan=MAX_PAGES_TO_SCAN,
+                max_pages_per_document=5,
+            )
+            if not page.reference_risk_flags
+        ),
+        None,
     )
     if selected is None:
         return None
@@ -265,7 +273,8 @@ def main() -> int:
         "source": "scj",
         "collection": "principales-sentencias",
         "gold_method": (
-            "official born-digital PDF native text used as reference; the "
+            "official born-digital PDF native text used as reference only after "
+            "reference-health screening; the "
             "selected page must expose real adjudicative structure (not cover, "
             "credits, ISBN/catalog-card front matter or table of contents); "
             "that same page is rendered to PNG and OCR-normalized"
