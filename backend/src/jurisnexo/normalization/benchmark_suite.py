@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from statistics import mean
-from typing import Any
+from typing import Any, cast
 
 _CONTENT_ADDRESSED_PDF = re.compile(r"(?:^|/)([0-9a-f]{64})\.pdf$")
 
@@ -211,7 +211,7 @@ def aggregate_records(
 
 
 def evaluate_quality_gates(
-    report: Mapping[str, Any],
+    report: Mapping[str, object],
     *,
     required_configs: tuple[str, ...],
     thresholds: QualityThresholds,
@@ -225,27 +225,35 @@ def evaluate_quality_gates(
                 "checks": {"present": False},
             }
             continue
-        quality = metrics["quality"]
+        typed_metrics = cast(dict[str, object], metrics)
+        quality_raw = typed_metrics.get("quality")
+        if not isinstance(quality_raw, dict):
+            configs[config] = {
+                "passed": False,
+                "checks": {"quality_present": False},
+            }
+            continue
+        quality = cast(dict[str, object], quality_raw)
         checks = {
             "present": True,
             "mean_word_error_rate": (
-                float(quality["mean_word_error_rate"])
+                _quality_metric(quality, "mean_word_error_rate")
                 <= thresholds.max_mean_word_error_rate
             ),
             "mean_token_content_recall": (
-                float(quality["mean_token_content_recall"])
+                _quality_metric(quality, "mean_token_content_recall")
                 >= thresholds.min_mean_token_content_recall
             ),
             "mean_token_content_precision": (
-                float(quality["mean_token_content_precision"])
+                _quality_metric(quality, "mean_token_content_precision")
                 >= thresholds.min_mean_token_content_precision
             ),
             "aggregate_legal_critical_recall": (
-                float(quality["aggregate_legal_critical_recall"])
+                _quality_metric(quality, "aggregate_legal_critical_recall")
                 >= thresholds.min_aggregate_legal_critical_recall
             ),
             "sampled_document_pass_rate": (
-                float(quality["sampled_document_pass_rate"])
+                _quality_metric(quality, "sampled_document_pass_rate")
                 >= thresholds.min_sampled_document_pass_rate
             ),
         }
@@ -269,6 +277,13 @@ def evaluate_quality_gates(
         },
         "configs": configs,
     }
+
+
+def _quality_metric(quality: Mapping[str, object], name: str) -> float:
+    value = quality.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"quality metric {name} must be numeric")
+    return float(value)
 
 
 def format_summary(

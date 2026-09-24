@@ -140,7 +140,9 @@ def _validate_schema_value(
 ) -> None:
     declared = schema.get("type")
     allowed = (
-        tuple(item for item in declared if isinstance(item, str))
+        tuple(
+            item for item in cast(list[object], declared) if isinstance(item, str)
+        )
         if isinstance(declared, list)
         else ((declared,) if isinstance(declared, str) else ())
     )
@@ -151,13 +153,14 @@ def _validate_schema_value(
         )
 
     enum = schema.get("enum")
-    if isinstance(enum, list) and value not in enum:
+    if isinstance(enum, list) and value not in cast(list[object], enum):
         raise ValueError(
             f"structured response schema mismatch at {path}: "
             f"value {value!r} not in enum"
         )
 
     if isinstance(value, dict):
+        typed_value = cast(dict[str, object], value)
         properties_raw = schema.get("properties")
         properties = (
             cast(dict[str, object], properties_raw)
@@ -166,24 +169,28 @@ def _validate_schema_value(
         )
         required_raw = schema.get("required")
         required = (
-            tuple(item for item in required_raw if isinstance(item, str))
+            tuple(
+                item
+                for item in cast(list[object], required_raw)
+                if isinstance(item, str)
+            )
             if isinstance(required_raw, list)
             else ()
         )
-        missing = [key for key in required if key not in value]
+        missing = [key for key in required if key not in typed_value]
         if missing:
             raise ValueError(
                 f"structured response schema mismatch at {path}: "
                 f"missing required keys {missing}"
             )
         if schema.get("additionalProperties") is False:
-            extras = sorted(set(value) - set(properties))
+            extras = sorted(set(typed_value) - set(properties))
             if extras:
                 raise ValueError(
                     f"structured response schema mismatch at {path}: "
                     f"unexpected keys {extras}"
                 )
-        for key, child in value.items():
+        for key, child in typed_value.items():
             child_schema = properties.get(key)
             if isinstance(child_schema, dict):
                 _validate_schema_value(
@@ -194,16 +201,17 @@ def _validate_schema_value(
         return
 
     if isinstance(value, list):
+        typed_value_list = cast(list[object], value)
         max_items = schema.get("maxItems")
-        if isinstance(max_items, int) and len(value) > max_items:
+        if isinstance(max_items, int) and len(typed_value_list) > max_items:
             raise ValueError(
                 f"structured response schema mismatch at {path}: "
-                f"{len(value)} items exceeds maxItems={max_items}"
+                f"{len(typed_value_list)} items exceeds maxItems={max_items}"
             )
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             typed_schema = cast(dict[str, object], item_schema)
-            for index, item in enumerate(value):
+            for index, item in enumerate(typed_value_list):
                 _validate_schema_value(
                     item,
                     typed_schema,

@@ -99,6 +99,7 @@ class OpenRouterStructuredModelProvider:
                 f"OpenRouter transport error: {exc.reason}"
             ) from exc
 
+        body: dict[str, object] = {}
         try:
             body = _json_object(raw)
             choices_raw = body["choices"]
@@ -116,7 +117,7 @@ class OpenRouterStructuredModelProvider:
             ValueError,
             json.JSONDecodeError,
         ) as exc:
-            provider = body.get("provider") if "body" in locals() else None
+            provider = body.get("provider")
             raise ModelProviderError(
                 "OpenRouter returned an invalid structured response "
                 f"(mode={self.structured_mode}, provider={provider!r}): {exc}"
