@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from jurisnexo.acquisition.official_corpus import ObjectStore
+from jurisnexo.observability import normalization_event
 from jurisnexo.normalization.artifacts import store_derived_artifact
 from jurisnexo.normalization.contracts import FormatInspector, StructuralNormalizer
 from jurisnexo.normalization.planner import NormalizationPlan
@@ -278,6 +279,11 @@ class NormalizationExecutor:
                     normalized_artifact_id=reusable,
                 )
                 reused += 1
+                normalization_event(
+                    "normalization.item.reused",
+                    source_sha256=planned.source_sha256,
+                    run_id=run_id,
+                )
                 continue
 
             self.ledger.mark_running(scope_id=scope_id, item_id=item_id)
@@ -362,6 +368,15 @@ class NormalizationExecutor:
                         normalized_artifact_id=artifact_id,
                     )
                     review_required += 1
+                    normalization_event(
+                        "normalization.item.review_required",
+                        source_sha256=planned.source_sha256,
+                        run_id=run_id,
+                        deterministic_risk=quality.requires_review,
+                        source_fidelity_risk=(
+                            fidelity is not None and fidelity.requires_review
+                        ),
+                    )
                 else:
                     resolved_payload = text.encode("utf-8")
                     resolved_stored = store_derived_artifact(
@@ -408,6 +423,11 @@ class NormalizationExecutor:
                         normalized_artifact_id=resolved_artifact_id,
                     )
                     normalized += 1
+                    normalization_event(
+                        "normalization.item.normalized",
+                        source_sha256=planned.source_sha256,
+                        run_id=run_id,
+                    )
                 self.circuit_breaker.record_success()
             except Exception as exc:
                 failure = classify_normalization_error(exc)
@@ -420,6 +440,12 @@ class NormalizationExecutor:
                         error_message=failure.detail,
                     )
                     retryable_pending += 1
+                    normalization_event(
+                        "normalization.item.retryable",
+                        source_sha256=planned.source_sha256,
+                        run_id=run_id,
+                        error_code=failure.code,
+                    )
                     continue
 
                 self.ledger.mark_failed(
@@ -429,6 +455,13 @@ class NormalizationExecutor:
                     error_message=failure.detail,
                 )
                 failed += 1
+                normalization_event(
+                    "normalization.item.failed",
+                    source_sha256=planned.source_sha256,
+                    run_id=run_id,
+                    error_code=failure.code,
+                    failure_class=failure.failure_class,
+                )
                 if failure.failure_class == "systemic" and self.circuit_breaker.open:
                     self.ledger.fail_run(
                         scope_id=scope_id,
