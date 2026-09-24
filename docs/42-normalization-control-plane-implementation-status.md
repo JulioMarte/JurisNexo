@@ -156,3 +156,37 @@ Do not claim any of the following until the corresponding evidence has passed:
 7. run OOD SCJ sample;
 8. reconcile docs/testing proof map and remove only gaps actually closed by evidence;
 9. mark PR merge-ready only after exact-head required gates pass.
+
+
+## 2026-09-24 production-readiness hardening update
+
+This closeout pass hardened the control plane rather than weakening quality gates.
+
+- The corpus suite now runs isolated deterministic SHA shards with shard-local checkpoints, immutable run snapshots, explicit inventory outcomes, benchmark-identity-aware resume, sampled-document semantics, page- and document-weighted tail metrics, and fail-closed reference-authority accounting. A green route means the configured quality gate passed on reliable references; pages whose native PDF text is itself suspect are excluded from quality scoring and remain explicit reference-authority blockers rather than being silently counted as failures or successes.
+- Two shard-0 tail pages from source `c32cf2bc...` were frozen into the known-failure regression. Their native text layer contains obvious mojibake, demonstrating why native PDF text is useful evidence but not absolute human gold.
+- Known-failure regression semantics are now **repaired or safely contained**. The report keeps `parser_quality_passed` separate from `safely_contained`. A historical parser defect may remain known while the production source-fidelity gate proves that it would be routed to `quality_review_required` instead of silently accepted.
+- A generic `DeterministicSourceFidelityChecker` is now available to the normalization executor. When an optional source-native reference is available, reliable reference/candidate divergence in content or detector-recognized legal-critical spans forces review. An unreliable reference also forces review. Absence of a reference falls back to the ordinary deterministic QA path. The core remains source-agnostic; PDF native extraction is an optional adapter.
+- A durable executable worker entrypoint now exists as `jurisnexo-normalize-run`. It composes S3 source bytes, a canonical acquisition manifest, PostgreSQL ledger, Tika inspection, isolated Docling normalization, optional PDF-native source fidelity, circuit breaker, executor, reconciliation and final manifest publication. The normalization runtime is declared as an optional package extra rather than making Docling/boto3 mandatory for every backend process.
+- Acquisition manifests now have a fail-closed canonical parser. Normalization rejects invalid/non-canonical JSON, count/status inconsistencies, invalid partition/timestamps, S3 payload-hash disagreement, and source/artifact inventory-digest tampering before creating a normalization run.
+- A dedicated `Normalization production readiness` workflow now groups source-agnostic architecture, normalization scoring, source-fidelity safety, isolated Docling controls, resume/finalization/reconciliation, durable model evidence, structured-output contracts and worker-entrypoint smoke evidence. This is separate from expensive/live provider and corpus lanes.
+
+### Promotion-sized JEV evidence
+
+Live Actions run `35948656176` established the first promotion-sized JEV calibration/holdout result using adjudicative-page excerpts rather than front matter:
+
+- requested 36 source cases; 33 supplied usable adjudicative excerpts;
+- calibration: 51 positive + 51 negative records;
+- holdout: 48 positive + 48 negative records;
+- calibration-selected material-error threshold: `0.15`;
+- calibration false-negative rate: `0.0`; false-positive rate: `0.0588`;
+- frozen holdout false-negative rate: `0.0`; false-positive rate: `0.0208`;
+- holdout material-error Brier score: `0.05026`;
+- observed quality + claim cost: approximately `US$0.009898644`;
+- promotion assessment: `eligible=true`;
+- runtime policy: **shadow**.
+
+Eligibility is evidence that the candidate policy met the current benchmark contract. It does **not** activate autoaccept. JEV remains shadow until a separate production-policy change is reviewed, and permanent sentinel sampling is still required before any future autoaccept path.
+
+### Visual verification evidence semantics
+
+The visual lane now separates provider/runtime capability from promotion evidence. A visual call can pass the bounded smoke when structured inference works and a controlled corruption is detected, while `promotion_eligible` remains false until a human-verified clean visual gold set exists. The earlier assumption that the PDF native text layer was a perfect clean visual reference was invalidated by a real page where the VLM identified a plausible identifier difference visible in the image. Consequently, native text is no longer used to compute a claimed false-correction rate unless the clean reference is independently adjudicated.
