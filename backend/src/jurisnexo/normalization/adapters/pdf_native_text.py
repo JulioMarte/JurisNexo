@@ -9,6 +9,10 @@ from jurisnexo.normalization.gold import assess_reference_text_health
 from jurisnexo.normalization.source_fidelity import SourceTextReference
 
 
+def _empty_suspicious_characters() -> frozenset[str]:
+    return frozenset()
+
+
 @dataclass(slots=True)
 class PdfNativeTextReferenceExtractor:
     """Extract the PDF text layer as a secondary fidelity authority.
@@ -17,7 +21,9 @@ class PdfNativeTextReferenceExtractor:
     core backend does not require the normalization runtime dependency.
     """
 
-    suspicious_characters: frozenset[str] = field(default_factory=frozenset)
+    suspicious_characters: frozenset[str] = field(
+        default_factory=_empty_suspicious_characters
+    )
     minimum_suspicious_count: int = 3
     maximum_suspicious_rate: float = 0.002
     minimum_characters: int = 200
