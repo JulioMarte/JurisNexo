@@ -205,3 +205,47 @@ def test_negative_compute_rate_is_rejected() -> None:
             (_record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),),
             compute_hourly_usd=-1.0,
         )
+
+
+def test_unreliable_reference_is_accounted_but_not_used_as_gold() -> None:
+    good = _record(
+        config="pdf_aware",
+        sha="a" * 64,
+        page=1,
+        wer=0.02,
+    )
+    bad_reference = SuiteRecord(
+        config="pdf_aware",
+        source_sha256="b" * 64,
+        object_key="fixture-b.pdf",
+        page_index=2,
+        document_page_count=10,
+        elapsed_seconds=1.0,
+        output_bytes=1000,
+        character_error_rate=0.80,
+        word_error_rate=0.80,
+        token_content_recall=0.20,
+        token_content_precision=0.20,
+        token_order_preservation=0.20,
+        legal_critical_recall=0.0,
+        critical_expected_count=2,
+        critical_matched_count=0,
+        reference_reliable=False,
+        reference_risk_flags=("probable_mojibake",),
+    )
+    report = aggregate_records((good, bad_reference))
+    quality = report["pdf_aware"]["quality"]
+    assert quality["reference_scored_page_count"] == 1
+    assert quality["reference_unreliable_page_count"] == 1
+    assert quality["mean_word_error_rate"] == pytest.approx(0.02)
+
+    gate = evaluate_quality_gates(
+        report,
+        required_configs=("pdf_aware",),
+        thresholds=QualityThresholds(),
+    )
+    assert gate["passed"] is False
+    assert (
+        gate["configs"]["pdf_aware"]["checks"]["reference_authority_complete"]
+        is False
+    )
