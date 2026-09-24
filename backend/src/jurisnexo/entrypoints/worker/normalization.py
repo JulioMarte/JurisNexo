@@ -24,7 +24,7 @@ from jurisnexo.platform.db.connection import (
 )
 
 
-def _parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Execute and finalize one durable JurisNexo normalization run."
     )
@@ -50,17 +50,25 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_manifest(store: S3ObjectStore, key: str) -> tuple[bytes, dict[str, str]]:
+def read_manifest(store: S3ObjectStore, key: str) -> tuple[bytes, dict[str, str]]:
     client = cast(Any, store.client)
-    response = client.get_object(Bucket=store.config.bucket, Key=key)
-    body = response["Body"].read()
-    payload = body if isinstance(body, bytes) else bytes(body)
-    metadata_raw = response.get("Metadata", {})
-    metadata = (
-        {str(k): str(v) for k, v in metadata_raw.items()}
-        if isinstance(metadata_raw, dict)
-        else {}
+    response = cast(
+        dict[str, object],
+        client.get_object(Bucket=store.config.bucket, Key=key),
     )
+    body = cast(Any, response["Body"])
+    raw_payload: object = body.read()
+    payload = (
+        raw_payload
+        if isinstance(raw_payload, bytes)
+        else bytes(cast(Any, raw_payload))
+    )
+    metadata_raw = response.get("Metadata", {})
+    if isinstance(metadata_raw, dict):
+        metadata_map = cast(dict[object, object], metadata_raw)
+        metadata = {str(k): str(v) for k, v in metadata_map.items()}
+    else:
+        metadata = {}
     expected_sha = metadata.get("payload_sha256")
     actual_sha = hashlib.sha256(payload).hexdigest()
     if expected_sha and expected_sha != actual_sha:
@@ -93,7 +101,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("Docling byte limits must be positive")
 
     store = build_s3_object_store()
-    manifest_payload, _ = _read_manifest(store, args.manifest_key)
+    manifest_payload, _ = read_manifest(store, args.manifest_key)
     manifest = parse_acquisition_run_manifest(manifest_payload)
     manifest_sha256 = hashlib.sha256(manifest_payload).hexdigest()
     plan = build_normalization_plan(
@@ -158,7 +166,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
     result = run(args)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["final_status"] == "succeeded" else 2
