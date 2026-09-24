@@ -51,6 +51,11 @@ def main() -> int:
     normalizer = DoclingStructuralNormalizer(
         ocr_language_tags=("iso:es",), pdf_aware_ocr=True
     )
+    no_ocr_normalizer = DoclingStructuralNormalizer(
+        ocr_language_tags=("iso:es",),
+        pdf_aware_ocr=True,
+        enable_ocr=False,
+    )
     OUTPUT.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, object]] = []
     for case in fixture["cases"]:
@@ -75,12 +80,30 @@ def main() -> int:
         score = score_text_fidelity(
             expected_text=reference, candidate_text=candidate
         )
+        no_ocr_started = time.perf_counter()
+        no_ocr_payload = _normalize(
+            route="pdf_aware",
+            source=source,
+            page_index=page_index,
+            object_key=key,
+            pdf_normalizer=no_ocr_normalizer,
+            ocr_normalizer=no_ocr_normalizer,
+        )
+        no_ocr_elapsed_seconds = time.perf_counter() - no_ocr_started
+        no_ocr_candidate = extract_text_from_structural_json(no_ocr_payload)
+        no_ocr_score = score_text_fidelity(
+            expected_text=reference,
+            candidate_text=no_ocr_candidate,
+        )
         stem = f"{sha}-p{page_index + 1}"
         (OUTPUT / f"{stem}-reference.txt").write_text(
             reference, encoding="utf-8"
         )
         (OUTPUT / f"{stem}-candidate.txt").write_text(
             candidate, encoding="utf-8"
+        )
+        (OUTPUT / f"{stem}-no-ocr-candidate.txt").write_text(
+            no_ocr_candidate, encoding="utf-8"
         )
         diff = difflib.unified_diff(
             reference.splitlines(keepends=True),
@@ -90,6 +113,15 @@ def main() -> int:
         )
         (OUTPUT / f"{stem}-diff.txt").write_text(
             "".join(diff), encoding="utf-8"
+        )
+        no_ocr_diff = difflib.unified_diff(
+            reference.splitlines(keepends=True),
+            no_ocr_candidate.splitlines(keepends=True),
+            fromfile="native_pdf_reference",
+            tofile="docling_no_ocr_candidate",
+        )
+        (OUTPUT / f"{stem}-no-ocr-diff.txt").write_text(
+            "".join(no_ocr_diff), encoding="utf-8"
         )
         results.append(
             {
@@ -101,6 +133,11 @@ def main() -> int:
                 "candidate_characters": len(candidate),
                 "elapsed_seconds": elapsed_seconds,
                 "score": asdict(score),
+                "no_ocr_diagnostic": {
+                    "candidate_characters": len(no_ocr_candidate),
+                    "elapsed_seconds": no_ocr_elapsed_seconds,
+                    "score": asdict(no_ocr_score),
+                },
             }
         )
     checks = []
@@ -140,6 +177,11 @@ def main() -> int:
         "inventory_sha256": fixture["inventory_sha256"],
         "benchmark_identity": _benchmark_identity("pdf_aware"),
         "reference_authority": "native_pdf_text_unverified_against_image",
+        "diagnostic_note": (
+            "The strict quality gate applies to the production pdf-aware route. "
+            "The no-OCR result is a challenger used only to isolate whether OCR "
+            "contributes to the known divergence."
+        ),
         "quality_gate": quality_gate,
         "cases": results,
     }
