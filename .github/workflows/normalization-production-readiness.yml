@@ -8,6 +8,7 @@ on:
     paths:
       - "backend/src/jurisnexo/normalization/**"
       - "backend/src/jurisnexo/model_providers/**"
+      - "backend/src/jurisnexo/entrypoints/worker/normalization.py"
       - "backend/tests/unit/test_normalization_*.py"
       - "backend/tests/unit/test_isolated_docling.py"
       - "backend/tests/unit/test_openrouter_structured_modes.py"
@@ -43,6 +44,7 @@ jobs:
           docker compose --profile test run --rm --no-deps test ruff check \
             src/jurisnexo/normalization \
             src/jurisnexo/model_providers \
+            src/jurisnexo/entrypoints/worker/normalization.py \
             tests/unit/test_normalization_benchmark_suite.py \
             tests/unit/test_normalization_gold.py \
             tests/unit/test_docling_adapter.py \
