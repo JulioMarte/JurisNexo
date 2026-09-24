@@ -244,6 +244,55 @@ def parse_acquisition_run_manifest(payload: bytes) -> AcquisitionRunManifest:
     }
     if counts != declared:
         raise ValueError("acquisition run manifest status counts do not match items")
+    if manifest.partition_count < 1 or not 0 <= manifest.partition_index < manifest.partition_count:
+        raise ValueError("acquisition run manifest partition is invalid")
+    if any(
+        value < 0
+        for value in (
+            manifest.discovered_count,
+            manifest.uploaded_count,
+            manifest.already_present_count,
+            manifest.unavailable_count,
+            manifest.failed_count,
+        )
+    ):
+        raise ValueError("acquisition run manifest counts cannot be negative")
+    if not manifest.ingestion_id.strip() or "/" in manifest.ingestion_id:
+        raise ValueError("acquisition run manifest ingestion_id is invalid")
+    if not manifest.batch_id.strip() or "/" in manifest.batch_id:
+        raise ValueError("acquisition run manifest batch_id is invalid")
+    if not manifest.storage_bucket.strip():
+        raise ValueError("acquisition run manifest storage_bucket is invalid")
+    if len(manifest.source_inventory_sha256) != 64:
+        raise ValueError("acquisition run manifest source inventory digest is invalid")
+    if len(manifest.artifact_set_sha256) != 64:
+        raise ValueError("acquisition run manifest artifact-set digest is invalid")
+    if (
+        manifest.certified_inventory_sha256 is not None
+        and len(manifest.certified_inventory_sha256) != 64
+    ):
+        raise ValueError("acquisition run manifest certified inventory digest is invalid")
+    if manifest.source_inventory_sha256 != _inventory_digest(manifest.items):
+        raise ValueError("acquisition run manifest source inventory digest does not match items")
+    if manifest.artifact_set_sha256 != _artifact_set_digest(manifest.items):
+        raise ValueError("acquisition run manifest artifact-set digest does not match items")
+    expected_status: RunStatus
+    successful = manifest.uploaded_count + manifest.already_present_count
+    if manifest.failed_count == 0:
+        expected_status = "succeeded"
+    elif successful == 0:
+        expected_status = "failed"
+    else:
+        expected_status = "partial"
+    if manifest.status != expected_status:
+        raise ValueError("acquisition run manifest status does not match item outcomes")
+    try:
+        started = datetime.fromisoformat(manifest.started_at.replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(manifest.completed_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("acquisition run manifest timestamps are invalid") from exc
+    if started.tzinfo is None or completed.tzinfo is None or completed < started:
+        raise ValueError("acquisition run manifest timestamp ordering is invalid")
     canonical = manifest.canonical_bytes()
     if hashlib.sha256(canonical).digest() != hashlib.sha256(payload).digest():
         # The semantic manifest is valid, but normalization identity must use the
