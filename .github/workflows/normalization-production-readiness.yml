@@ -9,6 +9,8 @@ on:
       - "backend/src/jurisnexo/normalization/**"
       - "backend/src/jurisnexo/model_providers/**"
       - "backend/src/jurisnexo/entrypoints/worker/normalization.py"
+      - "backend/pyproject.toml"
+      - "backend/src/jurisnexo/entrypoints/worker/normalization.py"
       - "backend/tests/unit/test_normalization_*.py"
       - "backend/tests/unit/test_isolated_docling.py"
       - "backend/tests/unit/test_openrouter_structured_modes.py"
