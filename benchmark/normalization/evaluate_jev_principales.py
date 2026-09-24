@@ -128,18 +128,22 @@ def _download(store: Any, key: str) -> bytes:
     return payload if isinstance(payload, bytes) else bytes(payload)
 
 
-def _adjudicative_excerpts(pdf_bytes: bytes) -> tuple[tuple[int, str], ...]:
+def _adjudicative_excerpts(
+    pdf_bytes: bytes,
+) -> tuple[tuple[tuple[int, str], ...], int]:
     pages = select_reference_pages(
         pdf_bytes,
         min_reference_chars=800,
         max_pages_to_scan=120,
         max_pages_per_document=PAGES_PER_SOURCE,
     )
-    return tuple(
+    unreliable_count = sum(bool(page.reference_risk_flags) for page in pages)
+    excerpts = tuple(
         (page.page_index, page.text[:EXCERPT_CHARS])
         for page in pages
-        if len(page.text) >= 1000
+        if len(page.text) >= 1000 and not page.reference_risk_flags
     )
+    return excerpts, unreliable_count
 
 
 def _visible_corruption(text: str) -> str:
@@ -238,10 +242,19 @@ def main() -> int:
     for key in keys:
         if len(used_sources) >= SOURCE_CASES:
             break
-        excerpts = _adjudicative_excerpts(_download(store, key))
+        excerpts, unreliable_count = _adjudicative_excerpts(
+            _download(store, key)
+        )
         if not excerpts:
             skipped_sources.append(
-                {"source_key": key, "reason": "no_adjudicative_excerpt"}
+                {
+                    "source_key": key,
+                    "reason": (
+                        "unreliable_native_reference"
+                        if unreliable_count
+                        else "no_adjudicative_excerpt"
+                    ),
+                }
             )
             continue
 
