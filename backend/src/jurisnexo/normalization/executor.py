@@ -155,6 +155,15 @@ class NormalizationLedger(Protocol):
         error_message: str,
     ) -> None: ...
 
+    def mark_retryable(
+        self,
+        *,
+        scope_id: str,
+        item_id: str,
+        error_code: str,
+        error_message: str,
+    ) -> None: ...
+
     def mark_reconciling(self, *, scope_id: str, run_id: str) -> object: ...
 
     def fail_run(self, *, scope_id: str, run_id: str, reason: str) -> None: ...
@@ -167,6 +176,7 @@ class ExecutionResult:
     reused: int
     review_required: int
     failed: int
+    retryable_pending: int = 0
 
 
 @dataclass(slots=True)
@@ -212,6 +222,7 @@ class NormalizationExecutor:
         reused = 0
         review_required = 0
         failed = 0
+        retryable_pending = 0
 
         for planned in plan.items:
             if planned.disposition == "skip_unavailable":
@@ -401,6 +412,16 @@ class NormalizationExecutor:
             except Exception as exc:
                 failure = classify_normalization_error(exc)
                 self.circuit_breaker.record_failure(failure)
+                if failure.retryable:
+                    self.ledger.mark_retryable(
+                        scope_id=scope_id,
+                        item_id=item_id,
+                        error_code=failure.code,
+                        error_message=failure.detail,
+                    )
+                    retryable_pending += 1
+                    continue
+
                 self.ledger.mark_failed(
                     scope_id=scope_id,
                     item_id=item_id,
@@ -420,7 +441,18 @@ class NormalizationExecutor:
                         reused=reused,
                         review_required=review_required,
                         failed=failed,
+                        retryable_pending=retryable_pending,
                     )
+
+        if retryable_pending:
+            return ExecutionResult(
+                run_id=run_id,
+                normalized=normalized,
+                reused=reused,
+                review_required=review_required,
+                failed=failed,
+                retryable_pending=retryable_pending,
+            )
 
         self.ledger.mark_reconciling(scope_id=scope_id, run_id=run_id)
         return ExecutionResult(
@@ -429,4 +461,5 @@ class NormalizationExecutor:
             reused=reused,
             review_required=review_required,
             failed=failed,
+            retryable_pending=0,
         )
