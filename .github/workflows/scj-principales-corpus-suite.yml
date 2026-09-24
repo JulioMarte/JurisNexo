@@ -14,34 +14,21 @@ on:
       - "backend/src/jurisnexo/normalization/quality.py"
       - ".github/workflows/scj-principales-corpus-suite.yml"
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "suite, failed_pages, or selector_audit"
-        required: true
-        default: "suite"
-      shard_index:
-        description: "Zero-based content-hash shard index"
-        required: true
-        default: "0"
-      shard_count:
-        description: "Number of content-hash shards"
-        required: true
-        default: "1"
-      document_limit:
-        description: "Eligible documents to sample; 0 scans the entire shard"
-        required: true
-        default: "12"
 
 permissions:
   contents: read
 
 concurrency:
-  group: scj-principales-corpus-suite-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: false
+  group: scj-principales-corpus-suite-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   suite:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'corpus-suite')
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_index: [0, 1, 2, 3]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -52,13 +39,12 @@ jobs:
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
       SUITE_CONFIGS: "pdf_aware,full_ocr"
-      SUITE_SHARD_INDEX: ${{ inputs.shard_index || '0' }}
-      SUITE_SHARD_COUNT: ${{ inputs.shard_count || '1' }}
-      SUITE_DOCUMENT_LIMIT: ${{ inputs.document_limit || '12' }}
-      SUITE_COMPUTE_USD_PER_HOUR: ${{ vars.SUITE_COMPUTE_USD_PER_HOUR || '' }}
+      SUITE_DOCUMENT_LIMIT: "6"
       SUITE_PAGES_PER_DOCUMENT: "2"
       SUITE_MAX_PAGES_TO_SCAN: "120"
       SUITE_RESUME: "1"
+      SUITE_SHARD_INDEX: ${{ matrix.shard_index }}
+      SUITE_SHARD_COUNT: "4"
       SUITE_REQUIRED_CONFIGS: "pdf_aware"
       SUITE_MAX_MEAN_WER: "0.10"
       SUITE_MIN_CONTENT_RECALL: "0.98"
@@ -83,26 +69,13 @@ jobs:
             "pillow==12.3.0"
 
       - name: Run configuration-comparison corpus suite
-        if: inputs.mode != 'failed_pages' && inputs.mode != 'selector_audit'
         env:
           SUITE_OUTPUT_DIR: ${{ runner.temp }}/principales-corpus-suite
         run: |
           python benchmark/normalization/principales_corpus_suite.py
 
-      - name: Reproduce failed pages and preserve text diffs
-        if: inputs.mode == 'failed_pages'
-        env:
-          FAILURE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/principales-failed-pages
-        run: python benchmark/normalization/principales_failed_page_diagnostics.py
-
-      - name: Classify volumes excluded by the page selector
-        if: inputs.mode == 'selector_audit'
-        env:
-          SELECTOR_AUDIT_OUTPUT: ${{ runner.temp }}/principales-selector-audit
-        run: python benchmark/normalization/principales_selector_audit.py
-
       - name: Publish suite summary
-        if: always() && inputs.mode != 'failed_pages' && inputs.mode != 'selector_audit'
+        if: always()
         run: |
           python - <<'PY'
           import os
@@ -123,14 +96,11 @@ jobs:
               )
           PY
 
-      - name: Preserve suite report and records
+      - name: Preserve suite report, inventory and records
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-principales-corpus-suite-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/principales-corpus-suite/**
-            ${{ runner.temp }}/principales-failed-pages/**
-            ${{ runner.temp }}/principales-selector-audit/**
+          name: scj-principales-corpus-suite-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard_index }}-of-4
+          path: ${{ runner.temp }}/principales-corpus-suite/**
           if-no-files-found: warn
           retention-days: 90
