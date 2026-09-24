@@ -9,6 +9,10 @@ from jurisnexo.normalization.contracts import FormatInspector, StructuralNormali
 from jurisnexo.normalization.planner import NormalizationPlan
 from jurisnexo.normalization.quality import assess_text_quality, extract_text_from_structural_json
 from jurisnexo.normalization.recovery import CircuitBreaker, classify_normalization_error
+from jurisnexo.normalization.source_fidelity import (
+    DeterministicSourceFidelityChecker,
+    assessment_payload,
+)
 
 
 class SourceByteReader(Protocol):
@@ -176,6 +180,7 @@ class NormalizationExecutor:
     config_sha256: str
     circuit_breaker: CircuitBreaker
     model_evidence: ModelEvidenceStage | None = None
+    source_fidelity: DeterministicSourceFidelityChecker | None = None
 
     def execute(
         self,
@@ -319,7 +324,27 @@ class NormalizationExecutor:
                     },
                     status="accepted",
                 )
-                if quality.requires_review:
+                fidelity = (
+                    self.source_fidelity.evaluate(
+                        source=source,
+                        inspection=inspection,
+                        candidate_text=text,
+                    )
+                    if self.source_fidelity is not None
+                    else None
+                )
+                if fidelity is not None:
+                    self.ledger.record_observation(
+                        scope_id=scope_id,
+                        run_item_id=item_id,
+                        artifact_id=artifact_id,
+                        observation_kind="source_fidelity_qa",
+                        payload=assessment_payload(fidelity),
+                        status="accepted",
+                    )
+                if quality.requires_review or (
+                    fidelity is not None and fidelity.requires_review
+                ):
                     self.ledger.mark_review_required(
                         scope_id=scope_id,
                         item_id=item_id,
