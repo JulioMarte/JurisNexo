@@ -9,13 +9,14 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from principales_corpus_suite import _benchmark_identity, _download, _normalize
-from scj_page_selection import normalize_native_reference
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.normalization.adapters.docling import DoclingStructuralNormalizer
 from jurisnexo.normalization.gold import score_text_fidelity
 from jurisnexo.normalization.quality import extract_text_from_structural_json
+from principales_corpus_suite import _benchmark_identity, _download, _normalize
+from scj_page_selection import normalize_native_reference
+
 CASES_PATH = Path(__file__).with_name("principales_failed_pages.json")
 OUTPUT = Path(os.environ["FAILURE_DIAGNOSTIC_OUTPUT"])
 REQUIRE_PASS = os.environ.get("FAILURE_DIAGNOSTIC_REQUIRE_PASS", "0") == "1"
@@ -122,6 +123,12 @@ def main() -> int:
         (OUTPUT / f"{stem}-no-ocr-diff.txt").write_text(
             "".join(no_ocr_diff), encoding="utf-8"
         )
+        score_payload = asdict(score)
+        score_payload["legal_critical_recall"] = score.legal_critical_recall
+        no_ocr_score_payload = asdict(no_ocr_score)
+        no_ocr_score_payload["legal_critical_recall"] = (
+            no_ocr_score.legal_critical_recall
+        )
         results.append(
             {
                 "source_sha256": sha,
@@ -131,11 +138,11 @@ def main() -> int:
                 "reference_characters": len(reference),
                 "candidate_characters": len(candidate),
                 "elapsed_seconds": elapsed_seconds,
-                "score": asdict(score),
+                "score": score_payload,
                 "no_ocr_diagnostic": {
                     "candidate_characters": len(no_ocr_candidate),
                     "elapsed_seconds": no_ocr_elapsed_seconds,
-                    "score": asdict(no_ocr_score),
+                    "score": no_ocr_score_payload,
                 },
             }
         )
