@@ -49,7 +49,7 @@ PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 @dataclass(frozen=True, slots=True)
 class VisualCaseResult:
     case: str
-    expected_matches: bool
+    expected_matches: bool | None
     observed_matches: bool
     model: str
     input_tokens: int | None
@@ -162,7 +162,7 @@ def _run_case(
     image: bytes,
     candidate: str,
     case_name: str,
-    expected_matches: bool,
+    expected_matches: bool | None,
 ) -> VisualCaseResult:
     started = time.perf_counter()
     result = provider.verify_image_text(
@@ -240,8 +240,8 @@ def main() -> int:
             provider=provider,
             image=image,
             candidate=candidate,
-            case_name="native_candidate",
-            expected_matches=True,
+            case_name="native_reference_audit",
+            expected_matches=None,
         )
         running_cost += good.cost_usd or 0.0
     except ModelProviderError as exc:
@@ -270,23 +270,32 @@ def main() -> int:
     cases = tuple(
         case for case in (good, corrupted_result) if case is not None
     )
+    verified_clean_cases = tuple(
+        result for result in cases if result.expected_matches is True
+    )
+    corrupted_cases = tuple(
+        result for result in cases if result.expected_matches is False
+    )
     false_correction_rate = (
-        sum(
-            result.expected_matches and not result.observed_matches
-            for result in cases
-        )
-        / sum(result.expected_matches for result in cases)
-        if cases
+        sum(not result.observed_matches for result in verified_clean_cases)
+        / len(verified_clean_cases)
+        if verified_clean_cases
         else None
     )
     corruption_detection_recall = (
-        sum(
-            (not result.expected_matches) and (not result.observed_matches)
-            for result in cases
-        )
-        / sum(not result.expected_matches for result in cases)
-        if cases
+        sum(not result.observed_matches for result in corrupted_cases)
+        / len(corrupted_cases)
+        if corrupted_cases
         else None
+    )
+    reference_audit_found_difference = any(
+        result.expected_matches is None and not result.observed_matches
+        for result in cases
+    )
+    promotion_blockers = ["no_human_verified_clean_visual_gold"]
+    smoke_passed = (
+        not provider_errors
+        and corruption_detection_recall == 1.0
     )
     payload = {
         "schema_version": 3,
@@ -310,6 +319,11 @@ def main() -> int:
         "max_cost_usd": MAX_COST_USD,
         "false_correction_rate": false_correction_rate,
         "corruption_detection_recall": corruption_detection_recall,
+        "reference_audit_found_difference": reference_audit_found_difference,
+        "human_verified_clean_case_count": len(verified_clean_cases),
+        "promotion_eligible": False,
+        "promotion_blockers": promotion_blockers,
+        "smoke_passed": smoke_passed,
         "cases": [asdict(item) for item in cases],
     }
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -318,14 +332,7 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
-    if provider_errors:
-        return 1
-    return (
-        0
-        if false_correction_rate == 0.0
-        and corruption_detection_recall == 1.0
-        else 1
-    )
+    return 0 if smoke_passed else 1
 
 
 if __name__ == "__main__":
