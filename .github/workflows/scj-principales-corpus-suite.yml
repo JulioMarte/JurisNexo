@@ -32,8 +32,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: scj-principales-corpus-suite-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: scj-principales-corpus-suite-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   suite:
