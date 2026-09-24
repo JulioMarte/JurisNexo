@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "suite or failed_pages diagnostic"
+        description: "suite, failed_pages, or selector_audit"
         required: true
         default: "suite"
       shard_index:
@@ -83,7 +83,7 @@ jobs:
             "pillow==12.3.0"
 
       - name: Run configuration-comparison corpus suite
-        if: inputs.mode != 'failed_pages'
+        if: inputs.mode != 'failed_pages' && inputs.mode != 'selector_audit'
         env:
           SUITE_OUTPUT_DIR: ${{ runner.temp }}/principales-corpus-suite
         run: |
@@ -95,8 +95,14 @@ jobs:
           FAILURE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/principales-failed-pages
         run: python benchmark/normalization/principales_failed_page_diagnostics.py
 
+      - name: Classify volumes excluded by the page selector
+        if: inputs.mode == 'selector_audit'
+        env:
+          SELECTOR_AUDIT_OUTPUT: ${{ runner.temp }}/principales-selector-audit
+        run: python benchmark/normalization/principales_selector_audit.py
+
       - name: Publish suite summary
-        if: always() && inputs.mode != 'failed_pages'
+        if: always() && inputs.mode != 'failed_pages' && inputs.mode != 'selector_audit'
         run: |
           python - <<'PY'
           import os
@@ -125,5 +131,6 @@ jobs:
           path: |
             ${{ runner.temp }}/principales-corpus-suite/**
             ${{ runner.temp }}/principales-failed-pages/**
+            ${{ runner.temp }}/principales-selector-audit/**
           if-no-files-found: warn
           retention-days: 90
