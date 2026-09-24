@@ -146,7 +146,7 @@ def _document_quality(config_records: list[SuiteRecord]) -> dict[str, float]:
     }
 
 
-def aggregate_records(records: Iterable[SuiteRecord]) -> dict[str, Any]:
+def aggregate_records(\n    records: Iterable[SuiteRecord],\n    *,\n    compute_hourly_usd: float | None = None,\n) -> dict[str, Any]:\n    if compute_hourly_usd is not None and compute_hourly_usd < 0:\n        raise ValueError("compute_hourly_usd must be non-negative")
     by_config: dict[str, list[SuiteRecord]] = {}
     for record in records:
         by_config.setdefault(record.config, []).append(record)
