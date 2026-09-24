@@ -26,6 +26,8 @@ class SuiteRecord:
     critical_expected_count: int
     critical_matched_count: int
     benchmark_identity: str = "legacy-unversioned"
+    reference_reliable: bool = True
+    reference_risk_flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,7 @@ class QualityThresholds:
     min_mean_token_content_precision: float = 0.98
     min_aggregate_legal_critical_recall: float = 1.0
     min_sampled_document_pass_rate: float = 1.0
+    max_unreliable_reference_pages: int = 0
 
 
 def parse_configs(spec: str) -> tuple[str, ...]:
@@ -160,12 +163,26 @@ def aggregate_records(
     report: dict[str, Any] = {}
     for config, config_records in sorted(by_config.items()):
         page_count = len(config_records)
+        scored_records = [
+            record for record in config_records if record.reference_reliable
+        ]
+        reference_unreliable_records = [
+            record for record in config_records if not record.reference_reliable
+        ]
+        if not scored_records:
+            raise ValueError(
+                f"configuration {config!r} has no reliable reference pages to score"
+            )
         elapsed = [record.elapsed_seconds for record in config_records]
         total_seconds = sum(elapsed)
-        expected = sum(record.critical_expected_count for record in config_records)
-        matched = sum(record.critical_matched_count for record in config_records)
+        expected = sum(
+            record.critical_expected_count for record in scored_records
+        )
+        matched = sum(
+            record.critical_matched_count for record in scored_records
+        )
         documents, documents_with_critical_loss, sampled_document_pass_rate = (
-            document_aggregates(tuple(config_records))
+            document_aggregates(tuple(scored_records))
         )
         output_bytes = sum(record.output_bytes for record in config_records)
         modeled_compute_usd = (
@@ -175,36 +192,46 @@ def aggregate_records(
         )
         quality = {
             "mean_word_error_rate": mean(
-                record.word_error_rate for record in config_records
+                record.word_error_rate for record in scored_records
             ),
             "median_word_error_rate": percentile(
-                [record.word_error_rate for record in config_records], 0.5
+                [record.word_error_rate for record in scored_records], 0.5
             ),
             "p95_word_error_rate": percentile(
-                [record.word_error_rate for record in config_records], 0.95
+                [record.word_error_rate for record in scored_records], 0.95
             ),
             "mean_character_error_rate": mean(
-                record.character_error_rate for record in config_records
+                record.character_error_rate for record in scored_records
             ),
             "mean_token_content_recall": mean(
-                record.token_content_recall for record in config_records
+                record.token_content_recall for record in scored_records
             ),
             "mean_token_content_precision": mean(
-                record.token_content_precision for record in config_records
+                record.token_content_precision for record in scored_records
             ),
             "mean_token_order_preservation": mean(
-                record.token_order_preservation for record in config_records
+                record.token_order_preservation for record in scored_records
             ),
             "aggregate_legal_critical_recall": (
                 1.0 if expected == 0 else matched / expected
             ),
             "documents_with_critical_loss": documents_with_critical_loss,
             "sampled_document_pass_rate": sampled_document_pass_rate,
+            "reference_scored_page_count": len(scored_records),
+            "reference_unreliable_page_count": len(
+                reference_unreliable_records
+            ),
+            "reference_unreliable_document_count": len(
+                {record.source_sha256 for record in reference_unreliable_records}
+            ),
         }
-        quality.update(_document_quality(config_records))
+        quality.update(_document_quality(scored_records))
         report[config] = {
             "page_count": page_count,
-            "document_count": documents,
+            "document_count": len(
+                {record.source_sha256 for record in config_records}
+            ),
+            "quality_reference_document_count": documents,
             "quality": quality,
             "speed": {
                 "total_seconds": total_seconds,
@@ -294,6 +321,10 @@ def evaluate_quality_gates(
                 _metric_float(quality, "sampled_document_pass_rate")
                 >= thresholds.min_sampled_document_pass_rate
             ),
+            "reference_authority_complete": (
+                _metric_float(quality, "reference_unreliable_page_count")
+                <= thresholds.max_unreliable_reference_pages
+            ),
         }
         configs[config] = {
             "passed": all(checks.values()),
@@ -312,6 +343,9 @@ def evaluate_quality_gates(
             "min_sampled_document_pass_rate": (
                 thresholds.min_sampled_document_pass_rate
             ),
+            "max_unreliable_reference_pages": (
+                thresholds.max_unreliable_reference_pages
+            ),
         },
         "configs": configs,
     }
@@ -328,17 +362,21 @@ def format_summary(
         "",
         f"Recorded current-identity page evaluations: {recorded}",
         "",
-        "| config | pages | docs | mean WER | p95 WER | recall | precision | "
-        "order | legal-critical | sampled doc pass | s/page | pages/s | provider $/page |",
+        "| config | pages | ref scored | ref blocked | docs | mean WER | p95 WER | "
+        "recall | precision | order | legal-critical | sampled doc pass | s/page | "
+        "pages/s | provider $/page |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | "
-        "--- | --- |",
+        "--- | --- | --- | --- |",
     ]
     for config, metrics in report.items():
         quality = metrics["quality"]
         speed = metrics["speed"]
         cost = metrics["cost"]
         lines.append(
-            f"| {config} | {metrics['page_count']} | {metrics['document_count']} | "
+            f"| {config} | {metrics['page_count']} | "
+            f"{quality['reference_scored_page_count']} | "
+            f"{quality['reference_unreliable_page_count']} | "
+            f"{metrics['document_count']} | "
             f"{quality['mean_word_error_rate']:.4f} | "
             f"{quality['p95_word_error_rate']:.4f} | "
             f"{quality['mean_token_content_recall']:.4f} | "
@@ -368,6 +406,9 @@ def format_summary(
         "locally, so provider cost is 0; seconds/page and bytes/page are the "
         "current operational-cost proxies. Legal-critical recall counts spans "
         "recognised by the current detector. 'Sampled doc pass' only covers pages "
-        "actually evaluated; it is not a full-document production verdict."
+        "actually evaluated; it is not a full-document production verdict. Pages "
+        "whose extracted reference is flagged as unreliable are processed and "
+        "accounted for but excluded from fidelity means; required routes still fail "
+        "the reference-authority gate until those pages receive trusted gold."
     )
     return "\n".join(lines) + "\n"
