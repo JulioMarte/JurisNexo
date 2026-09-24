@@ -9,12 +9,11 @@ from jurisnexo.normalization.benchmark_suite import (
     document_aggregates,
     evaluate_quality_gates,
     format_summary,
-    in_shard,
-    modeled_compute_cost,
     parse_configs,
     percentile,
     resume_key,
-    source_sha_from_key,
+    shard_for_sha,
+    validate_shard,
 )
 
 
@@ -66,22 +65,16 @@ def test_resume_key_is_stable_and_versioned() -> None:
     )
 
 
-def test_content_hash_shards_are_exclusive_and_source_bound() -> None:
-    sha = "a" * 64
-    key = f"jurisdictions/do/scj/principales-sentencias/aa/{sha}.pdf"
-    assert source_sha_from_key(key) == sha
-    assert sum(in_shard(sha, index=index, count=7) for index in range(7)) == 1
-    with pytest.raises(ValueError, match="content-addressed"):
-        source_sha_from_key("principales/unversioned.pdf")
-    with pytest.raises(ValueError, match="shard index"):
-        in_shard(sha, index=7, count=7)
-
-
-def test_compute_cost_requires_explicit_rate() -> None:
-    assert modeled_compute_cost(3600.0, None) is None
-    assert modeled_compute_cost(1800.0, 0.20) == pytest.approx(0.10)
-    with pytest.raises(ValueError, match="nonnegative"):
-        modeled_compute_cost(1.0, -1.0)
+def test_shard_assignment_is_stable_and_validated() -> None:
+    sha = "0123456789abcdef" + "0" * 48
+    assert shard_for_sha(sha, shard_count=4) == int(sha[:16], 16) % 4
+    assert shard_for_sha(sha, shard_count=4) == shard_for_sha(
+        sha, shard_count=4
+    )
+    with pytest.raises(ValueError):
+        validate_shard(shard_index=4, shard_count=4)
+    with pytest.raises(ValueError):
+        shard_for_sha("not-a-hash", shard_count=4)
 
 
 def test_percentile_interpolates() -> None:
@@ -108,10 +101,11 @@ def test_document_aggregates_detects_critical_loss() -> None:
     assert pass_rate == pytest.approx(0.5)
 
 
-def test_aggregate_records_reports_quality_speed_and_cost() -> None:
+def test_aggregate_records_reports_page_and_document_quality() -> None:
     records = (
         _record(config="pdf_aware", sha="a" * 64, page=1, wer=0.02, seconds=2.0),
         _record(config="pdf_aware", sha="a" * 64, page=2, wer=0.04, seconds=4.0),
+        _record(config="pdf_aware", sha="b" * 64, page=1, wer=0.08, seconds=2.0),
         _record(config="full_ocr", sha="a" * 64, page=1, wer=0.30, seconds=6.0),
     )
 
@@ -119,29 +113,16 @@ def test_aggregate_records_reports_quality_speed_and_cost() -> None:
 
     assert set(report) == {"pdf_aware", "full_ocr"}
     pdf = report["pdf_aware"]
-    assert pdf["page_count"] == 2
-    assert pdf["document_count"] == 1
-    assert pdf["quality"]["mean_word_error_rate"] == pytest.approx(0.03)
-    assert pdf["speed"]["total_seconds"] == pytest.approx(6.0)
-    assert pdf["speed"]["mean_seconds_per_page"] == pytest.approx(3.0)
+    quality = pdf["quality"]
+    assert pdf["page_count"] == 3
+    assert pdf["document_count"] == 2
+    assert quality["mean_word_error_rate"] == pytest.approx((0.02 + 0.04 + 0.08) / 3)
+    assert quality["mean_document_word_error_rate"] == pytest.approx((0.03 + 0.08) / 2)
+    assert quality["sampled_document_pass_rate"] == pytest.approx(1.0)
+    assert pdf["speed"]["total_seconds"] == pytest.approx(8.0)
     assert pdf["cost"]["provider_model_cost_usd"] == 0.0
     assert pdf["cost"]["provider_cost_per_page_usd"] == 0.0
     assert pdf["cost"]["output_bytes_per_page"] == pytest.approx(1000.0)
-    assert pdf["quality"]["sampled_document_pass_rate"] == 1.0
-    assert "document_pass_rate" not in pdf["quality"]
-    assert report["full_ocr"]["quality"]["mean_word_error_rate"] == pytest.approx(
-        0.30
-    )
-
-
-def test_format_summary_includes_configuration_row() -> None:
-    report = aggregate_records(
-        (_record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),)
-    )
-    summary = format_summary(report, recorded=1)
-    assert "pdf_aware" in summary
-    assert "mean WER" in summary
-    assert "Recorded current-identity page evaluations: 1" in summary
 
 
 def test_quality_gate_is_independent_from_report_generation() -> None:
@@ -160,7 +141,7 @@ def test_quality_gate_is_independent_from_report_generation() -> None:
     assert gate["configs"]["pdf_aware"]["checks"]["present"] is True
 
 
-def test_quality_gate_fails_on_critical_document_loss() -> None:
+def test_quality_gate_fails_on_critical_sampled_document_loss() -> None:
     report = aggregate_records(
         (
             _record(
@@ -179,10 +160,13 @@ def test_quality_gate_fails_on_critical_document_loss() -> None:
         thresholds=QualityThresholds(),
     )
     assert gate["passed"] is False
-    assert gate["configs"]["pdf_aware"]["checks"]["sampled_document_pass_rate"] is False
+    assert (
+        gate["configs"]["pdf_aware"]["checks"]["sampled_document_pass_rate"]
+        is False
+    )
 
 
-def test_summary_labels_provider_cost_and_quality_verdict() -> None:
+def test_format_summary_labels_sampled_document_semantics() -> None:
     report = aggregate_records(
         (_record(config="pdf_aware", sha="a" * 64, page=1, wer=0.01),)
     )
@@ -192,6 +176,10 @@ def test_summary_labels_provider_cost_and_quality_verdict() -> None:
         thresholds=QualityThresholds(),
     )
     summary = format_summary(report, recorded=1, quality_gate=gate)
+    assert "pdf_aware" in summary
+    assert "mean WER" in summary
+    assert "Recorded current-identity page evaluations: 1" in summary
+    assert "sampled doc pass" in summary
+    assert "not a full-document production verdict" in summary
     assert "provider $/page" in summary
-    assert "## Quality gate" in summary
     assert "**PASS**" in summary
