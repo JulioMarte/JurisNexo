@@ -419,6 +419,11 @@ path = "backend/tests/integration/test_normalization_finalizer_postgres_s3.py"
 evidence = ["invariant", "integration", "provenance"]
 
 [[proofs]]
+guarantee = "INV-NORMALIZATION-RECONCILIATION-001"
+path = "backend/scripts/normalization_operational_resume_drill.py"
+evidence = ["integration", "provenance", "adversarial"]
+
+[[proofs]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 path = "backend/tests/unit/test_normalization_control_plane_primitives.py"
 evidence = ["contract"]
@@ -465,6 +470,11 @@ evidence = ["unit", "contract", "adversarial"]
 
 [[proofs]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_human_gold.py"
+evidence = ["unit", "contract", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 path = "benchmark/normalization/principales_failed_page_diagnostics.py"
 evidence = ["benchmark", "adversarial"]
 
@@ -491,4 +501,4 @@ evidence = ["integration", "provenance", "adversarial"]
 [[gaps]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 missing_evidence = ["benchmark"]
-reason = "Exact-head live run 36084961719 proves a real OpenRouter JEV response is persisted through model_call -> text-quality observation -> resolved evidence lineage -> immutable manifest using PostgreSQL and the production normalization executor/finalizer path. JEV remains shadow by policy. The remaining benchmark gap is independently human-verified clean visual gold needed to measure false-correction rate before any visual-verifier promotion."
+reason = "Exact-head live run 36084961719 proves a real OpenRouter JEV response is persisted through model_call -> text-quality observation -> resolved evidence lineage -> immutable manifest using PostgreSQL and the production normalization executor/finalizer path. The human-gold schema/validator now enforces review metadata and document-level split isolation, but a reviewed stratified/adversarial normalization corpus and independently human-verified clean visual gold are still not populated. JEV remains shadow by policy and visual promotion remains blocked until that evidence exists."
