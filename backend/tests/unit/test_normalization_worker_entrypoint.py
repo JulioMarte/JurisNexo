@@ -117,16 +117,21 @@ def test_worker_validation_accepts_explicit_resume_identity() -> None:
     validate_args(args)
 
 
+def _retryable_result(args: argparse.Namespace) -> dict[str, object]:
+    del args
+    return {
+        "run_id": "run-1",
+        "final_status": "retryable_pending",
+    }
+
+
 def test_worker_main_returns_distinct_retryable_exit_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         normalization_worker,
         "run",
-        lambda args: {
-            "run_id": "run-1",
-            "final_status": "retryable_pending",
-        },
+        _retryable_result,
     )
     exit_code = normalization_worker.main(
         [
