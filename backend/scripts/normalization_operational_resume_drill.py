@@ -131,7 +131,7 @@ def _source_bytes() -> bytes:
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     return (
         b"%PDF-synthetic-operational-resume-drill\n"
-        + f"run={run};attempt={attempt}\n".encode("utf-8")
+        + f"run={run};attempt={attempt}\n".encode()
     )
 
 
@@ -190,9 +190,7 @@ def main() -> int:
                         content_type="application/pdf",
                         disposition="normalize",
                         idempotency_key=hashlib.sha256(
-                            f"{source_sha}:{PIPELINE_VERSION}:{CONFIG_SHA}".encode(
-                                "utf-8"
-                            )
+                            f"{source_sha}:{PIPELINE_VERSION}:{CONFIG_SHA}".encode()
                         ).hexdigest(),
                     ),
                 ),
