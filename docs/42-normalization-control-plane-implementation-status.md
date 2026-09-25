@@ -29,6 +29,15 @@ This document tracks implementation and proof status for the V3 normalization co
 | 11. SCJ Principales rollout | IMPLEMENTED IN PART | real-source canary/smoke infrastructure exists and the bounded born-digital PDF-aware production holdout passes on real judgment pages with document-level gates (run `35815391234`: holdout WER ≈0.020, content recall ≈0.990 / precision ≈0.999, order-preservation ≈0.986, legal-critical recall 1.0, 0/3 holdout documents with critical loss); adversarial sample, broader canary/full rollout and OOD promotion evidence remain PENDING |
 | 12. Second source | PROVEN | Official TC/0001/26 passed the same Tika + Docling normalization core; source-specific logic remains confined to acquisition |
 
+## Live durable provider-evidence proof
+
+- Exact-head run `36084961719` on `255fdd9` passed the gated **Normalization live evidence persistence** lane.
+- The lane used a synthetic public judgment fixture and one real OpenRouter JEV decision call; runtime policy remained `shadow`.
+- PostgreSQL evidence after reconnect contained exactly 1 model call, 1 text-quality observation linked to that model call, 1 resolved-evidence lineage edge and 1 normalization manifest; the normalization run closed as `succeeded`.
+- The workflow explicitly attempted to mutate the persisted normalization observation and PostgreSQL rejected the update, proving the append-only trigger on the live path.
+- Observed provider cost was **US$0.00003289**, below the explicit **US$0.005** cap. This is provider cost for the single synthetic proof call, not a production cost/page estimate.
+- This closes the previously open proof gap “real external provider response → durable model call/observation → resolved evidence lineage → final manifest”. It does **not** promote JEV from shadow, and it does not close the independent visual-verifier human-gold requirement.
+
 ## Current engine policy
 
 - Docling is the primary structural normalizer.
