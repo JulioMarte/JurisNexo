@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -764,6 +765,52 @@ class PostgresNormalizationLedger:
             if cursor.rowcount != 1:
                 raise RuntimeError("run cannot transition to failed")
 
+    def reserve_manifest_published_at(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+    ) -> datetime:
+        """Reserve one stable manifest publication timestamp per run.
+
+        The value lives in mutable run metadata so a crash after S3 publication
+        but before DB manifest persistence can rebuild byte-identical content.
+        """
+
+        with self.connection.transaction(), self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select metadata->>'manifest_published_at'
+                from corpus.normalization_runs
+                where scope_id=%s and id=%s
+                for update
+                """,
+                (scope_id, run_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            if row[0] is not None:
+                return datetime.fromisoformat(
+                    str(row[0]).replace("Z", "+00:00")
+                )
+
+            reserved = datetime.now(UTC)
+            cursor.execute(
+                """
+                update corpus.normalization_runs
+                set metadata=metadata || jsonb_build_object(
+                    'manifest_published_at',
+                    %s
+                )
+                where scope_id=%s and id=%s
+                """,
+                (reserved.isoformat(), scope_id, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(run_id)
+            return reserved
+
     def persist_manifest(
         self,
         *,
@@ -782,6 +829,7 @@ class PostgresNormalizationLedger:
                      selected_count, normalized_count, review_required_count,
                      failed_count, skipped_count)
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (scope_id, run_id) do nothing
                 returning id::text
                 """,
                 (
@@ -798,8 +846,47 @@ class PostgresNormalizationLedger:
                 ),
             )
             row = cursor.fetchone()
-            assert row is not None
-            return str(row[0])
+            if row is not None:
+                return str(row[0])
+
+            cursor.execute(
+                """
+                select id::text, sha256, storage_locator, byte_size,
+                       selected_count, normalized_count,
+                       review_required_count, failed_count, skipped_count
+                from corpus.normalization_manifests
+                where scope_id=%s and run_id=%s
+                """,
+                (scope_id, run_id),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                raise RuntimeError("manifest conflict did not resolve to an existing row")
+            expected = (
+                sha256,
+                storage_locator,
+                byte_size,
+                summary.selected_count,
+                summary.normalized_count,
+                summary.review_required_count,
+                summary.failed_count,
+                summary.skipped_count,
+            )
+            actual = (
+                str(existing[1]),
+                str(existing[2]),
+                int(existing[3]),
+                int(existing[4]),
+                int(existing[5]),
+                int(existing[6]),
+                int(existing[7]),
+                int(existing[8]),
+            )
+            if actual != expected:
+                raise RuntimeError(
+                    "existing normalization manifest does not match retry payload"
+                )
+            return str(existing[0])
 
     def close_run(self, *, scope_id: str, run_id: str) -> RunSummary:
         summary = self.summarize_run(scope_id=scope_id, run_id=run_id)
