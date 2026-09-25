@@ -483,7 +483,12 @@ guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
 path = "backend/scripts/tc_second_source_normalization_smoke.py"
 evidence = ["integration"]
 
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/scripts/normalization_live_evidence_smoke.py"
+evidence = ["integration", "provenance", "adversarial"]
+
 [[gaps]]
 guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
 missing_evidence = ["benchmark"]
-reason = "Tool-first live OpenRouter smokes now prove that the repaired JEV/structured-text provider routes can return valid live responses, and durable append-only JEV/visual observation persistence is separately proven against real PostgreSQL with provider doubles. What remains unproven is one supported run in which a real external provider response flows through the durable PostgreSQL/S3 evidence-persistence path end to end. Visual promotion also remains blocked on independently human-verified clean visual gold."
+reason = "Exact-head live run 36084961719 proves a real OpenRouter JEV response is persisted through model_call -> text-quality observation -> resolved evidence lineage -> immutable manifest using PostgreSQL and the production normalization executor/finalizer path. JEV remains shadow by policy. The remaining benchmark gap is independently human-verified clean visual gold needed to measure false-correction rate before any visual-verifier promotion."
