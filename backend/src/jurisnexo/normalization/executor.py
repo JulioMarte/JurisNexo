@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from jurisnexo.acquisition.official_corpus import ObjectStore
-from jurisnexo.observability import normalization_event
 from jurisnexo.normalization.artifacts import store_derived_artifact
 from jurisnexo.normalization.contracts import FormatInspector, StructuralNormalizer
 from jurisnexo.normalization.planner import NormalizationPlan
@@ -14,6 +13,7 @@ from jurisnexo.normalization.source_fidelity import (
     DeterministicSourceFidelityChecker,
     assessment_payload,
 )
+from jurisnexo.observability import normalization_event
 
 
 class SourceByteReader(Protocol):
