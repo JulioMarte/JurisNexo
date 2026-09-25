@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from jurisnexo.acquisition.official_corpus import ObjectStore
@@ -28,6 +29,13 @@ class FinalizationLedger(Protocol):
     ) -> RunReconciliationState: ...
 
     def summarize_run(self, *, scope_id: str, run_id: str) -> RunSummary: ...
+
+    def reserve_manifest_published_at(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+    ) -> datetime: ...
 
     def persist_manifest(
         self,
@@ -126,11 +134,16 @@ class NormalizationFinalizer:
             raise RuntimeError("normalization reconciliation failed")
 
         summary = self.ledger.summarize_run(scope_id=scope_id, run_id=run_id)
+        published_at = self.ledger.reserve_manifest_published_at(
+            scope_id=scope_id,
+            run_id=run_id,
+        )
         manifest = build_normalization_manifest(
             run_id=run_id,
             pipeline_version=pipeline_version,
             config_sha256=config_sha256,
             input_manifest_sha256=plan.manifest_sha256,
+            published_at=published_at,
             reconciliation=report,
             items=tuple(
                 NormalizationManifestItem(
