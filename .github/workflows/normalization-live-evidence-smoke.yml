@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   live-evidence:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-evidence-smoke'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-evidence-persistence'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -52,8 +52,11 @@ jobs:
             -v "$PWD:/repo:ro" \
             test python -m py_compile /repo/backend/scripts/normalization_live_evidence_smoke.py
 
-      - name: Start PostgreSQL and apply migrations
-        run: docker compose up -d db && docker compose run --rm migrate
+      - name: Start PostgreSQL, migrate and bootstrap
+        run: |
+          docker compose up -d db
+          docker compose run --rm migrate
+          docker compose run --rm bootstrap
 
       - name: Run live provider to durable evidence smoke
         run: |
