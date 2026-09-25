@@ -801,7 +801,7 @@ class PostgresNormalizationLedger:
                 update corpus.normalization_runs
                 set metadata=metadata || jsonb_build_object(
                     'manifest_published_at',
-                    %s
+                    %s::text
                 )
                 where scope_id=%s and id=%s
                 """,
