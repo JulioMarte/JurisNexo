@@ -7,6 +7,7 @@ on:
       - development
     paths:
       - "backend/src/jurisnexo/normalization/**"
+      - "backend/scripts/validate_normalization_human_gold.py"
       - "backend/src/jurisnexo/model_providers/**"
       - "backend/src/jurisnexo/entrypoints/worker/normalization.py"
       - "backend/pyproject.toml"
@@ -48,6 +49,7 @@ jobs:
             src/jurisnexo/entrypoints/worker/normalization.py \
             tests/unit/test_normalization_benchmark_suite.py \
             tests/unit/test_normalization_gold.py \
+            tests/unit/test_normalization_human_gold.py \
             tests/unit/test_normalization_source_fidelity.py \
             tests/unit/test_normalization_worker_entrypoint.py \
             tests/unit/test_docling_adapter.py \
@@ -55,7 +57,8 @@ jobs:
             tests/unit/test_openrouter_structured_modes.py
           docker compose --profile test run --rm --no-deps \
             -v "$PWD/benchmark:/benchmark:ro" \
-            test ruff check /benchmark/normalization
+            -v "$PWD/backend/scripts:/scripts:ro" \
+            test ruff check /benchmark/normalization /scripts/validate_normalization_human_gold.py
 
       - name: Run deterministic normalization readiness contracts
         run: >-
@@ -66,6 +69,7 @@ jobs:
           tests/architecture/test_normalization_source_agnostic.py
           tests/unit/test_normalization_benchmark_suite.py
           tests/unit/test_normalization_gold.py
+          tests/unit/test_normalization_human_gold.py
           tests/unit/test_normalization_source_fidelity.py
           tests/unit/test_normalization_worker_entrypoint.py
           tests/unit/test_docling_adapter.py
