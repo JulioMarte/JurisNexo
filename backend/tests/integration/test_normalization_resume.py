@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Iterator
 from typing import Any
@@ -315,7 +316,7 @@ def test_executor_timeout_can_resume_same_run_without_duplicate_item(
     connection: psycopg.Connection[Any],
 ) -> None:
     scope_id = "00000000-0000-0000-0000-000000000001"
-    source_sha = "5" * 64
+    source_sha = hashlib.sha256(b"retryable-resume-integration-fixture").hexdigest()
     with connection.transaction(force_rollback=True), connection.cursor() as cursor:
         cursor.execute(
             """
