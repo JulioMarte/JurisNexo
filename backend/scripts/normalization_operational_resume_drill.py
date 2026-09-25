@@ -313,6 +313,23 @@ def main() -> int:
                 )
                 structural_count = int(cursor.fetchone()[0])
 
+                cursor.execute(
+                    """
+                    select status
+                    from corpus.normalization_runs
+                    where scope_id=%s and id=%s
+                    """,
+                    (SCOPE_ID, second.run_id),
+                )
+                run_row = cursor.fetchone()
+                if run_row is None:
+                    raise RuntimeError("normalization run disappeared before verification")
+                run_status = str(run_row[0])
+
+            summary = ledger.summarize_run(
+                scope_id=SCOPE_ID,
+                run_id=second.run_id,
+            )
             checks = {
                 "fault_object_survived_crash": True,
                 "retryable_returned_to_pending": True,
@@ -322,11 +339,11 @@ def main() -> int:
                 "exactly_one_manifest": manifest_count == 1,
                 "finalizer_succeeded": finalization.status == "succeeded",
                 "run_reconciled": (
-                    ledger.summarize_run(
-                        scope_id=SCOPE_ID,
-                        run_id=second.run_id,
-                    ).status
-                    == "succeeded"
+                    run_status == "succeeded"
+                    and summary.normalized_count == 1
+                    and summary.pending_count == 0
+                    and summary.running_count == 0
+                    and summary.failed_count == 0
                 ),
             }
             payload: dict[str, Any] = {
@@ -345,6 +362,16 @@ def main() -> int:
                     "retryable_pending": second.retryable_pending,
                 },
                 "finalization_status": finalization.status,
+                "run_status": run_status,
+                "summary": {
+                    "selected": summary.selected_count,
+                    "normalized": summary.normalized_count,
+                    "review_required": summary.review_required_count,
+                    "failed": summary.failed_count,
+                    "skipped": summary.skipped_count,
+                    "pending": summary.pending_count,
+                    "running": summary.running_count,
+                },
                 "checks": checks,
                 "passed": all(checks.values()),
             }
