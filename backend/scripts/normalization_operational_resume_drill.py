@@ -22,7 +22,6 @@ SCOPE_ID = "00000000-0000-0000-0000-000000000001"
 PIPELINE_VERSION = "operational-resume-drill-v1"
 CONFIG_SHA = hashlib.sha256(b"operational-resume-drill-config-v1").hexdigest()
 MANIFEST_SHA = hashlib.sha256(b"operational-resume-drill-manifest-v1").hexdigest()
-SOURCE_BYTES = b"%PDF-synthetic-operational-resume-drill"
 TEXT = (
     "SENTENCIA SCJ-SS-22-1191. Articulo 5 de la Ley 13-07. "
     "FALLA: Primero, rechaza el recurso."
@@ -83,6 +82,11 @@ class _FailAfterFirstDerivedPut:
     store: S3ObjectStore
     faulted: bool = False
     fault_key: str | None = None
+    written_keys: set[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.written_keys is None:
+            self.written_keys = set()
 
     def exists(self, key: str) -> bool:
         return self.store.exists(key)
@@ -101,6 +105,7 @@ class _FailAfterFirstDerivedPut:
             content_type=content_type,
             metadata=metadata,
         )
+        self.written_keys.add(key)
         if (
             not self.faulted
             and key.startswith("derived/normalization/docling-json/")
@@ -125,12 +130,13 @@ def _source_key() -> str:
     return f"derived/normalization/drills/{run}-{attempt}/source.pdf"
 
 
-def _source_sha() -> str:
+def _source_bytes() -> bytes:
     run = os.environ.get("GITHUB_RUN_ID", "local")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-    return hashlib.sha256(
-        SOURCE_BYTES + f":{run}:{attempt}".encode("utf-8")
-    ).hexdigest()
+    return (
+        b"%PDF-synthetic-operational-resume-drill\n"
+        + f"run={run};attempt={attempt}\n".encode("utf-8")
+    )
 
 
 def _delete_keys(store: S3ObjectStore, keys: set[str]) -> None:
@@ -144,12 +150,13 @@ def _delete_keys(store: S3ObjectStore, keys: set[str]) -> None:
 def main() -> int:
     store = build_s3_object_store()
     source_key = _source_key()
-    source_sha = _source_sha()
+    source_bytes = _source_bytes()
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
     created_keys: set[str] = {source_key}
 
     store.put(
         key=source_key,
-        content=SOURCE_BYTES,
+        content=source_bytes,
         content_type="application/pdf",
         metadata={
             "sha256": source_sha,
@@ -167,7 +174,7 @@ def main() -> int:
                     values (%s, %s, 'application/pdf', %s)
                     returning id::text
                     """,
-                    (SCOPE_ID, source_sha, len(SOURCE_BYTES)),
+                    (SCOPE_ID, source_sha, len(source_bytes)),
                 )
                 source_row = cursor.fetchone()
                 assert source_row is not None
@@ -356,6 +363,8 @@ def main() -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if payload["passed"] else 2
     finally:
+        if "fault_store" in locals():
+            created_keys.update(fault_store.written_keys)
         _delete_keys(store, created_keys)
 
 
