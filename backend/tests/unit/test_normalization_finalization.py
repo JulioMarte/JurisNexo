@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
 
@@ -57,6 +58,15 @@ class _Ledger:
     def summarize_run(self, *, scope_id: str, run_id: str) -> RunSummary:
         del scope_id, run_id
         return self.summary
+
+    def reserve_manifest_published_at(
+        self,
+        *,
+        scope_id: str,
+        run_id: str,
+    ) -> datetime:
+        del scope_id, run_id
+        return datetime(2026, 9, 25, tzinfo=UTC)
 
     def persist_manifest(
         self,
