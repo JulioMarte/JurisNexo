@@ -244,8 +244,8 @@ def test_finalizer_retry_after_manifest_storage_write_is_byte_stable(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                select count(*)::int,
-                       metadata->>'manifest_published_at'
+                select count(m.id)::int,
+                       r.metadata->>'manifest_published_at'
                 from corpus.normalization_runs r
                 left join corpus.normalization_manifests m
                   on m.scope_id=r.scope_id and m.run_id=r.id
