@@ -80,6 +80,7 @@ jobs:
           tests/integration/test_normalization_control_plane.py
           tests/integration/test_normalization_resume.py
           tests/integration/test_normalization_finalizer_postgres_s3.py
+          tests/integration/test_normalization_finalizer_retry.py
           tests/integration/test_normalization_model_evidence_persistence.py
 
       - name: Show service state on failure
