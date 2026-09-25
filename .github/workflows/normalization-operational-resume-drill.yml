@@ -44,10 +44,12 @@ jobs:
         run: |
           docker compose --profile test run --rm --no-deps \
             -v "$PWD:/repo:ro" \
-            test ruff check /repo/backend/scripts/normalization_operational_resume_drill.py
+            test ruff check \
+              /repo/backend/scripts/normalization_operational_resume_drill.py \
+              /repo/backend/scripts/normalization_finalizer_retry_drill.py
           docker compose --profile test run --rm --no-deps \
             -v "$PWD:/repo:ro" \
-            test python -c "p='/repo/backend/scripts/normalization_operational_resume_drill.py'; compile(open(p, encoding='utf-8').read(), p, 'exec')"
+            test python -c "paths=['/repo/backend/scripts/normalization_operational_resume_drill.py','/repo/backend/scripts/normalization_finalizer_retry_drill.py']; [compile(open(p, encoding='utf-8').read(), p, 'exec') for p in paths]"
 
       - name: Start PostgreSQL, migrate and bootstrap
         run: |
@@ -66,11 +68,12 @@ jobs:
             -e JURISNEXO_S3_SECRET_ACCESS_KEY \
             -e JURISNEXO_S3_FORCE_PATH_STYLE \
             -e NORMALIZATION_RESUME_DRILL_OUTPUT=/artifacts/results.json \
+            -e NORMALIZATION_FINALIZER_RETRY_OUTPUT=/artifacts/finalizer-retry.json \
             -e GITHUB_RUN_ID \
             -e GITHUB_RUN_ATTEMPT \
             -v "$PWD:/repo:ro" \
             -v "$RUNNER_TEMP/normalization-resume-drill:/artifacts" \
-            test sh -c 'uv pip install --python /app/.venv/bin/python "boto3==1.43.93" >/dev/null && /app/.venv/bin/python /repo/backend/scripts/normalization_operational_resume_drill.py'
+            test sh -c 'uv pip install --python /app/.venv/bin/python "boto3==1.43.93" >/dev/null && /app/.venv/bin/python /repo/backend/scripts/normalization_operational_resume_drill.py && /app/.venv/bin/python /repo/backend/scripts/normalization_finalizer_retry_drill.py'
 
       - name: Preserve operational drill evidence
         if: always()
