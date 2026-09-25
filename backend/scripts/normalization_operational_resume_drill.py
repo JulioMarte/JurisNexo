@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -82,11 +82,7 @@ class _FailAfterFirstDerivedPut:
     store: S3ObjectStore
     faulted: bool = False
     fault_key: str | None = None
-    written_keys: set[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.written_keys is None:
-            self.written_keys = set()
+    written_keys: set[str] = field(default_factory=set)
 
     def exists(self, key: str) -> bool:
         return self.store.exists(key)
