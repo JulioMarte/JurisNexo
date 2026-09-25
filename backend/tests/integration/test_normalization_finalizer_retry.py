@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -72,6 +73,10 @@ class _CrashAfterManifestPut:
         if not self.injected and key.startswith("_manifests/normalization/"):
             self.injected = True
             raise TimeoutError("injected crash after manifest storage publication")
+
+
+def _sha(label: str) -> str:
+    return hashlib.sha256(label.encode()).hexdigest()
 
 
 @pytest.fixture(scope="module")
@@ -214,8 +219,8 @@ def test_finalizer_retry_after_manifest_storage_write_is_byte_stable(
         )
         run_id, plan = _setup_reconciling_run(
             connection,
-            source_sha="1" * 64,
-            normalized_sha="2" * 64,
+            source_sha=_sha("finalizer-retry-storage-source"),
+            normalized_sha=_sha("finalizer-retry-storage-derived"),
             config_sha="3" * 64,
             input_manifest_sha="4" * 64,
             normalized_key=normalized_key,
@@ -296,8 +301,8 @@ def test_manifest_db_persistence_is_idempotent_but_rejects_drift(
         normalized_key = "derived/normalization/resolved-evidence-text/v1/idempotent-fixture"
         run_id, _ = _setup_reconciling_run(
             connection,
-            source_sha="5" * 64,
-            normalized_sha="6" * 64,
+            source_sha=_sha("finalizer-retry-db-source"),
+            normalized_sha=_sha("finalizer-retry-db-derived"),
             config_sha="7" * 64,
             input_manifest_sha="8" * 64,
             normalized_key=normalized_key,
