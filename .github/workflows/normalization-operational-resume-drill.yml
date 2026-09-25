@@ -70,7 +70,7 @@ jobs:
             -e GITHUB_RUN_ATTEMPT \
             -v "$PWD:/repo:ro" \
             -v "$RUNNER_TEMP/normalization-resume-drill:/artifacts" \
-            test sh -lc 'uv pip install "boto3==1.43.93" "psycopg[binary]>=3.2,<4" >/dev/null && python /repo/backend/scripts/normalization_operational_resume_drill.py'
+            test sh -c 'uv pip install --python /app/.venv/bin/python "boto3==1.43.93" >/dev/null && /app/.venv/bin/python /repo/backend/scripts/normalization_operational_resume_drill.py'
 
       - name: Preserve operational drill evidence
         if: always()
