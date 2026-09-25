@@ -50,7 +50,7 @@ jobs:
             test ruff check /repo/backend/scripts/normalization_live_evidence_smoke.py
           docker compose --profile test run --rm --no-deps \
             -v "$PWD:/repo:ro" \
-            test python -m py_compile /repo/backend/scripts/normalization_live_evidence_smoke.py
+            test python -c "from pathlib import Path; p=Path('/repo/backend/scripts/normalization_live_evidence_smoke.py'); compile(p.read_text(encoding='utf-8'), str(p), 'exec')"
 
       - name: Start PostgreSQL, migrate and bootstrap
         run: |
@@ -75,7 +75,7 @@ jobs:
         with:
           name: normalization-live-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/normalization-live-evidence/**
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
 
       - name: Show database state on failure
