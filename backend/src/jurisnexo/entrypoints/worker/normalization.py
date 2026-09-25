@@ -8,7 +8,6 @@ from typing import Any, cast
 from jurisnexo.acquisition.manifest import parse_acquisition_run_manifest
 from jurisnexo.acquisition.s3_object_store import S3ObjectStore, build_s3_object_store
 from jurisnexo.bootstrap.settings import get_postgres_settings
-from jurisnexo.observability import normalization_span
 from jurisnexo.normalization.adapters.pdf_native_text import PdfNativeTextReferenceExtractor
 from jurisnexo.normalization.adapters.tika import TikaServerFormatInspector
 from jurisnexo.normalization.executor import NormalizationExecutor
@@ -19,6 +18,7 @@ from jurisnexo.normalization.recovery import CircuitBreaker
 from jurisnexo.normalization.repository import PostgresNormalizationLedger
 from jurisnexo.normalization.s3_source_reader import S3SourceByteReader
 from jurisnexo.normalization.source_fidelity import DeterministicSourceFidelityChecker
+from jurisnexo.observability import normalization_span
 from jurisnexo.platform.db.connection import (
     PostgresConnectionConfig,
     build_connection_factory,
