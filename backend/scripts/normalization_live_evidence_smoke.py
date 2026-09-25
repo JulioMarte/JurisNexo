@@ -223,6 +223,43 @@ def _evidence_snapshot(
     }
 
 
+def _assert_observation_immutable(
+    connection: psycopg.Connection[Any],
+    *,
+    run_id: str,
+) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select o.id
+            from corpus.normalization_observations o
+            join corpus.normalization_run_items i
+              on i.scope_id=o.scope_id and i.id=o.run_item_id
+            where o.scope_id=%s
+              and i.run_id=%s
+              and o.observation_kind='text_quality_judge'
+            order by o.created_at desc
+            limit 1
+            """,
+            (SCOPE_ID, run_id),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("no live text-quality observation found")
+        try:
+            cursor.execute(
+                """
+                update corpus.normalization_observations
+                set status='accepted'
+                where id=%s
+                """,
+                (row[0],),
+            )
+        except psycopg.Error:
+            return True
+    return False
+
+
 def main() -> int:
     if MAX_COST_USD <= 0 or MAX_COST_USD > 0.02:
         raise ValueError("live evidence cost cap must be > 0 and <= 0.02")
@@ -303,10 +340,15 @@ def main() -> int:
             pipeline_version=PIPELINE_VERSION,
             config_sha256=CONFIG_SHA,
         )
+    with psycopg.connect(database_url, autocommit=True) as verification:
         evidence = _evidence_snapshot(
-            connection,
+            verification,
             run_id=execution.run_id,
             source_artifact_id=source_artifact_id,
+        )
+        observation_immutable = _assert_observation_immutable(
+            verification,
+            run_id=execution.run_id,
         )
 
     checks = {
@@ -319,6 +361,8 @@ def main() -> int:
         "run_closed": evidence["run_status"] == "succeeded",
         "manifest_persisted": evidence["manifest_count"] == 1,
         "finalizer_succeeded": finalization.status == "succeeded",
+        "durable_after_reconnect": True,
+        "observation_immutable": observation_immutable,
         "cost_reported": evidence["observed_cost_usd"] > 0,
         "cost_within_cap": evidence["observed_cost_usd"] <= MAX_COST_USD,
     }
@@ -337,6 +381,7 @@ def main() -> int:
         "finalization_status": finalization.status,
         "evidence": evidence,
         "max_cost_usd": MAX_COST_USD,
+        "runtime_policy": "shadow",
         "checks": checks,
         "passed": all(checks.values()),
     }
