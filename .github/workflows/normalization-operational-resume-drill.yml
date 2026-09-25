@@ -26,6 +26,7 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+
     steps:
       - uses: actions/checkout@v6
 
@@ -41,8 +42,12 @@ jobs:
 
       - name: Validate drill before touching storage
         run: |
-          docker compose --profile test run --rm --no-deps             -v "$PWD:/repo:ro"             test ruff check /repo/backend/scripts/normalization_operational_resume_drill.py
-          docker compose --profile test run --rm --no-deps             -v "$PWD:/repo:ro"             test python -m py_compile /repo/backend/scripts/normalization_operational_resume_drill.py
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD:/repo:ro" \
+            test ruff check /repo/backend/scripts/normalization_operational_resume_drill.py
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD:/repo:ro" \
+            test python -c "p='/repo/backend/scripts/normalization_operational_resume_drill.py'; compile(open(p, encoding='utf-8').read(), p, 'exec')"
 
       - name: Start PostgreSQL, migrate and bootstrap
         run: |
@@ -53,7 +58,19 @@ jobs:
       - name: Inject post-S3/pre-DB crash and resume same run
         run: |
           mkdir -p "$RUNNER_TEMP/normalization-resume-drill"
-          docker compose --profile test run --rm --no-deps             -e JURISNEXO_S3_BUCKET             -e JURISNEXO_S3_ENDPOINT_URL             -e JURISNEXO_S3_REGION             -e JURISNEXO_S3_ACCESS_KEY_ID             -e JURISNEXO_S3_SECRET_ACCESS_KEY             -e JURISNEXO_S3_FORCE_PATH_STYLE             -e NORMALIZATION_RESUME_DRILL_OUTPUT=/artifacts/results.json             -e GITHUB_RUN_ID             -e GITHUB_RUN_ATTEMPT             -v "$PWD:/repo:ro"             -v "$RUNNER_TEMP/normalization-resume-drill:/artifacts"             test sh -lc 'uv pip install "boto3==1.43.93" >/dev/null && python /repo/backend/scripts/normalization_operational_resume_drill.py'
+          docker compose --profile test run --rm --no-deps \
+            -e JURISNEXO_S3_BUCKET \
+            -e JURISNEXO_S3_ENDPOINT_URL \
+            -e JURISNEXO_S3_REGION \
+            -e JURISNEXO_S3_ACCESS_KEY_ID \
+            -e JURISNEXO_S3_SECRET_ACCESS_KEY \
+            -e JURISNEXO_S3_FORCE_PATH_STYLE \
+            -e NORMALIZATION_RESUME_DRILL_OUTPUT=/artifacts/results.json \
+            -e GITHUB_RUN_ID \
+            -e GITHUB_RUN_ATTEMPT \
+            -v "$PWD:/repo:ro" \
+            -v "$RUNNER_TEMP/normalization-resume-drill:/artifacts" \
+            test sh -lc 'uv pip install "boto3==1.43.93" >/dev/null && python /repo/backend/scripts/normalization_operational_resume_drill.py'
 
       - name: Preserve operational drill evidence
         if: always()
