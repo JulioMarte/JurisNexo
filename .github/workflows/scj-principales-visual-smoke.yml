@@ -26,6 +26,16 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'live-visual-smoke')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - judge: deepseek-official
+            model: deepseek/deepseek-v4.1-flash
+            provider: DeepSeek
+          - judge: luna-official
+            model: openai/gpt-6-luna
+            provider: OpenAI
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -34,11 +44,12 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
-      JURISNEXO_OPENROUTER_VISUAL_MODEL: "openai/gpt-4.1-mini"
-      JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE: "tool"
-      JURISNEXO_OPENROUTER_DEEPSEEK_PROVIDER_ORDER: ""
-      JURISNEXO_OPENROUTER_DEEPSEEK_ALLOW_PROVIDER_FALLBACKS: "true"
-      SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.005"
+      JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
+      JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE: "json_schema"
+      JURISNEXO_OPENROUTER_DEEPSEEK_PROVIDER_ORDER: ${{ matrix.provider }}
+      JURISNEXO_OPENROUTER_DEEPSEEK_ALLOW_PROVIDER_FALLBACKS: "false"
+      SCJ_PRINCIPALES_VISUAL_REASONING: "high"
+      SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.01"
     steps:
       - uses: actions/checkout@v6
 
@@ -60,7 +71,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-principales-visual-${{ github.run_id }}-${{ github.run_attempt }}
+          name: scj-principales-visual-${{ matrix.judge }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/principales-visual/**
           if-no-files-found: warn
           retention-days: 30
