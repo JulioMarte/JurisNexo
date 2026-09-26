@@ -1,6 +1,11 @@
 name: SCJ Principales visual benchmark
 on:
   workflow_dispatch:
+  pull_request:
+    types: [synchronize]
+    branches: [development]
+    paths:
+      - ".github/workflows/scj-principales-visual-smoke.yml"
 permissions:
   contents: read
 jobs:
