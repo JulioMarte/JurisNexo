@@ -69,7 +69,7 @@ jobs:
           python-version: "3.13"
       - name: Install bounded visual runtime
         run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Run exactly one visual page
+      - name: Run exactly one visual page per model
         env:
           SCJ_PRINCIPALES_VISUAL_OUTPUT: ${{ runner.temp }}/principales-visual
         run: python backend/scripts/scj_principales_visual_smoke.py
