@@ -53,7 +53,10 @@ SAMPLE_SIZE = int(os.environ.get("SCJ_VISUAL_SAMPLE_SIZE", "1"))
 SEED = int(os.environ.get("SCJ_VISUAL_SEED", "20260926"))
 SELECTION = os.environ.get("SCJ_VISUAL_SELECTION", "deterministic")
 MANIFEST = os.environ.get("SCJ_VISUAL_MANIFEST", "").strip()
-MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "1"))\nMAX_OUTPUT_TOKENS = int(os.environ.get("SCJ_VISUAL_MAX_OUTPUT_TOKENS", "512"))
+MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "1"))
+MAX_OUTPUT_TOKENS = int(
+    os.environ.get("SCJ_VISUAL_MAX_OUTPUT_TOKENS", "512")
+)
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 PROMPT = (
     "Read the image and transcribe the SCJ legal identifier. "
@@ -180,6 +183,7 @@ def render_crop(
         raise RuntimeError(
             f"gold identifier absent from text layer: {token}"
         )
+
     target_boxes = boxes[start : start + len(token)]
     left = min(box[0] for box in target_boxes)
     bottom = min(box[1] for box in target_boxes)
@@ -314,11 +318,11 @@ def main() -> int:
     provider = _provider()
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENCY) as executor:
-        future_to_case = {
-            executor.submit(_run_case, provider, case, image): case
+        futures = [
+            executor.submit(_run_case, provider, case, image)
             for case, image in prepared
-        }
-        for future in as_completed(future_to_case):
+        ]
+        for future in as_completed(futures):
             results.append(future.result())
 
     results.sort(
@@ -347,7 +351,8 @@ def main() -> int:
         },
         "model": MODEL,
         "reasoning_effort": REASONING,
-        "max_concurrency": MAX_CONCURRENCY,\n        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "max_concurrency": MAX_CONCURRENCY,
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
         "cases": len(results),
         "passed": passed,
         "failed": len(results) - passed,
