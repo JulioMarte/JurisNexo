@@ -53,7 +53,7 @@ SAMPLE_SIZE = int(os.environ.get("SCJ_VISUAL_SAMPLE_SIZE", "1"))
 SEED = int(os.environ.get("SCJ_VISUAL_SEED", "20260926"))
 SELECTION = os.environ.get("SCJ_VISUAL_SELECTION", "deterministic")
 MANIFEST = os.environ.get("SCJ_VISUAL_MANIFEST", "").strip()
-MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "1"))
+MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "1"))\nMAX_OUTPUT_TOKENS = int(os.environ.get("SCJ_VISUAL_MAX_OUTPUT_TOKENS", "512"))
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 PROMPT = (
     "Read the image and transcribe the SCJ legal identifier. "
@@ -239,7 +239,7 @@ def _run_case(
             media_type="image/png",
             prompt=PROMPT,
             json_schema={"type": "object"},
-            max_output_tokens=64,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
         )
         raw = str(response.value.get("transcription") or "").strip()
         observed = extract_scj_identifier(raw)
@@ -347,7 +347,7 @@ def main() -> int:
         },
         "model": MODEL,
         "reasoning_effort": REASONING,
-        "max_concurrency": MAX_CONCURRENCY,
+        "max_concurrency": MAX_CONCURRENCY,\n        "max_output_tokens": MAX_OUTPUT_TOKENS,
         "cases": len(results),
         "passed": passed,
         "failed": len(results) - passed,
