@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import io, json, os, random, re, sys, time
+import io, json, os, sys, time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -51,17 +51,6 @@ def discover_cases(store:Any,limit:int=500)->list[Case]:
         if expected: cases.append(Case(key,page.page_index,expected,"pdf_text_layer"))
         if len(cases)>=limit: break
     return cases
-
-def load_manifest(path:str)->list[Case]:
-    data=json.loads(Path(path).read_text(encoding="utf-8")); rows=data.get("cases",data) if isinstance(data,dict) else data
-    return [Case(str(x["object_key"]),int(x["page_index"]),str(x["expected_identifier"]).upper(),str(x.get("gold_source") or "curated")) for x in rows]
-
-def select_cases(cases:list[Case])->list[Case]:
-    if SAMPLE_SIZE<1: raise ValueError("SCJ_VISUAL_SAMPLE_SIZE must be >= 1")
-    if SAMPLE_SIZE>len(cases): raise ValueError(f"requested {SAMPLE_SIZE} cases but only {len(cases)} available")
-    if SELECTION=="deterministic": return cases[:SAMPLE_SIZE]
-    if SELECTION=="random": return random.Random(SEED).sample(cases,SAMPLE_SIZE)
-    raise ValueError("SCJ_VISUAL_SELECTION must be deterministic or random")
 
 def page_text_boxes(pdf:bytes,index:int):
     import pypdfium2 as p
