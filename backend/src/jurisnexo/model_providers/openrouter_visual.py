@@ -18,7 +18,7 @@ from jurisnexo.model_providers.contracts import (
     StructuredGenerationResult,
 )
 
-StructuredMode = Literal["tool", "json_schema", "json_object"]
+StructuredMode = Literal["tool", "json_schema", "json_object", "prompt_json"]
 
 
 @dataclass(slots=True)
@@ -41,7 +41,12 @@ class OpenRouterVisualModelProvider:
             raise ValueError(
                 "visual reasoning_effort must be none, high or xhigh"
             )
-        if self.structured_mode not in {"tool", "json_schema", "json_object"}:
+        if self.structured_mode not in {
+            "tool",
+            "json_schema",
+            "json_object",
+            "prompt_json",
+        }:
             raise ValueError("unsupported visual structured_mode")
 
     def verify_image_text(
@@ -54,14 +59,13 @@ class OpenRouterVisualModelProvider:
         max_output_tokens: int,
     ) -> StructuredGenerationResult:
         encoded = base64.b64encode(image).decode("ascii")
-        request_prompt = prompt
         payload: JsonObject = {
             "model": self.model,
             "messages": [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": request_prompt},
+                        {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -75,10 +79,7 @@ class OpenRouterVisualModelProvider:
             "provider": self._provider_routing(),
             "usage": {"include": True},
         }
-        self._apply_structured_output(
-            payload=payload,
-            json_schema=json_schema,
-        )
+        self._apply_structured_output(payload=payload, json_schema=json_schema)
         if self.reasoning_effort != "none":
             payload["reasoning"] = {"effort": self.reasoning_effort}
         request = Request(
@@ -193,16 +194,22 @@ class OpenRouterVisualModelProvider:
                     },
                 }
             ]
-            # With exactly one tool, "required" is sufficient and is more
-            # portable across OpenRouter providers than forcing a named tool.
             payload["tool_choice"] = "required"
+            return
+        messages = cast(list[dict[str, object]], payload["messages"])
+        content = cast(list[dict[str, object]], messages[0]["content"])
+        text_part = content[0]
+        original = str(text_part.get("text") or "")
+        if self.structured_mode == "prompt_json":
+            text_part["text"] = (
+                original
+                + "\n\nReturn ONLY this JSON shape with no Markdown or prose: "
+                + json.dumps(json_schema, separators=(",", ":"))
+                + "\nThe response itself must be one valid JSON object matching that schema."
+            )
             return
         if self.structured_mode == "json_object":
             payload["response_format"] = {"type": "json_object"}
-            messages = cast(list[dict[str, object]], payload["messages"])
-            content = cast(list[dict[str, object]], messages[0]["content"])
-            text_part = content[0]
-            original = str(text_part.get("text") or "")
             text_part["text"] = (
                 original
                 + "\n\nReturn only one valid JSON object. Do not include "
