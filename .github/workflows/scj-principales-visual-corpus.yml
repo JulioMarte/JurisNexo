@@ -27,6 +27,7 @@ env:
   JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
   JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
   SCJ_VISUAL_PAGE_COUNT: "100"
+  SCJ_VISUAL_MAX_CONCURRENCY: "100"
   SCJ_VISUAL_CORPUS_SEED: "jurisnexo-principales-visual-v1"
 
 jobs:
@@ -90,7 +91,7 @@ jobs:
         with:
           name: scj-visual-corpus-manifest-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/manifest
-      - name: Run identical frozen pages with plain transcription only
+      - name: Run 100 independent page calls concurrently
         env:
           SCJ_VISUAL_CORPUS_MODE: run
           SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest/manifest.json
