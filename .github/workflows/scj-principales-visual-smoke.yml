@@ -42,7 +42,7 @@ jobs:
       SCJ_PRINCIPALES_VISUAL_REASONING: ${{ matrix.reasoning }}
       SCJ_VISUAL_SAMPLE_SIZE: "1"
       SCJ_VISUAL_SELECTION: deterministic
-      SCJ_VISUAL_SEED: "20260926"
+      SCJ_VISUAL_SEED: "20260926"\n      SCJ_VISUAL_MAX_OUTPUT_TOKENS: "512"
       SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.01"
     steps:
       - uses: actions/checkout@v6
