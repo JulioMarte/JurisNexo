@@ -135,9 +135,7 @@ def _list_pdf_keys(store: Any) -> list[str]:
 def _candidate_pages(store: Any) -> list[tuple[PageCase, bytes]]:
     selected: list[tuple[PageCase, bytes]] = []
     for object_key in _list_pdf_keys(store):
-        source = store.client.get_object(
-            Bucket=store.config.bucket, Key=object_key
-        )["Body"].read()
+        source = store.client.get_object(Bucket=store.config.bucket, Key=object_key)["Body"].read()
         if not isinstance(source, bytes):
             source = bytes(source)
         try:
@@ -160,19 +158,7 @@ def _candidate_pages(store: Any) -> list[tuple[PageCase, bytes]]:
                 expected_matches = len(selected) % 2 == 0
                 candidate = original if expected_matches else corrupted
                 image = _render_page(document, page_index)
-                selected.append(
-                    (
-                        PageCase(
-                            object_key=object_key,
-                            page_index=page_index,
-                            case_kind="clean" if expected_matches else "controlled_corruption",
-                            original_token=original,
-                            candidate_token=candidate,
-                            expected_matches=expected_matches,
-                        ),
-                        image,
-                    )
-                )
+                selected.append((PageCase(object_key=object_key, page_index=page_index, case_kind="clean" if expected_matches else "controlled_corruption", original_token=original, candidate_token=candidate, expected_matches=expected_matches), image))
                 if len(selected) >= PAGE_LIMIT:
                     return selected
         finally:
@@ -189,7 +175,7 @@ def main() -> int:
         raise ValueError("VISUAL_JUDGE_PAGE_LIMIT must be between 1 and 100")
     if MAX_COST_USD <= 0 or MAX_COST_USD > 2:
         raise ValueError("VISUAL_JUDGE_MAX_COST_USD must be >0 and <=2")
-    if STRUCTURED_MODE not in {"tool", "json_schema", "json_object"}:
+    if STRUCTURED_MODE not in {"tool", "json_schema", "json_object", "prompt_json"}:
         raise ValueError("unsupported VISUAL_JUDGE_STRUCTURED_MODE")
     if MAX_OUTPUT_TOKENS < 64 or MAX_OUTPUT_TOKENS > 4096:
         raise ValueError("VISUAL_JUDGE_MAX_OUTPUT_TOKENS must be between 64 and 4096")
@@ -201,50 +187,16 @@ def main() -> int:
     if len(pages) != PAGE_LIMIT:
         raise RuntimeError(f"requested {PAGE_LIMIT} pages but found {len(pages)} eligible pages")
 
-    provider = OpenRouterVisualModelProvider(
-        api_key=openrouter.api_key.get_secret_value(),
-        model=MODEL,
-        base_url=openrouter.base_url,
-        reasoning_effort=REASONING,
-        structured_mode=STRUCTURED_MODE,
-        provider_order=(PROVIDER,),
-        allow_provider_fallbacks=False,
-    )
+    provider = OpenRouterVisualModelProvider(api_key=openrouter.api_key.get_secret_value(), model=MODEL, base_url=openrouter.base_url, reasoning_effort=REASONING, structured_mode=STRUCTURED_MODE, provider_order=(PROVIDER,), allow_provider_fallbacks=False)
     results: list[PageResult] = []
     running_cost = 0.0
     for case, image in pages:
         started = time.perf_counter()
-        result = provider.verify_image_text(
-            image=image,
-            media_type="image/jpeg",
-            prompt=(
-                "Read the full legal-document page image. Locate the exact visible legal "
-                "identifier represented by CANDIDATE_TOKEN. Return matches=true only when "
-                "the visible token is exactly identical, character for character. Do not "
-                "infer or repair from context. If it differs, return matches=false and the "
-                "visible token.\n\nCANDIDATE_TOKEN: " + case.candidate_token
-            ),
-            json_schema=_schema(),
-            max_output_tokens=MAX_OUTPUT_TOKENS,
-        )
+        result = provider.verify_image_text(image=image, media_type="image/jpeg", prompt=("Read the full legal-document page image. Locate the exact visible legal identifier represented by CANDIDATE_TOKEN. Return matches=true only when the visible token is exactly identical, character for character. Do not infer or repair from context. If it differs, return matches=false and the visible token.\n\nCANDIDATE_TOKEN: " + case.candidate_token), json_schema=_schema(), max_output_tokens=MAX_OUTPUT_TOKENS)
         running_cost += result.cost_usd or 0.0
         if running_cost > MAX_COST_USD:
             raise RuntimeError(f"benchmark exceeded cost cap: ${running_cost:.6f}")
-        results.append(
-            PageResult(
-                object_key=case.object_key,
-                page_index=case.page_index,
-                case_kind=case.case_kind,
-                expected_matches=case.expected_matches,
-                observed_matches=bool(result.value.get("matches", False)),
-                input_tokens=result.usage.input_tokens,
-                output_tokens=result.usage.output_tokens,
-                thinking_tokens=result.usage.thinking_tokens,
-                cost_usd=result.cost_usd,
-                latency_ms=int((time.perf_counter() - started) * 1000),
-                routed_provider=str(result.provider_metadata.get("routed_provider") or ""),
-            )
-        )
+        results.append(PageResult(object_key=case.object_key, page_index=case.page_index, case_kind=case.case_kind, expected_matches=case.expected_matches, observed_matches=bool(result.value.get("matches", False)), input_tokens=result.usage.input_tokens, output_tokens=result.usage.output_tokens, thinking_tokens=result.usage.thinking_tokens, cost_usd=result.cost_usd, latency_ms=int((time.perf_counter() - started) * 1000), routed_provider=str(result.provider_metadata.get("routed_provider") or "")))
 
     clean = [item for item in results if item.expected_matches]
     corrupted = [item for item in results if not item.expected_matches]
@@ -273,10 +225,7 @@ def main() -> int:
         "results": [asdict(item) for item in results],
     }
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    (OUTPUT / "report.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    (OUTPUT / "report.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
     return 0
 
