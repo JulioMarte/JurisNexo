@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   judge:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'visual-judge-100'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-smoke'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
