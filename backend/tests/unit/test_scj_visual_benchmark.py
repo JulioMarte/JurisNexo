@@ -1,31 +1,65 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+import pytest
 
-SCRIPT=Path(__file__).resolve().parents[2]/"scripts"/"scj_principales_visual_smoke.py"
-spec=importlib.util.spec_from_file_location("visual_benchmark",SCRIPT); assert spec and spec.loader
-m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+from jurisnexo.normalization.visual_identifier_benchmark import (
+    VisualIdentifierCase,
+    extract_scj_identifier,
+    select_visual_identifier_cases,
+)
 
-def test_extract_identifier_ignores_visible_prefix():
-    assert m.extract_identifier("NÚM. SCJ-SS-22-0514") == "SCJ-SS-22-0514"
-    assert m.extract_identifier("ÚM. SCJ-SS-22-0514\n") == "SCJ-SS-22-0514"
 
-def test_extract_identifier_rejects_missing_identifier():
-    assert m.extract_identifier("NÚM. 123") is None
+def _case(index: int) -> VisualIdentifierCase:
+    return VisualIdentifierCase(
+        object_key=f"{index}.pdf",
+        page_index=index,
+        expected_identifier=f"SCJ-AA-22-{index:04d}",
+        gold_source="test",
+    )
 
-def test_deterministic_selection(monkeypatch):
-    cases=[m.Case(f"{i}.pdf",i,f"SCJ-AA-22-{i:04d}","test") for i in range(5)]
-    monkeypatch.setattr(m,"SAMPLE_SIZE",2); monkeypatch.setattr(m,"SELECTION","deterministic")
-    assert m.select_cases(cases)==cases[:2]
 
-def test_random_selection_is_seeded(monkeypatch):
-    cases=[m.Case(f"{i}.pdf",i,f"SCJ-AA-22-{i:04d}","test") for i in range(10)]
-    monkeypatch.setattr(m,"SAMPLE_SIZE",4); monkeypatch.setattr(m,"SELECTION","random"); monkeypatch.setattr(m,"SEED",7)
-    assert m.select_cases(cases)==m.select_cases(cases)
+def test_extract_identifier_ignores_visible_prefix() -> None:
+    assert extract_scj_identifier("NÚM. SCJ-SS-22-0514") == "SCJ-SS-22-0514"
+    assert extract_scj_identifier("ÚM. SCJ-SS-22-0514\n") == "SCJ-SS-22-0514"
 
-def test_selection_refuses_oversampling(monkeypatch):
-    monkeypatch.setattr(m,"SAMPLE_SIZE",2); monkeypatch.setattr(m,"SELECTION","deterministic")
-    try: m.select_cases([m.Case("a.pdf",0,"SCJ-AA-22-0001","test")])
-    except ValueError as exc: assert "only 1" in str(exc)
-    else: raise AssertionError("expected ValueError")
+
+def test_extract_identifier_rejects_missing_identifier() -> None:
+    assert extract_scj_identifier("NÚM. 123") is None
+
+
+def test_deterministic_selection() -> None:
+    cases = [_case(index) for index in range(5)]
+    selected = select_visual_identifier_cases(
+        cases,
+        sample_size=2,
+        selection="deterministic",
+        seed=7,
+    )
+    assert selected == cases[:2]
+
+
+def test_random_selection_is_seeded() -> None:
+    cases = [_case(index) for index in range(10)]
+    first = select_visual_identifier_cases(
+        cases,
+        sample_size=4,
+        selection="random",
+        seed=7,
+    )
+    second = select_visual_identifier_cases(
+        cases,
+        sample_size=4,
+        selection="random",
+        seed=7,
+    )
+    assert first == second
+
+
+def test_selection_refuses_oversampling() -> None:
+    with pytest.raises(ValueError, match="only 1"):
+        select_visual_identifier_cases(
+            [_case(1)],
+            sample_size=2,
+            selection="deterministic",
+            seed=7,
+        )
