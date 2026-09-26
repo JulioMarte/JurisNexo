@@ -38,9 +38,7 @@ class OpenRouterVisualModelProvider:
         if not self.model.strip():
             raise ValueError("visual model is required")
         if self.reasoning_effort not in {"none", "high", "xhigh"}:
-            raise ValueError(
-                "visual reasoning_effort must be none, high or xhigh"
-            )
+            raise ValueError("visual reasoning_effort must be none, high or xhigh")
         if self.structured_mode not in {
             "tool",
             "json_schema",
@@ -68,9 +66,7 @@ class OpenRouterVisualModelProvider:
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{media_type};base64,{encoded}",
-                            },
+                            "image_url": {"url": f"data:{media_type};base64,{encoded}"},
                         },
                     ],
                 }
@@ -97,15 +93,15 @@ class OpenRouterVisualModelProvider:
                 raw = response.read()
         except HTTPError as exc:
             detail = exc.read().decode(errors="replace")[:2000]
-            raise ModelProviderError(
-                f"OpenRouter visual HTTP {exc.code}: {detail}"
-            ) from exc
+            raise ModelProviderError(f"OpenRouter visual HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
             raise ModelProviderError(
                 f"OpenRouter visual transport error: {exc.reason}"
             ) from exc
 
         body: dict[str, object] = {}
+        message: dict[str, object] | None = None
+        value: JsonObject | None = None
         try:
             body = _json_object(raw)
             choices_raw = body["choices"]
@@ -124,17 +120,16 @@ class OpenRouterVisualModelProvider:
             json.JSONDecodeError,
         ) as exc:
             provider = body.get("provider")
+            diagnostic = _safe_response_diagnostic(message=message, value=value)
             raise ModelProviderError(
                 "OpenRouter returned an invalid visual structured response "
-                f"(mode={self.structured_mode}, provider={provider!r}): {exc}"
+                f"(mode={self.structured_mode}, provider={provider!r}, "
+                f"diagnostic={diagnostic}): {exc}"
             ) from exc
 
+        assert value is not None
         usage_raw = body.get("usage")
-        usage = (
-            cast(dict[str, object], usage_raw)
-            if isinstance(usage_raw, dict)
-            else {}
-        )
+        usage = cast(dict[str, object], usage_raw) if isinstance(usage_raw, dict) else {}
         model = str(body.get("model") or self.model)
         response_id = body.get("id")
         routed_provider = body.get("provider")
@@ -155,9 +150,7 @@ class OpenRouterVisualModelProvider:
                 "requested_model": self.model,
                 "requested_reasoning_effort": self.reasoning_effort,
                 "structured_mode": self.structured_mode,
-                "routed_provider": (
-                    str(routed_provider) if routed_provider is not None else ""
-                ),
+                "routed_provider": str(routed_provider) if routed_provider is not None else "",
                 "provider_order": list(self.provider_order),
                 "allow_provider_fallbacks": self.allow_provider_fallbacks,
             },
@@ -187,9 +180,7 @@ class OpenRouterVisualModelProvider:
                     "type": "function",
                     "function": {
                         "name": name,
-                        "description": (
-                            "Return the visual transcription verification result."
-                        ),
+                        "description": "Return the visual transcription verification result.",
                         "parameters": json_schema,
                     },
                 }
@@ -203,9 +194,11 @@ class OpenRouterVisualModelProvider:
         if self.structured_mode == "prompt_json":
             text_part["text"] = (
                 original
-                + "\n\nReturn ONLY this JSON shape with no Markdown or prose: "
+                + "\n\nReturn ONLY one JSON object with exactly these fields: "
                 + json.dumps(json_schema, separators=(",", ":"))
-                + "\nThe response itself must be one valid JSON object matching that schema."
+                + "\nDo not describe the schema. Do not echo the schema. Do not add "
+                "Markdown or prose. The response itself must be the result object "
+                "matching that schema."
             )
             return
         if self.structured_mode == "json_object":
@@ -218,12 +211,28 @@ class OpenRouterVisualModelProvider:
             return
         payload["response_format"] = {
             "type": "json_schema",
-            "json_schema": {
-                "name": name,
-                "strict": True,
-                "schema": json_schema,
-            },
+            "json_schema": {"name": name, "strict": True, "schema": json_schema},
         }
+
+
+def _safe_response_diagnostic(
+    *,
+    message: dict[str, object] | None,
+    value: JsonObject | None,
+) -> str:
+    diagnostic: dict[str, object] = {}
+    if value is not None:
+        diagnostic["parsed_keys"] = sorted(value)
+        diagnostic["parsed_value"] = value
+    if message is not None:
+        for key in ("content", "reasoning_content", "reasoning"):
+            item = message.get(key)
+            if isinstance(item, str) and item.strip():
+                diagnostic[f"{key}_preview"] = item[:1000]
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            diagnostic["tool_call_count"] = len(tool_calls)
+    return json.dumps(diagnostic, ensure_ascii=False, sort_keys=True, default=str)[:3000]
 
 
 def _int_or_none(value: object) -> int | None:
