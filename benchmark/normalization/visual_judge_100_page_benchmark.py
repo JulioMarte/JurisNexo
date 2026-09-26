@@ -16,12 +16,14 @@ from jurisnexo.bootstrap.settings import get_openrouter_settings
 from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
-PAGE_LIMIT = int(os.environ.get("VISUAL_JUDGE_PAGE_LIMIT", "100"))
+PAGE_LIMIT = int(os.environ.get("VISUAL_JUDGE_PAGE_LIMIT", "1"))
 OUTPUT = Path(os.environ.get("VISUAL_JUDGE_OUTPUT", "visual-judge-100-page-output"))
 MAX_COST_USD = float(os.environ.get("VISUAL_JUDGE_MAX_COST_USD", "1.0"))
 MODEL = os.environ["VISUAL_JUDGE_MODEL"]
 PROVIDER = os.environ["VISUAL_JUDGE_PROVIDER"]
 REASONING = os.environ.get("VISUAL_JUDGE_REASONING", "high")
+STRUCTURED_MODE = os.environ.get("VISUAL_JUDGE_STRUCTURED_MODE", "tool")
+MAX_OUTPUT_TOKENS = int(os.environ.get("VISUAL_JUDGE_MAX_OUTPUT_TOKENS", "512"))
 
 TOKEN_PATTERNS = (
     re.compile(r"SCJ-[A-Z0-9-]{4,}", re.IGNORECASE),
@@ -178,11 +180,19 @@ def _candidate_pages(store: Any) -> list[tuple[PageCase, bytes]]:
     return selected
 
 
+def _rate(numerator: int, denominator: int) -> float | None:
+    return numerator / denominator if denominator else None
+
+
 def main() -> int:
     if PAGE_LIMIT <= 0 or PAGE_LIMIT > 100:
         raise ValueError("VISUAL_JUDGE_PAGE_LIMIT must be between 1 and 100")
     if MAX_COST_USD <= 0 or MAX_COST_USD > 2:
         raise ValueError("VISUAL_JUDGE_MAX_COST_USD must be >0 and <=2")
+    if STRUCTURED_MODE not in {"tool", "json_schema", "json_object"}:
+        raise ValueError("unsupported VISUAL_JUDGE_STRUCTURED_MODE")
+    if MAX_OUTPUT_TOKENS < 64 or MAX_OUTPUT_TOKENS > 4096:
+        raise ValueError("VISUAL_JUDGE_MAX_OUTPUT_TOKENS must be between 64 and 4096")
     openrouter = get_openrouter_settings()
     if openrouter.api_key is None:
         raise RuntimeError("OPENROUTER_API_KEY is required")
@@ -196,7 +206,7 @@ def main() -> int:
         model=MODEL,
         base_url=openrouter.base_url,
         reasoning_effort=REASONING,
-        structured_mode="json_schema",
+        structured_mode=STRUCTURED_MODE,
         provider_order=(PROVIDER,),
         allow_provider_fallbacks=False,
     )
@@ -215,7 +225,7 @@ def main() -> int:
                 "visible token.\n\nCANDIDATE_TOKEN: " + case.candidate_token
             ),
             json_schema=_schema(),
-            max_output_tokens=120,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
         )
         running_cost += result.cost_usd or 0.0
         if running_cost > MAX_COST_USD:
@@ -246,13 +256,14 @@ def main() -> int:
         "schema_version": 1,
         "model": MODEL,
         "pinned_provider": PROVIDER,
-        "structured_mode": "json_schema",
+        "structured_mode": STRUCTURED_MODE,
         "reasoning_effort": REASONING,
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
         "page_count": len(results),
         "clean_page_count": len(clean),
         "controlled_corruption_count": len(corrupted),
-        "false_correction_rate": false_corrections / len(clean),
-        "corruption_detection_recall": detected_corruptions / len(corrupted),
+        "false_correction_rate": _rate(false_corrections, len(clean)),
+        "corruption_detection_recall": _rate(detected_corruptions, len(corrupted)),
         "observed_cost_usd": running_cost,
         "mean_cost_per_page_usd": (sum(costs) / len(costs)) if costs else None,
         "mean_latency_ms": sum(latencies) / len(latencies),
