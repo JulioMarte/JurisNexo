@@ -1,0 +1,72 @@
+name: SCJ Principales 100-page visual corpus
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-corpus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - judge: deepseek-official
+            model: deepseek/deepseek-v4.1-flash
+            provider: DeepSeek
+            structured_mode: prompt_json
+            reasoning: high
+          - judge: luna-official
+            model: openai/gpt-6-luna
+            provider: OpenAI
+            structured_mode: json_schema
+            reasoning: high
+          - judge: ling-vl
+            model: inclusionai/ling-3.0-flash-vl
+            provider: ""
+            structured_mode: prompt_json
+            reasoning: none
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
+      SCJ_VISUAL_PROVIDER: ${{ matrix.provider }}
+      SCJ_VISUAL_STRUCTURED_MODE: ${{ matrix.structured_mode }}
+      SCJ_VISUAL_REASONING: ${{ matrix.reasoning }}
+      SCJ_VISUAL_PAGE_COUNT: "100"
+      SCJ_VISUAL_CORPUS_SEED: "jurisnexo-principales-visual-v1"
+      SCJ_VISUAL_MAX_COST_USD: "0.50"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install runtime
+        run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Build deterministic manifest
+        env:
+          SCJ_VISUAL_CORPUS_MODE: manifest
+          SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest.json
+        run: python backend/scripts/scj_principales_visual_corpus_benchmark.py
+      - name: Run model on frozen pages
+        env:
+          SCJ_VISUAL_CORPUS_MODE: run
+          SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest.json
+          SCJ_VISUAL_CORPUS_OUTPUT: ${{ runner.temp }}/visual-corpus
+        run: python backend/scripts/scj_principales_visual_corpus_benchmark.py
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-visual-corpus-${{ matrix.judge }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/visual-corpus/**
+          if-no-files-found: warn
+          retention-days: 90
