@@ -30,14 +30,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # DeepSeek's official endpoint currently gets filtered when strict
+          # response_format=json_schema is required. Keep the official provider
+          # pinned and validate prompt JSON locally instead; this tests the model,
+          # not an unsupported provider parameter combination.
           - judge: deepseek-official
             model: deepseek/deepseek-v4.1-flash
             provider: DeepSeek
             structured_mode: prompt_json
+            reasoning: high
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
             structured_mode: json_schema
+            reasoning: high
+          - judge: ling-vl
+            model: inclusionai/ling-3.0-flash-vl
+            provider: ""
+            structured_mode: prompt_json
+            reasoning: none
+          - judge: gemini-flash-lite
+            model: google/gemini-2.5-flash-lite
+            provider: ""
+            structured_mode: json_schema
+            reasoning: none
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -47,14 +63,10 @@ jobs:
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
-      # DeepSeek's official OpenRouter endpoint currently gets filtered when
-      # response_format=json_schema is required. prompt_json keeps the provider
-      # pinned and fallback disabled, then JurisNexo validates the parsed object
-      # against the same schema client-side.
       JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE: ${{ matrix.structured_mode }}
       JURISNEXO_OPENROUTER_DEEPSEEK_PROVIDER_ORDER: ${{ matrix.provider }}
       JURISNEXO_OPENROUTER_DEEPSEEK_ALLOW_PROVIDER_FALLBACKS: "false"
-      SCJ_PRINCIPALES_VISUAL_REASONING: "high"
+      SCJ_PRINCIPALES_VISUAL_REASONING: ${{ matrix.reasoning }}
       SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.01"
     steps:
       - uses: actions/checkout@v6
