@@ -6,6 +6,7 @@ on:
     branches: [development]
     paths:
       - "backend/scripts/scj_principales_visual_corpus_benchmark.py"
+      - "backend/scripts/scj_principales_visual_corpus_manifest.py"
       - "backend/src/jurisnexo/normalization/visual_corpus_benchmark.py"
       - ".github/workflows/scj-principales-visual-corpus.yml"
   workflow_dispatch:
@@ -41,10 +42,9 @@ jobs:
         run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
       - name: Freeze exact 100 pages once
         env:
-          SCJ_VISUAL_CORPUS_MODE: manifest
           SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest.json
           JURISNEXO_OPENROUTER_VISUAL_MODEL: manifest-only
-        run: python backend/scripts/scj_principales_visual_corpus_benchmark.py
+        run: python backend/scripts/scj_principales_visual_corpus_manifest.py
       - uses: actions/upload-artifact@v4
         with:
           name: scj-visual-corpus-manifest-${{ github.run_id }}-${{ github.run_attempt }}
