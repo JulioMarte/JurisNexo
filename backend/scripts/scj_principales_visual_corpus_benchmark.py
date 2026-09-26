@@ -12,7 +12,7 @@ from typing import Any
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 from jurisnexo.bootstrap.settings import get_openrouter_settings
-from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider, StructuredMode
+from jurisnexo.model_providers.contracts import ModelProviderError\nfrom jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelProvider, StructuredMode
 from jurisnexo.normalization.gold import assess_reference_text_health, score_text_fidelity
 from jurisnexo.normalization.visual_corpus_benchmark import VisualCorpusRecord, aggregate_visual_records
 from scj_principales_visual_smoke import PREFIX
@@ -139,15 +139,91 @@ def _record_error(sample_id: str, message: str, latency_ms: int) -> VisualCorpus
     return VisualCorpusRecord(sample_id=sample_id, model=MODEL, latency_ms=latency_ms, input_tokens=None, output_tokens=None, thinking_tokens=None, cost_usd=None, character_error_rate=0.0, word_error_rate=0.0, token_content_recall=0.0, token_content_precision=0.0, token_content_f1=0.0, token_order_preservation=0.0, legal_critical_recall=0.0, critical_expected_count=0, critical_matched_count=0, reference_reliable=False, model_confidence=None, unreadable=False, routed_provider="", error=message)
 
 
+def _is_transient_provider_error(exc: ModelProviderError) -> bool:
+    message = str(exc)
+    return any(
+        marker in message
+        for marker in ("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504")
+    )
+
+
 def _run_prepared(item: PreparedSample) -> tuple[VisualCorpusRecord, dict[str, Any]]:
-    sample = item.sample; sample_id = str(sample["sample_id"]); api_started = time.perf_counter()
+    sample = item.sample
+    sample_id = str(sample["sample_id"])
+    api_started = time.perf_counter()
+    retry_count = 0
     try:
-        result = _provider().verify_image_text(image=item.image, media_type="image/jpeg", prompt=TRANSCRIPTION_PROMPT, json_schema=_schema(), max_output_tokens=8000)
-        api_ms = int((time.perf_counter()-api_started)*1000); transcription = str(result.value.get("transcription") or ""); score = score_text_fidelity(expected_text=item.reference, candidate_text=transcription); expected = sum(x.expected for x in score.critical.values()); matched = sum(x.matched for x in score.critical.values())
-        record = VisualCorpusRecord(sample_id=sample_id, model=result.model, latency_ms=api_ms, input_tokens=result.usage.input_tokens, output_tokens=result.usage.output_tokens, thinking_tokens=result.usage.thinking_tokens, cost_usd=result.cost_usd, character_error_rate=score.character_error_rate, word_error_rate=score.word_error_rate, token_content_recall=score.token_content_recall, token_content_precision=score.token_content_precision, token_content_f1=score.token_content_f1, token_order_preservation=score.token_order_preservation, legal_critical_recall=score.legal_critical_recall, critical_expected_count=expected, critical_matched_count=matched, reference_reliable=True, model_confidence=None, unreadable=False, routed_provider=str((result.provider_metadata or {}).get("routed_provider") or ""))
-        return record, {**asdict(record), "object_key":sample["object_key"], "page_index":sample["page_index"], "preparation_ms":item.preparation_ms, "api_latency_ms":api_ms}
+        provider = _provider()
+        while True:
+            try:
+                result = provider.verify_image_text(
+                    image=item.image,
+                    media_type="image/jpeg",
+                    prompt=TRANSCRIPTION_PROMPT,
+                    json_schema=_schema(),
+                    max_output_tokens=8000,
+                )
+                break
+            except ModelProviderError as exc:
+                if retry_count >= 2 or not _is_transient_provider_error(exc):
+                    raise
+                time.sleep(0.5 * (2**retry_count))
+                retry_count += 1
+        api_ms = int((time.perf_counter() - api_started) * 1000)
+        transcription = str(result.value.get("transcription") or "")
+        score = score_text_fidelity(
+            expected_text=item.reference,
+            candidate_text=transcription,
+        )
+        expected = sum(x.expected for x in score.critical.values())
+        matched = sum(x.matched for x in score.critical.values())
+        record = VisualCorpusRecord(
+            sample_id=sample_id,
+            model=result.model,
+            latency_ms=api_ms,
+            input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens,
+            thinking_tokens=result.usage.thinking_tokens,
+            cost_usd=result.cost_usd,
+            character_error_rate=score.character_error_rate,
+            word_error_rate=score.word_error_rate,
+            token_content_recall=score.token_content_recall,
+            token_content_precision=score.token_content_precision,
+            token_content_f1=score.token_content_f1,
+            token_order_preservation=score.token_order_preservation,
+            legal_critical_recall=score.legal_critical_recall,
+            critical_expected_count=expected,
+            critical_matched_count=matched,
+            reference_reliable=True,
+            model_confidence=None,
+            unreadable=False,
+            routed_provider=str(
+                (result.provider_metadata or {}).get("routed_provider") or ""
+            ),
+        )
+        return record, {
+            **asdict(record),
+            "object_key": sample["object_key"],
+            "page_index": sample["page_index"],
+            "preparation_ms": item.preparation_ms,
+            "api_latency_ms": api_ms,
+            "retry_count": retry_count,
+        }
     except Exception as exc:
-        elapsed=int((time.perf_counter()-api_started)*1000); record=_record_error(sample_id, f"{type(exc).__name__}: {exc}", elapsed); return record,{**asdict(record),"object_key":sample["object_key"],"page_index":sample["page_index"],"preparation_ms":item.preparation_ms,"api_latency_ms":elapsed}
+        elapsed = int((time.perf_counter() - api_started) * 1000)
+        record = _record_error(
+            sample_id,
+            f"{type(exc).__name__}: {exc}",
+            elapsed,
+        )
+        return record, {
+            **asdict(record),
+            "object_key": sample["object_key"],
+            "page_index": sample["page_index"],
+            "preparation_ms": item.preparation_ms,
+            "api_latency_ms": elapsed,
+            "retry_count": retry_count,
+        }
 
 
 def run_model() -> int:
