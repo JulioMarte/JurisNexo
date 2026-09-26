@@ -33,9 +33,11 @@ jobs:
           - judge: deepseek-official
             model: deepseek/deepseek-v4.1-flash
             provider: DeepSeek
+            structured_mode: prompt_json
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
+            structured_mode: json_schema
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -45,7 +47,11 @@ jobs:
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
-      JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE: "json_schema"
+      # DeepSeek's official OpenRouter endpoint currently gets filtered when
+      # response_format=json_schema is required. prompt_json keeps the provider
+      # pinned and fallback disabled, then JurisNexo validates the parsed object
+      # against the same schema client-side.
+      JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE: ${{ matrix.structured_mode }}
       JURISNEXO_OPENROUTER_DEEPSEEK_PROVIDER_ORDER: ${{ matrix.provider }}
       JURISNEXO_OPENROUTER_DEEPSEEK_ALLOW_PROVIDER_FALLBACKS: "false"
       SCJ_PRINCIPALES_VISUAL_REASONING: "high"
