@@ -73,7 +73,7 @@ jobs:
         env:
           SCJ_PRINCIPALES_VISUAL_OUTPUT: ${{ runner.temp }}/principales-visual
         run: python backend/scripts/scj_principales_visual_smoke.py
-      - name: Preserve visual evidence
+      - name: Preserve final visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
