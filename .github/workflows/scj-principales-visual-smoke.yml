@@ -1,4 +1,5 @@
 name: SCJ Principales visual benchmark
+
 on:
   workflow_dispatch:
   pull_request:
@@ -6,18 +7,25 @@ on:
     branches: [development]
     paths:
       - ".github/workflows/scj-principales-visual-smoke.yml"
+
 permissions:
   contents: read
+
 jobs:
   offline-contract:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
-        with: {python-version: "3.13"}
-      - run: python -m pip install -e ./backend pytest==9.1.1
-      - run: pytest -q backend/tests/unit/test_scj_visual_benchmark.py
-      - run: python -m py_compile backend/scripts/scj_principales_visual_smoke.py
+        with:
+          python-version: "3.13"
+      - name: Install offline test runtime
+        run: python -m pip install -e ./backend pytest==9.1.1
+      - name: Validate benchmark contract without provider spend
+        run: pytest -q backend/tests/unit/test_scj_visual_benchmark.py
+      - name: Compile benchmark entrypoint
+        run: python -m py_compile backend/scripts/scj_principales_visual_smoke.py
+
   visual-smoke:
     needs: offline-contract
     runs-on: ubuntu-24.04
@@ -26,10 +34,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {judge: deepseek-official, model: deepseek/deepseek-v4.1-flash, provider: DeepSeek, reasoning: none}
-          - {judge: luna-official, model: openai/gpt-6-luna, provider: OpenAI, reasoning: none}
-          - {judge: ling-vl, model: inclusionai/ling-3.0-flash-vl, provider: "", reasoning: none}
-          - {judge: gemini-flash-lite, model: google/gemini-2.5-flash-lite, provider: "", reasoning: none}
+          - judge: deepseek-official
+            model: deepseek/deepseek-v4.1-flash
+            provider: DeepSeek
+          - judge: luna-official
+            model: openai/gpt-6-luna
+            provider: OpenAI
+          - judge: ling-vl
+            model: inclusionai/ling-3.0-flash-vl
+            provider: ""
+          - judge: gemini-flash-lite
+            model: google/gemini-2.5-flash-lite
+            provider: ""
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -39,22 +55,29 @@ jobs:
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
       JURISNEXO_OPENROUTER_DEEPSEEK_PROVIDER_ORDER: ${{ matrix.provider }}
-      SCJ_PRINCIPALES_VISUAL_REASONING: ${{ matrix.reasoning }}
+      SCJ_PRINCIPALES_VISUAL_REASONING: none
       SCJ_VISUAL_SAMPLE_SIZE: "1"
       SCJ_VISUAL_SELECTION: deterministic
-      SCJ_VISUAL_SEED: "20260926"\n      SCJ_VISUAL_MAX_OUTPUT_TOKENS: "512"
+      SCJ_VISUAL_SEED: "20260926"
+      SCJ_VISUAL_MAX_CONCURRENCY: "1"
+      SCJ_VISUAL_MAX_OUTPUT_TOKENS: "512"
       SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.01"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
-        with: {python-version: "3.13"}
-      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
-      - env:
+        with:
+          python-version: "3.13"
+      - name: Install bounded visual runtime
+        run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Run exactly one visual page
+        env:
           SCJ_PRINCIPALES_VISUAL_OUTPUT: ${{ runner.temp }}/principales-visual
         run: python backend/scripts/scj_principales_visual_smoke.py
-      - if: always()
+      - name: Preserve visual evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scj-visual-${{ matrix.judge }}-${{ github.run_id }}
           path: ${{ runner.temp }}/principales-visual/**
           if-no-files-found: warn
+          retention-days: 30
