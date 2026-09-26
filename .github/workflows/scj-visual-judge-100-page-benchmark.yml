@@ -26,9 +26,11 @@ jobs:
           - judge: deepseek-official
             model: deepseek/deepseek-v4.1-flash
             provider: DeepSeek
+            structured_mode: prompt_json
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
+            structured_mode: tool
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -40,7 +42,7 @@ jobs:
       VISUAL_JUDGE_MODEL: ${{ matrix.model }}
       VISUAL_JUDGE_PROVIDER: ${{ matrix.provider }}
       VISUAL_JUDGE_REASONING: high
-      VISUAL_JUDGE_STRUCTURED_MODE: tool
+      VISUAL_JUDGE_STRUCTURED_MODE: ${{ matrix.structured_mode }}
       VISUAL_JUDGE_MAX_OUTPUT_TOKENS: "512"
       VISUAL_JUDGE_PAGE_LIMIT: ${{ inputs.page_limit || '1' }}
       VISUAL_JUDGE_MAX_COST_USD: "1.0"
