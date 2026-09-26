@@ -1,13 +1,25 @@
 name: SCJ Principales 100-page visual corpus
 
 on:
+  pull_request:
+    types: [synchronize, labeled]
+    branches: [development]
+    paths:
+      - "backend/scripts/scj_principales_visual_corpus_benchmark.py"
+      - "backend/src/jurisnexo/normalization/visual_corpus_benchmark.py"
+      - ".github/workflows/scj-principales-visual-corpus.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: scj-principales-visual-corpus-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   visual-corpus:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'live-visual-smoke')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -62,6 +74,9 @@ jobs:
           SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest.json
           SCJ_VISUAL_CORPUS_OUTPUT: ${{ runner.temp }}/visual-corpus
         run: python backend/scripts/scj_principales_visual_corpus_benchmark.py
+      - name: Publish summary
+        if: always()
+        run: test -f "${RUNNER_TEMP}/visual-corpus/summary.md" && cat "${RUNNER_TEMP}/visual-corpus/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
       - name: Preserve evidence
         if: always()
         uses: actions/upload-artifact@v4
