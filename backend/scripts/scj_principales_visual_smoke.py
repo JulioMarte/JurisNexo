@@ -267,7 +267,11 @@ def _run_case(
             f"Nearby candidate context:\n{candidate_context}"
         ),
         json_schema=_schema(),
-        max_output_tokens=300,
+        # Reasoning-capable providers count hidden reasoning against the completion
+        # budget. 300 tokens was enough for the clean case but truncated the final
+        # JSON on the controlled corruption. Keep the task bounded while leaving
+        # enough room for hidden reasoning plus the tiny final object.
+        max_output_tokens=1200,
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
     raw_differences = result.value.get("material_differences", [])
