@@ -7,6 +7,7 @@ on:
     paths:
       - "backend/scripts/scj_principales_visual_corpus_benchmark.py"
       - "backend/scripts/scj_principales_visual_corpus_manifest.py"
+      - "backend/src/jurisnexo/model_providers/openrouter_visual.py"
       - "backend/src/jurisnexo/normalization/visual_corpus_benchmark.py"
       - ".github/workflows/scj-principales-visual-corpus.yml"
   workflow_dispatch:
@@ -62,23 +63,20 @@ jobs:
           - judge: deepseek-official
             model: deepseek/deepseek-v4.1-flash
             provider: DeepSeek
-            structured_mode: prompt_json
             reasoning: high
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
-            structured_mode: json_schema
             reasoning: high
           - judge: ling-vl
             model: inclusionai/ling-3.0-flash-vl
             provider: ""
-            structured_mode: prompt_json
             reasoning: none
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
       SCJ_VISUAL_PROVIDER: ${{ matrix.provider }}
-      SCJ_VISUAL_STRUCTURED_MODE: ${{ matrix.structured_mode }}
+      SCJ_VISUAL_STRUCTURED_MODE: raw_text
       SCJ_VISUAL_REASONING: ${{ matrix.reasoning }}
       SCJ_VISUAL_MAX_COST_USD: "0.50"
     steps:
@@ -92,7 +90,7 @@ jobs:
         with:
           name: scj-visual-corpus-manifest-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/manifest
-      - name: Run identical frozen pages
+      - name: Run identical frozen pages with plain transcription only
         env:
           SCJ_VISUAL_CORPUS_MODE: run
           SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest/manifest.json
