@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with: {python-version: "3.13"}
-      - run: python -m pip install -e './backend[dev]'
+      - run: python -m pip install -e ./backend pytest==9.1.1
       - run: pytest -q backend/tests/unit/test_scj_visual_benchmark.py
       - run: python -m py_compile backend/scripts/scj_principales_visual_smoke.py
   visual-smoke:
