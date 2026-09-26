@@ -26,8 +26,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {judge: deepseek-official, model: deepseek/deepseek-v4.1-flash, provider: DeepSeek, reasoning: high}
-          - {judge: luna-official, model: openai/gpt-6-luna, provider: OpenAI, reasoning: high}
+          - {judge: deepseek-official, model: deepseek/deepseek-v4.1-flash, provider: DeepSeek, reasoning: none}
+          - {judge: luna-official, model: openai/gpt-6-luna, provider: OpenAI, reasoning: none}
           - {judge: ling-vl, model: inclusionai/ling-3.0-flash-vl, provider: "", reasoning: none}
           - {judge: gemini-flash-lite, model: google/gemini-2.5-flash-lite, provider: "", reasoning: none}
     env:
