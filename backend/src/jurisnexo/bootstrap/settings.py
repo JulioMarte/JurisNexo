@@ -39,6 +39,9 @@ class OpenRouterSettings(BaseSettings):
     decisions_base_url: str = "https://openrouter.ai/api/alpha"
 
 
+StructuredMode = Literal["tool", "json_schema", "json_object", "prompt_json"]
+
+
 class NormalizationModelSettings(BaseSettings):
     """Model aliases and reproducible provider routes used by normalization QA."""
 
@@ -51,14 +54,15 @@ class NormalizationModelSettings(BaseSettings):
     jev_model: str = "~typesafe/jev-latest"
     deepseek_model: str = "deepseek/deepseek-v4.1-flash"
     deepseek_reasoning_effort: Literal["high", "xhigh"] = "high"
-    # Official-provider evaluation uses strict JSON Schema. Tool/json_object remain
-    # explicit diagnostic modes for provider-compatibility investigations.
-    deepseek_structured_mode: Literal["tool", "json_schema", "json_object"] = "json_schema"
+    # Strict provider-native modes are preferred when supported. ``prompt_json``
+    # is the explicit compatibility mode for providers that reject structured
+    # response parameters; the response is still parsed and validated locally.
+    deepseek_structured_mode: StructuredMode = "json_schema"
     deepseek_provider_order: str = "DeepSeek"
     deepseek_allow_provider_fallbacks: bool = False
     luna_model: str = "openai/gpt-6-luna"
     luna_reasoning_effort: Literal["high", "xhigh"] = "high"
-    luna_structured_mode: Literal["tool", "json_schema", "json_object"] = "json_schema"
+    luna_structured_mode: StructuredMode = "json_schema"
     luna_provider_order: str = "OpenAI"
     luna_allow_provider_fallbacks: bool = False
     visual_model: str | None = None
