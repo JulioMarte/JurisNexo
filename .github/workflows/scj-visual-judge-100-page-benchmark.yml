@@ -1,6 +1,9 @@
 name: SCJ 100-page visual judge benchmark
 
 on:
+  pull_request:
+    types: [labeled]
+    branches: [development]
   workflow_dispatch:
     inputs:
       page_limit:
@@ -13,6 +16,7 @@ permissions:
 
 jobs:
   judge:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'visual-judge-100'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
