@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 GoldSplit = Literal["calibration", "holdout", "adversarial"]
 ReviewStatus = Literal["pending", "verified", "rejected"]
@@ -169,71 +169,72 @@ def human_gold_summary(gold: HumanGoldSet) -> dict[str, object]:
     }
 
 
+def _optional_string(raw: dict[str, object], key: str) -> str | None:
+    value = raw.get(key)
+    return None if value is None else str(value)
+
+
 def load_human_gold_set(path: Path) -> HumanGoldSet:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
+    decoded: object = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(decoded, dict):
         raise ValueError("human gold payload must be an object")
-    raw_pages = payload.get("pages")
-    if not isinstance(raw_pages, list):
+    payload = cast(dict[str, object], decoded)
+
+    raw_pages_value = payload.get("pages")
+    if not isinstance(raw_pages_value, list):
         raise ValueError("human gold pages must be an array")
+    raw_pages = cast(list[object], raw_pages_value)
 
     pages: list[HumanGoldPage] = []
-    for raw in raw_pages:
-        if not isinstance(raw, dict):
+    for raw_value in raw_pages:
+        if not isinstance(raw_value, dict):
             raise ValueError("every human gold page must be an object")
-        raw_facts = raw.get("critical_facts", [])
-        if not isinstance(raw_facts, list):
-            raise ValueError("critical_facts must be an array")
-        facts = tuple(
-            HumanGoldCriticalFact(
-                category=str(fact["category"]),
-                value=str(fact["value"]),
-                evidence_excerpt=str(fact["evidence_excerpt"]),
-            )
-            for fact in raw_facts
-            if isinstance(fact, dict)
-        )
-        if len(facts) != len(raw_facts):
-            raise ValueError("every critical fact must be an object")
+        raw = cast(dict[str, object], raw_value)
 
-        raw_roles = raw.get("page_roles")
-        if not isinstance(raw_roles, list):
+        raw_facts_value = raw.get("critical_facts", [])
+        if not isinstance(raw_facts_value, list):
+            raise ValueError("critical_facts must be an array")
+        raw_facts = cast(list[object], raw_facts_value)
+        facts: list[HumanGoldCriticalFact] = []
+        for fact_value in raw_facts:
+            if not isinstance(fact_value, dict):
+                raise ValueError("every critical fact must be an object")
+            fact = cast(dict[str, object], fact_value)
+            facts.append(
+                HumanGoldCriticalFact(
+                    category=str(fact["category"]),
+                    value=str(fact["value"]),
+                    evidence_excerpt=str(fact["evidence_excerpt"]),
+                )
+            )
+
+        raw_roles_value = raw.get("page_roles")
+        if not isinstance(raw_roles_value, list):
             raise ValueError("page_roles must be an array")
+        raw_roles = cast(list[object], raw_roles_value)
         pages.append(
             HumanGoldPage(
                 source_sha256=str(raw["source_sha256"]),
                 object_key=str(raw["object_key"]),
-                page_index=int(raw["page_index"]),
-                split=str(raw["split"]),  # type: ignore[arg-type]
+                page_index=int(str(raw["page_index"])),
+                split=cast(GoldSplit, str(raw["split"])),
                 page_roles=tuple(str(role) for role in raw_roles),
                 image_sha256=str(raw["image_sha256"]),
-                native_reference_sha256=(
-                    str(raw["native_reference_sha256"])
-                    if raw.get("native_reference_sha256") is not None
-                    else None
+                native_reference_sha256=_optional_string(
+                    raw, "native_reference_sha256"
                 ),
-                review_status=str(raw["review_status"]),  # type: ignore[arg-type]
-                adjudicated_text=(
-                    str(raw["adjudicated_text"])
-                    if raw.get("adjudicated_text") is not None
-                    else None
+                review_status=cast(
+                    ReviewStatus, str(raw["review_status"])
                 ),
-                reviewer_id=(
-                    str(raw["reviewer_id"])
-                    if raw.get("reviewer_id") is not None
-                    else None
-                ),
-                reviewed_at=(
-                    str(raw["reviewed_at"])
-                    if raw.get("reviewed_at") is not None
-                    else None
-                ),
-                critical_facts=facts,
+                adjudicated_text=_optional_string(raw, "adjudicated_text"),
+                reviewer_id=_optional_string(raw, "reviewer_id"),
+                reviewed_at=_optional_string(raw, "reviewed_at"),
+                critical_facts=tuple(facts),
             )
         )
 
     gold = HumanGoldSet(
-        schema_version=int(payload.get("schema_version", 0)),
+        schema_version=int(str(payload.get("schema_version", 0))),
         set_id=str(payload.get("set_id", "")),
         pages=tuple(pages),
     )
