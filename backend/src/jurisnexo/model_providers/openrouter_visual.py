@@ -26,7 +26,7 @@ class OpenRouterVisualModelProvider:
     api_key: str
     model: str
     base_url: str = "https://openrouter.ai/api/v1"
-    timeout_seconds: float = 120.0
+    timeout_seconds: float = 30.0
     reasoning_effort: str = "high"
     structured_mode: StructuredMode = "tool"
     provider_order: tuple[str, ...] = ()
@@ -39,12 +39,7 @@ class OpenRouterVisualModelProvider:
             raise ValueError("visual model is required")
         if self.reasoning_effort not in {"none", "high", "xhigh"}:
             raise ValueError("visual reasoning_effort must be none, high or xhigh")
-        if self.structured_mode not in {
-            "tool",
-            "json_schema",
-            "json_object",
-            "prompt_json",
-        }:
+        if self.structured_mode not in {"tool", "json_schema", "json_object", "prompt_json"}:
             raise ValueError("unsupported visual structured_mode")
 
     def verify_image_text(
@@ -59,25 +54,23 @@ class OpenRouterVisualModelProvider:
         encoded = base64.b64encode(image).decode("ascii")
         payload: JsonObject = {
             "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{media_type};base64,{encoded}"},
-                        },
-                    ],
-                }
-            ],
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{encoded}"}},
+                ],
+            }],
             "max_tokens": max_output_tokens,
             "provider": self._provider_routing(),
             "usage": {"include": True},
         }
         self._apply_structured_output(payload=payload, json_schema=json_schema)
         if self.reasoning_effort != "none":
-            payload["reasoning"] = {"effort": self.reasoning_effort}
+            # OpenRouter documents `exclude` as the switch that keeps reasoning
+            # out of the returned answer while preserving reasoning internally.
+            # Structured output must be parsed only from the final answer.
+            payload["reasoning"] = {"effort": self.reasoning_effort, "exclude": True}
         request = Request(
             url=f"{self.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload).encode(),
@@ -95,9 +88,7 @@ class OpenRouterVisualModelProvider:
             detail = exc.read().decode(errors="replace")[:2000]
             raise ModelProviderError(f"OpenRouter visual HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
-            raise ModelProviderError(
-                f"OpenRouter visual transport error: {exc.reason}"
-            ) from exc
+            raise ModelProviderError(f"OpenRouter visual transport error: {exc.reason}") from exc
 
         body: dict[str, object] = {}
         message: dict[str, object] | None = None
@@ -112,19 +103,12 @@ class OpenRouterVisualModelProvider:
             message = _json_object_value(choice["message"], "message")
             value = extract_structured_object(message)
             validate_structured_object(value, json_schema)
-        except (
-            KeyError,
-            IndexError,
-            TypeError,
-            ValueError,
-            json.JSONDecodeError,
-        ) as exc:
+        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             provider = body.get("provider")
             diagnostic = _safe_response_diagnostic(message=message, value=value)
             raise ModelProviderError(
                 "OpenRouter returned an invalid visual structured response "
-                f"(mode={self.structured_mode}, provider={provider!r}, "
-                f"diagnostic={diagnostic}): {exc}"
+                f"(mode={self.structured_mode}, provider={provider!r}, diagnostic={diagnostic}): {exc}"
             ) from exc
 
         assert value is not None
@@ -149,6 +133,7 @@ class OpenRouterVisualModelProvider:
             provider_metadata={
                 "requested_model": self.model,
                 "requested_reasoning_effort": self.reasoning_effort,
+                "reasoning_excluded_from_answer": self.reasoning_effort != "none",
                 "structured_mode": self.structured_mode,
                 "routed_provider": str(routed_provider) if routed_provider is not None else "",
                 "provider_order": list(self.provider_order),
@@ -157,34 +142,17 @@ class OpenRouterVisualModelProvider:
         )
 
     def _provider_routing(self) -> JsonObject:
-        routing: JsonObject = {
-            "require_parameters": True,
-            "allow_fallbacks": self.allow_provider_fallbacks,
-        }
+        routing: JsonObject = {"require_parameters": True, "allow_fallbacks": self.allow_provider_fallbacks}
         if self.provider_order:
             routing["order"] = list(self.provider_order)
         else:
             routing["sort"] = "price"
         return routing
 
-    def _apply_structured_output(
-        self,
-        *,
-        payload: JsonObject,
-        json_schema: JsonObject,
-    ) -> None:
+    def _apply_structured_output(self, *, payload: JsonObject, json_schema: JsonObject) -> None:
         name = "jurisnexo_visual_verification"
         if self.structured_mode == "tool":
-            payload["tools"] = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": "Return the visual transcription verification result.",
-                        "parameters": json_schema,
-                    },
-                }
-            ]
+            payload["tools"] = [{"type": "function", "function": {"name": name, "description": "Return the visual transcription verification result.", "parameters": json_schema}}]
             payload["tool_choice"] = "required"
             return
         messages = cast(list[dict[str, object]], payload["messages"])
@@ -192,34 +160,16 @@ class OpenRouterVisualModelProvider:
         text_part = content[0]
         original = str(text_part.get("text") or "")
         if self.structured_mode == "prompt_json":
-            text_part["text"] = (
-                original
-                + "\n\nReturn ONLY one JSON object with exactly these fields: "
-                + json.dumps(json_schema, separators=(",", ":"))
-                + "\nDo not describe the schema. Do not echo the schema. Do not add "
-                "Markdown or prose. The response itself must be the result object "
-                "matching that schema."
-            )
+            text_part["text"] = original + "\n\nReturn ONLY one JSON object with exactly these fields: " + json.dumps(json_schema, separators=(",", ":")) + "\nDo not describe the schema. Do not echo the schema. Do not add Markdown or prose. The final answer itself must be the result object matching that schema."
             return
         if self.structured_mode == "json_object":
             payload["response_format"] = {"type": "json_object"}
-            text_part["text"] = (
-                original
-                + "\n\nReturn only one valid JSON object. Do not include "
-                "reasoning, Markdown, code fences, or prose outside the JSON."
-            )
+            text_part["text"] = original + "\n\nReturn only one valid JSON object. Do not include reasoning, Markdown, code fences, or prose outside the JSON."
             return
-        payload["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": name, "strict": True, "schema": json_schema},
-        }
+        payload["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": json_schema}}
 
 
-def _safe_response_diagnostic(
-    *,
-    message: dict[str, object] | None,
-    value: JsonObject | None,
-) -> str:
+def _safe_response_diagnostic(*, message: dict[str, object] | None, value: JsonObject | None) -> str:
     diagnostic: dict[str, object] = {}
     if value is not None:
         diagnostic["parsed_keys"] = sorted(value)
@@ -229,6 +179,9 @@ def _safe_response_diagnostic(
             item = message.get(key)
             if isinstance(item, str) and item.strip():
                 diagnostic[f"{key}_preview"] = item[:1000]
+        reasoning_details = message.get("reasoning_details")
+        if isinstance(reasoning_details, list):
+            diagnostic["reasoning_detail_count"] = len(reasoning_details)
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list):
             diagnostic["tool_call_count"] = len(tool_calls)
@@ -236,28 +189,21 @@ def _safe_response_diagnostic(
 
 
 def _int_or_none(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
+    if isinstance(value, bool): return None
+    if isinstance(value, int): return value
+    if isinstance(value, float) and value.is_integer(): return int(value)
     return None
 
 
 def _reasoning_tokens(usage: dict[str, object]) -> int | None:
     details = usage.get("completion_tokens_details")
-    if not isinstance(details, dict):
-        return None
-    typed_details = cast(dict[str, object], details)
-    return _int_or_none(typed_details.get("reasoning_tokens"))
+    if not isinstance(details, dict): return None
+    return _int_or_none(cast(dict[str, object], details).get("reasoning_tokens"))
 
 
 def _float_or_none(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
+    if isinstance(value, bool): return None
+    if isinstance(value, (int, float)): return float(value)
     return None
 
 
@@ -267,6 +213,5 @@ def _json_object(raw: bytes) -> dict[str, object]:
 
 
 def _json_object_value(value: object, label: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise TypeError(f"{label} is not an object")
+    if not isinstance(value, dict): raise TypeError(f"{label} is not an object")
     return cast(dict[str, object], value)
