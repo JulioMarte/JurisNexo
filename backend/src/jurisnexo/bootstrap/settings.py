@@ -40,7 +40,7 @@ class OpenRouterSettings(BaseSettings):
 
 
 class NormalizationModelSettings(BaseSettings):
-    """Model aliases used by normalization/evaluation policy."""
+    """Model aliases and reproducible provider routes used by normalization QA."""
 
     model_config = SettingsConfigDict(
         env_prefix="JURISNEXO_OPENROUTER_",
@@ -51,9 +51,16 @@ class NormalizationModelSettings(BaseSettings):
     jev_model: str = "~typesafe/jev-latest"
     deepseek_model: str = "deepseek/deepseek-v4.1-flash"
     deepseek_reasoning_effort: Literal["high", "xhigh"] = "high"
-    deepseek_structured_mode: Literal["tool", "json_schema", "json_object"] = "json_object"
-    deepseek_provider_order: str = ""
-    deepseek_allow_provider_fallbacks: bool = True
+    # Official-provider evaluation uses strict JSON Schema. Tool/json_object remain
+    # explicit diagnostic modes for provider-compatibility investigations.
+    deepseek_structured_mode: Literal["tool", "json_schema", "json_object"] = "json_schema"
+    deepseek_provider_order: str = "DeepSeek"
+    deepseek_allow_provider_fallbacks: bool = False
+    luna_model: str = "openai/gpt-6-luna"
+    luna_reasoning_effort: Literal["high", "xhigh"] = "high"
+    luna_structured_mode: Literal["tool", "json_schema", "json_object"] = "json_schema"
+    luna_provider_order: str = "OpenAI"
+    luna_allow_provider_fallbacks: bool = False
     visual_model: str | None = None
 
 
