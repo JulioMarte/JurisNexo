@@ -8,6 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from jurisnexo.model_providers.chat_message import (
+    extract_chat_message_text,
     extract_structured_object,
     validate_structured_object,
 )
@@ -18,7 +19,7 @@ from jurisnexo.model_providers.contracts import (
     StructuredGenerationResult,
 )
 
-StructuredMode = Literal["tool", "json_schema", "json_object", "prompt_json"]
+StructuredMode = Literal["tool", "json_schema", "json_object", "prompt_json", "raw_text"]
 
 
 @dataclass(slots=True)
@@ -39,7 +40,7 @@ class OpenRouterVisualModelProvider:
             raise ValueError("visual model is required")
         if self.reasoning_effort not in {"none", "high", "xhigh"}:
             raise ValueError("visual reasoning_effort must be none, high or xhigh")
-        if self.structured_mode not in {"tool", "json_schema", "json_object", "prompt_json"}:
+        if self.structured_mode not in {"tool", "json_schema", "json_object", "prompt_json", "raw_text"}:
             raise ValueError("unsupported visual structured_mode")
 
     def verify_image_text(
@@ -67,9 +68,6 @@ class OpenRouterVisualModelProvider:
         }
         self._apply_structured_output(payload=payload, json_schema=json_schema)
         if self.reasoning_effort != "none":
-            # OpenRouter documents `exclude` as the switch that keeps reasoning
-            # out of the returned answer while preserving reasoning internally.
-            # Structured output must be parsed only from the final answer.
             payload["reasoning"] = {"effort": self.reasoning_effort, "exclude": True}
         request = Request(
             url=f"{self.base_url.rstrip('/')}/chat/completions",
@@ -101,13 +99,19 @@ class OpenRouterVisualModelProvider:
             choices = cast(list[object], choices_raw)
             choice = _json_object_value(choices[0], "choice")
             message = _json_object_value(choice["message"], "message")
-            value = extract_structured_object(message)
-            validate_structured_object(value, json_schema)
+            if self.structured_mode == "raw_text":
+                text = extract_chat_message_text(message).strip()
+                if not text:
+                    raise TypeError("message has no transcription text")
+                value = {"transcription": text}
+            else:
+                value = extract_structured_object(message)
+                validate_structured_object(value, json_schema)
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             provider = body.get("provider")
             diagnostic = _safe_response_diagnostic(message=message, value=value)
             raise ModelProviderError(
-                "OpenRouter returned an invalid visual structured response "
+                "OpenRouter returned an invalid visual response "
                 f"(mode={self.structured_mode}, provider={provider!r}, diagnostic={diagnostic}): {exc}"
             ) from exc
 
@@ -150,6 +154,8 @@ class OpenRouterVisualModelProvider:
         return routing
 
     def _apply_structured_output(self, *, payload: JsonObject, json_schema: JsonObject) -> None:
+        if self.structured_mode == "raw_text":
+            return
         name = "jurisnexo_visual_verification"
         if self.structured_mode == "tool":
             payload["tools"] = [{"type": "function", "function": {"name": name, "description": "Return the visual transcription verification result.", "parameters": json_schema}}]
