@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from jurisnexo.model_providers.contracts import JsonObject, ModelProviderError
+from jurisnexo.model_providers.decisions import (
+    DecisionQuestion,
+    DecisionResult,
+    DecisionUsage,
+)
+
+
+@dataclass(slots=True)
+class OpenRouterDecisionProvider:
+    api_key: str
+    model: str
+    base_url: str = "https://openrouter.ai/api/alpha"
+    timeout_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        if not self.api_key.strip():
+            raise ValueError("OpenRouter API key is required for live calls")
+        if not self.model.strip():
+            raise ValueError("OpenRouter decision model is required")
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be greater than zero")
+
+    @property
+    def provider_name(self) -> str:
+        return "openrouter"
+
+    @property
+    def model_name(self) -> str:
+        return self.model
+
+    def decide(
+        self,
+        *,
+        state_description: str,
+        records: tuple[dict[str, str], ...],
+        questions: dict[str, DecisionQuestion],
+    ) -> DecisionResult:
+        if not state_description.strip():
+            raise ValueError("state_description must not be empty")
+        if not records:
+            raise ValueError("at least one decision record is required")
+        if not questions:
+            raise ValueError("at least one decision question is required")
+
+        payload = {
+            "model": self.model,
+            "state": {
+                "description": state_description,
+                "records": list(records),
+            },
+            "questions": questions,
+        }
+        request = Request(
+            url=f"{self.base_url.rstrip('/')}/decisions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "X-Title": "JurisNexo decision benchmark",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read()
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:2000]
+            raise ModelProviderError(
+                f"OpenRouter decisions HTTP {exc.code}: {detail}"
+            ) from exc
+        except URLError as exc:
+            raise ModelProviderError(
+                f"OpenRouter decisions transport error: {exc.reason}"
+            ) from exc
+
+        try:
+            return parse_openrouter_decision_response(
+                raw,
+                requested_model=self.model,
+                provider=self.provider_name,
+            )
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ModelProviderError(
+                "OpenRouter decisions returned an invalid response"
+            ) from exc
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _first_int(
+    mapping: dict[str, object],
+    *keys: str,
+) -> int | None:
+    for key in keys:
+        value = _int_or_none(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _float_or_none(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _json_object(raw: bytes) -> dict[str, object]:
+    loaded: object = json.loads(raw)
+    if not isinstance(loaded, dict):
+        raise TypeError("response is not an object")
+    return cast(dict[str, object], loaded)
+
+
+
+def parse_openrouter_decision_response(
+    raw: bytes,
+    *,
+    requested_model: str,
+    provider: str = "openrouter",
+) -> DecisionResult:
+    body = _json_object(raw)
+    answers_raw = body["answers"]
+    if not isinstance(answers_raw, dict):
+        raise TypeError("answers is not an object")
+    typed_answers = cast(dict[object, object], answers_raw)
+    answers = {
+        str(key): cast(JsonObject, value)
+        for key, value in typed_answers.items()
+        if isinstance(value, dict)
+    }
+    if len(answers) != len(typed_answers):
+        raise TypeError("every decision answer must be an object")
+
+    usage_raw = body.get("usage")
+    usage = (
+        cast(dict[str, object], usage_raw)
+        if isinstance(usage_raw, dict)
+        else {}
+    )
+    effective_model = str(body.get("model") or requested_model)
+    response_id = body.get("id")
+    input_tokens = _first_int(
+        usage,
+        "input_tokens",
+        "prompt_tokens",
+    )
+    output_tokens = _first_int(
+        usage,
+        "output_tokens",
+        "completion_tokens",
+    )
+    total_tokens = _int_or_none(usage.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    return DecisionResult(
+        answers=answers,
+        provider=provider,
+        model=effective_model,
+        model_version=effective_model,
+        response_id=str(response_id) if response_id else None,
+        usage=DecisionUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        ),
+        cost_usd=_float_or_none(usage.get("cost")),
+    )

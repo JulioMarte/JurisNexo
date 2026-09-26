@@ -1,0 +1,220 @@
+# Normalization control plane — implementation status
+
+Status: CURRENT IMPLEMENTATION EVIDENCE INDEX.
+
+This document tracks implementation and proof status for the V3 normalization control plane. It does not replace docs 39-41; it prevents implementation claims from drifting beyond the evidence that actually exists.
+
+## Status vocabulary
+
+- IMPLEMENTED: code/persistence exists.
+- PROVEN: intended evidence has run successfully in CI or an integration/benchmark lane.
+- PENDING EVIDENCE: implementation exists but the required live/semantic/operational proof has not passed yet.
+- OPEN: design/provider/promotion decision intentionally remains unresolved.
+
+## Workstream status
+
+| Workstream | Implementation | Evidence status |
+| --- | --- | --- |
+| 0. Substrate/provenance | IMPLEMENTED | PostgreSQL integration, baseline equivalence and lineage invariants exist; exact-head CI remains the merge authority |
+| 1. Docling + Tika spike | IMPLEMENTED | Engine spike covers born-digital/scanned/mixed PDF, DOCX, RTF, HTML and corrupt PDF |
+| 2. Replaceability boundaries | IMPLEMENTED | Architecture fitness + protocol/unit proof |
+| 3. Gold Set/contracts | IMPLEMENTED IN PART | Generic fixtures plus legal-critical CER/WER/token/order scoring, an extended Dominican legal-identifier detector and document-level worst-page/critical-loss scoring exist. A bounded real-source SCJ Principales judgment-page calibration/holdout exists for the born-digital PDF-aware route, and a resumable corpus suite compares `pdf_aware` vs `full_ocr` on quality, speed and cost. A versioned human-gold contract/validator now requires page-image provenance, adjudicated text, reviewer identity/time and document-level split isolation; tests prevent pending records from masquerading as verified gold or one document leaking across calibration/holdout. The reviewed stratified/adversarial human corpus itself remains PENDING EVIDENCE. |
+| 4. Planner/durable execution | PROVEN FOR ONE LIVE CRASH BOUNDARY | deterministic planning, idempotency, durable checkpoints, retry classes, circuit breaker and interrupted-run resume exist. A real worker composition root (`jurisnexo-normalize-run`) connects canonical acquisition manifests, S3, PostgreSQL, Tika, isolated Docling, deterministic/source-fidelity QA and final reconciliation. Live run `36090244340` injected a crash after the derived S3 object was written but before PostgreSQL registration, returned the item to `pending`, resumed with the same run id and completed without duplicate run items/artifacts. Additional destructive boundaries remain PENDING EVIDENCE. |
+| 5. Docling/Tika production adapters | IMPLEMENTED | object-storage derivatives, lineage, PDF-aware OCR, language configuration and optional isolated Docling subprocess exist |
+| 6. Deterministic QA | IMPLEMENTED | text health/legal-critical signals exist; page/region OCR behavior uses Docling PDF-aware OCR; semantic quality thresholds remain benchmark-owned. The executor can additionally use an optional source-native fidelity authority: reliable native/candidate divergence or unreliable source reference forces `quality_review_required` instead of silently accepting resolved evidence. |
+| 7. JEV shadow | PROVEN AT PROMOTION-SIZED BENCHMARK; RUNTIME STILL SHADOW | DecisionProvider + OpenRouter decisions adapter + DecisionTextQualityJudge + durable shadow persistence exist. Live run `35948656176` used 51 positive/51 negative calibration records and 48/48 holdout records. The calibration-selected threshold 0.15 had 0 false negatives in both splits, holdout false-positive rate ≈0.0208 and holdout Brier ≈0.0503 at total observed cost ≈US$0.00990. The benchmark assessment is eligible, but runtime policy intentionally remains shadow pending an explicit policy change and permanent sentinel sampling. |
+| 8. Visual verification | IMPLEMENTED; LIVE CAPABILITY PROVEN, PROMOTION BLOCKED | Provider-neutral verifier, correction proposals and bounded two-call live smoke exist. Tool-mode structured visual calls now complete on the configured visual challenger and detect the controlled corruption, but the native PDF text layer proved unsafe as assumed clean gold on at least one real page. The smoke therefore separates runtime capability from promotion: `promotion_eligible=false` until a human-verified clean visual gold set can measure false-correction rate honestly. |
+| 9. Resolved views/sentinel/workspace | IMPLEMENTED | evidence/search separation, stable workspace, deterministic sentinel sampling and read-only GC audit exist |
+| 10. Reconciliation | PROVEN FOR THE LIVE POST-S3/PRE-DB FAILURE BOUNDARY | fail-closed plan/DB/lineage/storage/quality reconciliation and immutable normalization manifest exist; PostgreSQL + S3-compatible integration proof exists. Live crash-resume run `36090244340` finished with exactly one run item, one structural artifact and one manifest, zero pending/running/failed items, and terminal run/finalizer status `succeeded`. |
+| 11. SCJ Principales rollout | IMPLEMENTED IN PART | real-source canary/smoke infrastructure exists and the bounded born-digital PDF-aware production holdout passes on real judgment pages with document-level gates (run `35815391234`: holdout WER ≈0.020, content recall ≈0.990 / precision ≈0.999, order-preservation ≈0.986, legal-critical recall 1.0, 0/3 holdout documents with critical loss); adversarial sample, broader canary/full rollout and OOD promotion evidence remain PENDING |
+| 12. Second source | PROVEN | Official TC/0001/26 passed the same Tika + Docling normalization core; source-specific logic remains confined to acquisition |
+
+## Live durable provider-evidence proof
+
+- Exact-head run `36084961719` on `255fdd9` passed the gated **Normalization live evidence persistence** lane.
+- The lane used a synthetic public judgment fixture and one real OpenRouter JEV decision call; runtime policy remained `shadow`.
+- PostgreSQL evidence after reconnect contained exactly 1 model call, 1 text-quality observation linked to that model call, 1 resolved-evidence lineage edge and 1 normalization manifest; the normalization run closed as `succeeded`.
+- The workflow explicitly attempted to mutate the persisted normalization observation and PostgreSQL rejected the update, proving the append-only trigger on the live path.
+- Observed provider cost was **US$0.00003289**, below the explicit **US$0.005** cap. This is provider cost for the single synthetic proof call, not a production cost/page estimate.
+- This closes the previously open proof gap “real external provider response → durable model call/observation → resolved evidence lineage → final manifest”. It does **not** promote JEV from shadow, and it does not close the independent visual-verifier human-gold requirement.
+
+## Operational crash/resume proof
+
+- Live run `36090244340` on head `7559732` passed the gated **Normalization operational resume drill**.
+- The drill used PostgreSQL from CI plus the configured S3-compatible object store and a synthetic source under a test-only key.
+- It deliberately injected `TimeoutError` **after the `docling-json` object had been written to S3 but before that derived artifact was registered in PostgreSQL**.
+- First execution: `normalized=0`, `failed=0`, `retryable_pending=1`; the run item returned to `pending` instead of becoming terminally failed.
+- The second execution reused the same `run_id`, completed the pending item, and produced `normalized=1`, `retryable_pending=0`.
+- Post-resume assertions all passed: exactly 1 run item, exactly 1 structural artifact, exactly 1 normalization manifest, `pending=0`, `running=0`, `failed=0`, finalizer `succeeded`, run `succeeded`.
+- The drill cleaned its synthetic S3 objects after execution. No cleanup error was reported.
+- This proves safe recovery for **one important crash boundary**. It does not yet prove every destructive boundary in the production-readiness contract (for example interruption during source download, after DB mutation but before manifest publication, or during external-provider calls).
+
+## Human-adjudicated gold contract
+
+- `backend/src/jurisnexo/normalization/human_gold.py` defines a versioned human-gold record rather than treating native PDF text as automatic ground truth.
+- A verified page must preserve source SHA, object key, page index, page roles, rendered-image SHA, adjudicated text, reviewer identity and timezone-aware review time.
+- One source document cannot cross calibration/holdout/adversarial splits, and a pending candidate cannot claim human-review metadata.
+- `backend/scripts/validate_normalization_human_gold.py` validates future gold files; `--require-verified` fails if a set has no verified human pages.
+- This closes the **schema/integrity contract**, not the evidence collection. A real reviewed stratified/adversarial SCJ gold corpus and independently clean visual gold remain outstanding.
+
+## Current engine policy
+
+- Docling is the primary structural normalizer.
+- Apache Tika is format/metadata/fallback support, not canonical legal text.
+- PDF OCR uses Docling PDF-aware layout-region routing so native PDF cells are not blindly rasterized.
+- OCR languages are source/jurisdiction configuration, not normalization-core identity. Dominican SCJ/TC canaries use `iso:es`.
+- The optional isolated Docling worker enforces timeout, source/output byte limits, temp cleanup and strips DB/S3/OpenRouter credentials from the parser subprocess. Container/job isolation remains responsible for kernel/network-level sandboxing.
+
+## Bounded SCJ Principales benchmark evidence
+
+- The born-digital Principales production route (extract the native vector-text page, run `PDF_AWARE_LAYOUT_REGIONS`, resolve evidence text) was measured on real judgment pages, not front matter.
+- Live run `35811462583` (head `cc6eb85`): 6 judgment pages across 6 volumes, split calibration/holdout by case order. Holdout mean WER ≈0.022, token content recall ≈0.993, precision ≈0.998, mean order-preservation ≈0.987 and legal-critical recall 1.0; the gate passed.
+- Live run `35815391234` (head `0c16144`): benchmark v2 samples 2 spread pages per document (6 documents, 12 pages) and gates on document-level critical loss. Holdout mean WER ≈0.020, content recall ≈0.990, precision ≈0.999, order-preservation ≈0.986, legal-critical recall 1.0 and 0/3 holdout documents with critical loss; the gate passed. Sampling spread pages reduces (but does not remove) the earlier "first clean page" selection bias.
+- The full-page OCR fallback diagnostic on the same pages did not pass its thresholds: holdout WER ≈0.120, content recall ≈0.924, legal-critical recall ≈0.857. This supports keeping born-digital native/PDF-aware extraction ahead of rasterizing native text; full-page OCR remains diagnostic for scanned material.
+- `score_text_fidelity` reports `token_order_preservation` (longest-common-subsequence ratio of content tokens) so reordering can be distinguished from content loss or edits. `score_document_fidelity` aggregates page scores into worst-page WER and any-critical-loss so a good page average cannot hide a damaged dispositive identifier.
+- The legal-critical detector now covers dates, money, articles, laws, decrees, resolutions, `Gaceta Oficial`, RNC, cédula, matrícula, cadastre, case/expediente and citation patterns. It remains an incremental detector, so `legal-critical recall = 1.0` means "all spans the current detector recognises", not "every legally important datum".
+
+### Corpus-scale configuration suite
+
+- `benchmark/normalization/principales_corpus_suite.py` processes a configurable slice of the Principales corpus across configuration routes (`pdf_aware`, `full_ocr`), scoring quality, speed and provider cost per page/document. Resume is now version-aware: a page is reusable only for the same source hash, page, route and benchmark identity (derived from Docling version plus normalizer/scorer/selector source). The mutable `latest/records.jsonl` checkpoint is rebuilt from prior+new records instead of overwriting history with only the newest batch, and each run also publishes an immutable `runs/<run-id>/` snapshot. Old unversioned records remain historical evidence but are not mixed into a current-identity quality verdict.
+- Live run `35817108708` (head `8c0a5b8`): 12 documents × 2 spread pages per route (48 page evaluations).
+
+| route | pages | mean WER | p95 WER | recall | precision | order | legal-critical | doc pass | s/page |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pdf_aware | 24 | 0.031 | 0.069 | 0.994 | 0.995 | 0.985 | 1.000 | 1.000 | 7.34 |
+| full_ocr | 24 | 0.115 | 0.246 | 0.928 | 0.974 | 0.918 | 0.857 | 0.583 | 6.30 |
+
+- External provider/model cost is US$0.00 for both routes: technical normalization runs locally. This is not total infrastructure cost; the comparable operational proxies are compute time and output size, reported as seconds/page, pages/second and bytes/page.
+- Corpus-suite execution success and quality acceptance are now separate. The report is always emitted, but the required `pdf_aware` route fails the job if the existing quality thresholds are violated (mean WER <=0.10, content recall/precision >=0.98, legal-critical recall 1.0, document pass 1.0). The diagnostic `full_ocr` challenger does not decide the production gate.
+- Observation: on this sample the quality gap is decisive (legal-critical recall and document pass rate) while the speed gap is small and even slightly favours full OCR. Configuration selection must therefore be driven by quality/document-pass, not by throughput.
+- Pure aggregation/config logic lives in `backend/src/jurisnexo/normalization/benchmark_suite.py` with unit proofs, so the suite's scoring is independently testable without S3 or Docling.
+- This is a bounded sample, not the full corpus. The earlier fixed 12-document limit repeatedly selected the same eligible documents and did not advance automatically. The runner now assigns content-addressed PDFs to explicit SHA-based shards. Dispatching each shard with `document_limit=0` inspects every PDF assigned to that shard; the pull-request lane remains a bounded 12-eligible-volume sample. `coverage.json` records `sampled`, `native_probe_failed_first_three_pages`, and `no_reference_pages_in_scan_window` outcomes. The inventory inspection flag is true only when every PDF assigned to that shard was inspected. A complete inventory inspection is not a complete legal-quality benchmark: unselected pages and excluded volumes still need separate evaluation.
+- Corpus-suite `sampled_document_pass_rate` means no detected critical loss on the selected pages of each sampled document. It is not a whole-document pass rate. The historical 12-document row above used the old `doc pass` label and must be read with this sampled meaning. The benchmark report separately records the full inventory count, shard count, inspected count, and unhandled contexts.
+- `modeled_normalization_compute_usd` is emitted only when an explicit hourly compute price is supplied. It multiplies measured normalization seconds by that assumed rate. It omits acquisition, installs, idle time, S3 transfer, storage, retries, review, and operations; an unset rate yields `null`, never an invented dollar cost. Provider cost of US$0 remains a separate narrower observation.
+- The first shard-aware bounded run `35939079467` (head `29f0647`) passed its sampled quality gate: the live inventory contained 36 content-addressed Principales PDFs; 14 were inspected to obtain 12 eligible documents, 2 had no pages accepted by the current clean-judgment selector, and 22 remained uninspected. Its `pdf_aware` route measured 24 pages, WER 0.0309, detector critical recall 1.0 and sampled-document pass 1.0; `full_ocr` measured the same 24 pages, WER 0.1152, detector critical recall 0.8571 and sampled-document pass 0.5833. This result does not cover all 36 PDFs or adverse page contexts. The report now also pins an inventory digest so separate shard runs can be compared against the same source listing.
+- Full-inventory dispatch `35940805815` (head `cae3326`, inventory digest `31de3eb9...`) inspected all 36 PDF **volumes**, but only 24 supplied two adjudicative pages within the current 120-page scan window; 12 supplied no qualifying reference pages in that window. On 48 paired pages, `pdf_aware` had mean WER 0.0353, p95 WER 0.1410, content recall 0.9921, detector critical recall 0.9605 and sampled-volume pass 0.9167. `full_ocr` had mean WER 0.1271, p95 WER 0.2817, content recall 0.9137, detector critical recall 0.8192 and sampled-volume pass 0.5833. The required PDF-aware gate failed because three pages across two volumes lost detector-recognized legal spans. The full inventory scan is **not** a complete page or decision benchmark; the 12 excluded volumes require classification, and native PDF reference text remains unverified image gold.
+- Read-only Actions diagnostic `35941991520` reproduced the three failing source/page pairs and emitted native reference, Docling candidate, scores and diffs. The 2008 page 27 candidate joined an `SC-2007-02-01-0910` identifier to `SC-2007-02-010910`, losing a separator. On two 2022 pages, a page-spanning editorial-summary region in the candidate had many missing characters and altered numbers; page 91 changed `SCJ-SS-22-1191` to `SCJ-SS-22-191` in that region while preserving the judgment heading. The output shows actual candidate/reference divergence, but does not yet isolate whether Docling's PDF-aware region OCR, native text selection or text-resolution order caused it. The native PDF reference also needs visual/human verification before it can become independent gold.
+- After the full-inventory failure, the ordinary PR suite evaluates **all persisted page records with the current benchmark identity**, including failures discovered by a larger dispatch. It also emits `current_selection_report` for the 12-volume PR selection. This prevents a later short run from hiding known failures. Report schema v4 changes this gate scope without invalidating v3 page evaluations; the benchmark identity remains pinned to the same normalizer, scorer, selector and Docling version. Actions run `35942538830` proved the fail-closed behavior: the short PR selection inspected 14 PDFs, but the gate still evaluated 96 persisted route/page records from 24 volumes and failed on the known legal-critical losses.
+- Read-only `selector_audit` dispatch `35942795301` (head `e44c40c`) inspected **every page** of the 12 excluded volumes from the frozen full-inventory run: 11,834 pages in total, 11,782 with at least 200 native characters, and 11,682 with at least 800 native characters. None met the current adjudicative-page selector anywhere in its volume. The missing benchmark coverage is therefore not explained by a 120-page window or absence of a native text layer. These are PDF volumes, not counted decisions; this audit did not measure normalization quality on them. A follow-up diagnostic records which page markers and front-matter exclusions are responsible before the selector changes.
+- Follow-up Actions diagnostic `35943372098` (head `9f39075`) found 35, 26, 6, 32, 18, 2, 30, 13, 78, 62, 353 and 45 long pages respectively with adjudicative body markers across those volumes; every such page was rejected by a front-matter substring. In eight compiled volumes, `Índice`/`INDICE` appears in a running navigation header on nearly every page, including text that begins an actual judgment. In the other four, `www.poderjudicial.gob.do` appears in the court's running footer; the published examples show both repeated-layout families. The examples show genuine decision headings as well as index excerpts, so relaxing the veto alone does not turn this selector into independently adjudicated decision segmentation.
+- The selector now treats only bibliographic/production markers as whole-page front matter. Running `Índice`/`INDICE` and court URL text no longer veto an entire page. Benchmark identity v4 hashes the **whole selector module**, including its helper and marker policy, rather than only `select_reference_pages`; old v3 page records cannot silently count toward the changed selector's quality gate. This is a coverage correction, not a quality improvement claim; the expanded route must be measured in Actions and any index-like false selections audited.
+- The current CI workflow runs four isolated content-hash shards. PR checks limit each shard to six eligible PDF volumes; manual `workflow_dispatch` covers every assigned PDF in each shard. Shard-local checkpoints prevent concurrent writes to the same record object. Each shard is a separate quality verdict; a complete corpus claim requires checking all four inventories and all four quality gates for the same inventory/benchmark identity. The previous unsharded reports remain historical evidence and are not current-shard checkpoint records.
+- Manual full-inventory run `35944121861` (head `1cca1e6`) inspected all 36 PDF volumes with a 120-page selection window: 35 were sampled (69 pages per route), one 2025 volume remained without a qualifying page in that window. Shards 0 and 3 passed locally; shards 1 and 2 failed on the already observed 2008 identifier-separator loss and two 2022 editorial-region losses. PDF-aware normalization took 427.4 measured seconds across the 69 selected pages; full OCR took 362.9 seconds. Those are summed normalization times, not total runner wall time or dollar cost. The manual lane now scans up to 10,000 pages per PDF to reach late judgments and sample through the whole volume, while the bounded PR lane keeps its 120-page window. Its next run must establish the actual expanded coverage and quality; 69 sampled pages are not 36 fully processed volumes.
+- The first forced-tool run pinned to the `deepseek` provider failed before inference: OpenRouter routing reported no endpoint compatible with both the tool request and the no-fallback provider constraint (runs `35939079364` and `35939079358`). With fallback routing, the bounded text smoke `35939854334` passed: DeepSeek V4.1 Flash was served by Wafer, three model calls completed, and observed provider cost was US$0.000935988. The visual smoke `35939854252` still failed: AtlasCloud and StreamLake returned prose instead of tool-call arguments. A separate GPT-4.1 Mini visual challenger (`35940259389`, Azure) returned structured responses for two calls at US$0.002544, but failed the semantic test: corruption detection recall 0 and false correction rate 1. The smoke had a potential page/image mismatch because it capped candidate text at 2,500 characters, although the selected page actually contained 2,417 characters, so truncation did not cause that observed failure. The complete-page rerun `35940536119` reported false correction rate 0 but still missed the controlled legal-token corruption (recall 0; two calls costing US$0.0004576). The native PDF text has not been independently verified against the image, and neither VLM is promoted. The earlier `json_object` failures remain evidence of that routed configuration, not proof about all DeepSeek routes.
+
+### Live provider-capability finding (DeepSeek structured output)
+
+- Historical bounded smokes (runs `35815391187`, `35815391241`, `35816454203`, `35816454339`) failed when JurisNexo requested `response_format: json_schema`: routed responses contained prose rather than the required object. Those runs prove that **that routed configuration** failed; they do not prove that DeepSeek V4.1 Flash lacks vision or structured-output capability.
+- Current vendor evidence says V4.1 Flash accepts images and OpenRouter exposes structured output/tool calling, while provider capabilities vary underneath the same model slug. JurisNexo therefore no longer attributes the failure to the model itself without isolating the routed provider.
+- Remediation implemented: DeepSeek structured calls default to forced tool calling, with `json_schema` and `json_object` retained as explicit comparison modes. Tool requests use `require_parameters=true`; optional provider order can pin a provider for reproducible diagnostics. Results persist the routed provider and structured mode when OpenRouter returns that metadata. The JSON parser accepts forced tool-call arguments as a first-class structured response.
+- The labeled/manual live workflows now use tool mode explicitly and `workflow_dispatch` genuinely runs the job instead of being skipped by a PR-label-only condition. Live re-validation of the repaired route remains the authority for promotion.
+- The JEV path is unaffected: the same run resolved `typesafe/jev-1.13-20260917` through `/api/alpha/decisions`, produced typed Choice/Noul/Score answers and cost US$0.0000794. On the sampled judged pages JEV reported high uncertainty (`legal_critical_damage ≈0.48`, `needs_visual_review ≈0.82`), i.e. it would route to review.
+- Consequence: DeepSeek structured-output and visual-verification capability is **not established** in this configuration. Do not claim DeepSeek challenger or visual verification as proven; a provider/model/parameter change is required and must be re-benchmarked. Failed calls are recorded as evidence rather than crashing the lane silently.
+
+### Benchmark-validity correction
+
+- An earlier PDF-policy holdout run selected the first page with ≥800 native characters. In these compiled volumes that page is cover/credits/ISBN/library catalog-card front matter or a table of contents, so the earlier `mean_word_error_rate ≈0.575` failure measured block ordering of non-legal front matter, not normalization of legal text. That run is retained as historical context, not as a quality verdict on the route.
+- Both holdout lanes now select pages that expose real adjudicative structure (reject ISBN/catalog/`ÍNDICE` front matter; require adjudicative markers) through `benchmark/normalization/scj_page_selection.py`, and export reference/candidate text for direct reading-order adjudication. The visual/JEV smokes reuse the same selector.
+- Still open: a stratified/adversarial gold set (tables, footnotes, dissents, signatures, mixed/scan pages, older/failed layouts), per-document coverage of every page rather than a spread sample, and a human-reviewed subset for legal-critical verification.
+
+## Current model policy
+
+### JEV
+
+See `43-jev-system-one-engineering-guidelines.md` for the canonical System One design/calibration contract.
+
+- JEV is a System One decisions model.
+- Runtime endpoint: OpenRouter `/api/alpha/decisions`.
+- JurisNexo exposes it through `DecisionProvider`.
+- Current normalization questions use typed Choice/Noul/Score decisions rather than free-form generation.
+- Context batching targets ~24k estimated tokens inside the 32k model window, reserving headroom for state/question serialization instead of filling the hard limit.
+- Oversized records fail closed; JurisNexo does not silently truncate a decision record to make it fit.
+- Quality routing and claim/evidence verification are treated as different capabilities: JEV cannot infer that a plausible identifier is wrong unless the reference evidence is provided.
+- Routing thresholds live in a provider-independent policy and remain calibration-owned rather than hard-coded as a property of JEV.
+- JEV remains shadow/advisory. Live run 35763120423 resolved to model `typesafe/jev-1.13-20260917`; the quality batch used 8,905 input tokens / 9,677 total tokens, stayed inside the 24k target budget, and cost US$0.00037401. Evidence-backed claim verification cost US$0.000286272. The benchmark selected a candidate material-error threshold of 0.75 with zero observed false negatives/positives in its tiny calibration and holdout splits, but `promotion_assessment.eligible=false` because each split had only two positive and two negative quality cases.
+
+### DeepSeek
+
+- Model: `deepseek/deepseek-v4.1-flash`.
+- Default reasoning effort: `high`.
+- `xhigh` is comparison-only until measured evidence justifies a policy change.
+- Benchmarks preserve requested/effective model, token usage, reasoning tokens, latency and provider-reported cost where available.
+- The same model can accept images and is the current bounded visual-verifier candidate; this does not make it legal ground truth.
+- Structured-output capability was not established by the earlier `json_schema` routed smokes. The implementation now prefers forced tool calling and records routed-provider/structured-mode diagnostics; `json_schema` and native-style `json_object` remain comparison modes. Do not claim DeepSeek challenger or visual verification proven until the repaired live smokes pass.
+
+## Hard claims that are currently supported
+
+- acquisition and normalization are separate;
+- normalization core does not own source discovery;
+- preserved bytes/hash remain source authority;
+- derived artifacts and provenance are durable and append-oriented;
+- cross-scope normalization lineage is rejected;
+- lineage cycles are rejected, including concurrent opposite-edge attempts;
+- equivalent resolved evidence artifacts can be reused without confusing them with structural Docling JSON;
+- interrupted running items can be resumed against the same manifest/pipeline/config identity;
+- terminal success is gated behind reconciliation and manifest publication;
+- source adapters do not own parser/OCR engines;
+- downstream workspace APIs do not expose parser/provider internals;
+- the born-digital PDF-aware Principales route passed a bounded real judgment-page calibration/holdout while full-page OCR did not.
+
+## Claims that must NOT be made yet
+
+Do not claim any of the following until the corresponding evidence has passed:
+
+- all SCJ Principales are normalized;
+- OCR quality is calibrated for the full Principales distribution;
+- the legal-critical detector covers every legally important datum;
+- the born-digital Principales route is validated beyond the bounded spread sample;
+- JEV thresholds are production-ready;
+- JEV has a production-representative acceptable false-negative rate beyond the bounded 4-source smoke;
+- live JEV/visual observations are persisted in a real provider run (the persistence contract is proven with provider doubles and real PostgreSQL);
+- DeepSeek structured output or visual verification works (the bounded smoke recorded a provider structured-output failure);
+- visual-verifier false-correction rate is acceptable beyond the bounded smoke;
+- the worker is a complete security sandbox;
+- the full Principales Definition of Done in doc 41 is complete.
+
+## Remaining closure sequence
+
+1. obtain exact-head deterministic CI green;
+2. extend the corpus suite from the bounded 12-document sample toward the full Principales corpus, and add a stratified/adversarial gold set (tables, footnotes, dissents, signatures, mixed/scan and older/failed layouts) with every-page coverage of selected documents, not only a spread sample;
+3. expand JEV calibration/holdout to promotion-sized source-verified samples while preserving split independence;
+4. re-run the repaired tool-first JEV + DeepSeek challenger smoke and two-call visual verifier smoke; if either fails, pin providers and compare `tool`, `json_schema` and `json_object` before changing models;
+5. analyze model probabilities, false negatives, calibration, token/cost/latency evidence and durable observation lineage (the persistence contract is already proven with provider doubles and real PostgreSQL);
+6. execute broader Principales canary, interruption/resume drill and reconciliation audit;
+7. run OOD SCJ sample;
+8. reconcile docs/testing proof map and remove only gaps actually closed by evidence;
+9. mark PR merge-ready only after exact-head required gates pass.
+
+
+## 2026-09-24 production-readiness hardening update
+
+This closeout pass hardened the control plane rather than weakening quality gates.
+
+- The corpus suite now runs isolated deterministic SHA shards with shard-local checkpoints, immutable run snapshots, explicit inventory outcomes, benchmark-identity-aware resume, sampled-document semantics, page- and document-weighted tail metrics, and fail-closed reference-authority accounting. A green route means the configured quality gate passed on reliable references; pages whose native PDF text is itself suspect are excluded from quality scoring and remain explicit reference-authority blockers rather than being silently counted as failures or successes.
+- Two shard-0 tail pages from source `c32cf2bc...` were frozen into the known-failure regression. Their native text layer contains obvious mojibake, demonstrating why native PDF text is useful evidence but not absolute human gold.
+- Known-failure regression semantics are now **repaired or safely contained**. The report keeps `parser_quality_passed` separate from `safely_contained`. A historical parser defect may remain known while the production source-fidelity gate proves that it would be routed to `quality_review_required` instead of silently accepted.
+- A generic `DeterministicSourceFidelityChecker` is now available to the normalization executor. When an optional source-native reference is available, reliable reference/candidate divergence in content or detector-recognized legal-critical spans forces review. An unreliable reference also forces review. Absence of a reference falls back to the ordinary deterministic QA path. The core remains source-agnostic; PDF native extraction is an optional adapter.
+- A durable executable worker entrypoint now exists as `jurisnexo-normalize-run`. It composes S3 source bytes, a canonical acquisition manifest, PostgreSQL ledger, Tika inspection, isolated Docling normalization, optional PDF-native source fidelity, circuit breaker, executor, reconciliation and final manifest publication. The normalization runtime is declared as an optional package extra rather than making Docling/boto3 mandatory for every backend process.
+- Acquisition manifests now have a fail-closed canonical parser. Normalization rejects invalid/non-canonical JSON, count/status inconsistencies, invalid partition/timestamps, S3 payload-hash disagreement, and source/artifact inventory-digest tampering before creating a normalization run.
+- A dedicated `Normalization production readiness` workflow now groups source-agnostic architecture, normalization scoring, source-fidelity safety, isolated Docling controls, resume/finalization/reconciliation, durable model evidence, structured-output contracts and worker-entrypoint smoke evidence. This is separate from expensive/live provider and corpus lanes.
+
+### Promotion-sized JEV evidence
+
+Live Actions run `35948656176` established the first promotion-sized JEV calibration/holdout result using adjudicative-page excerpts rather than front matter:
+
+- requested 36 source cases; 33 supplied usable adjudicative excerpts;
+- calibration: 51 positive + 51 negative records;
+- holdout: 48 positive + 48 negative records;
+- calibration-selected material-error threshold: `0.15`;
+- calibration false-negative rate: `0.0`; false-positive rate: `0.0588`;
+- frozen holdout false-negative rate: `0.0`; false-positive rate: `0.0208`;
+- holdout material-error Brier score: `0.05026`;
+- observed quality + claim cost: approximately `US$0.009898644`;
+- promotion assessment: `eligible=true`;
+- runtime policy: **shadow**.
+
+Eligibility is evidence that the candidate policy met the current benchmark contract. It does **not** activate autoaccept. JEV remains shadow until a separate production-policy change is reviewed, and permanent sentinel sampling is still required before any future autoaccept path.
+
+### Visual verification evidence semantics
+
+The visual lane now separates provider/runtime capability from promotion evidence. A visual call can pass the bounded smoke when structured inference works and a controlled corruption is detected, while `promotion_eligible` remains false until a human-verified clean visual gold set exists. The earlier assumption that the PDF native text layer was a perfect clean visual reference was invalidated by a real page where the VLM identified a plausible identifier difference visible in the image. Consequently, native text is no longer used to compute a claimed false-correction rate unless the clean reference is independently adjudicated.

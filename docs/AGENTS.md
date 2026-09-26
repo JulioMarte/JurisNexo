@@ -15,6 +15,7 @@ Documentation is the system of record for accepted product, architecture, legal-
 - `22-architecture-fitness-functions.md` owns executable architecture-policy intent.
 - `23-pre-production-evolution-and-adversarial-proof-policy.md` owns the current rule for deliberately superseding pre-production architecture/test restrictions while preserving guarantees and evidence.
 - `24-engineering-quality-signals.md` owns file-size, component-connection, fan-in/fan-out and maintainability-signal semantics.
+- `43-jev-system-one-engineering-guidelines.md` owns current JEV/System One question design, context-budgeting, calibration and promotion semantics.
 - `testing/current-guarantees.toml` inventories current semantic guarantees and required evidence classes.
 - `testing/repository-governance-contract.md` owns HARD / CONTROLLED / FLEXIBLE / HISTORICAL repository/test/instruction governance.
 - `testing/evidence-authoring-guide.md` owns durable test-evidence authoring rules.

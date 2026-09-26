@@ -1,0 +1,92 @@
+name: Normalization production readiness
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches:
+      - development
+    paths:
+      - "backend/src/jurisnexo/normalization/**"
+      - "backend/scripts/validate_normalization_human_gold.py"
+      - "backend/src/jurisnexo/model_providers/**"
+      - "backend/src/jurisnexo/entrypoints/worker/normalization.py"
+      - "backend/pyproject.toml"
+      - "backend/tests/unit/test_normalization_*.py"
+      - "backend/tests/unit/test_isolated_docling.py"
+      - "backend/tests/unit/test_openrouter_structured_modes.py"
+      - "backend/tests/integration/test_normalization_*.py"
+      - "backend/tests/architecture/test_normalization_source_agnostic.py"
+      - "benchmark/normalization/**"
+      - ".github/workflows/normalization-production-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: normalization-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic-readiness:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'normalization-readiness')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build backend test image
+        run: docker compose --profile test build test
+
+      - name: Start database and apply migrations
+        run: docker compose up -d db && docker compose run --rm migrate
+
+      - name: Ruff normalization runtime and benchmarks
+        run: |
+          docker compose --profile test run --rm --no-deps test ruff check \
+            src/jurisnexo/normalization \
+            src/jurisnexo/model_providers \
+            src/jurisnexo/entrypoints/worker/normalization.py \
+            tests/unit/test_normalization_benchmark_suite.py \
+            tests/unit/test_normalization_gold.py \
+            tests/unit/test_normalization_human_gold.py \
+            tests/unit/test_normalization_source_fidelity.py \
+            tests/unit/test_normalization_worker_entrypoint.py \
+            tests/unit/test_docling_adapter.py \
+            tests/unit/test_isolated_docling.py \
+            tests/unit/test_openrouter_structured_modes.py
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD/benchmark:/benchmark:ro" \
+            -v "$PWD/backend/scripts:/scripts:ro" \
+            test ruff check /benchmark/normalization /scripts/validate_normalization_human_gold.py
+
+      - name: Run deterministic normalization readiness contracts
+        run: >-
+          docker compose --profile test run --rm
+          -v "$PWD:/repo:ro"
+          -e JURISNEXO_REPO_ROOT=/repo
+          test pytest -q
+          tests/architecture/test_normalization_source_agnostic.py
+          tests/unit/test_normalization_benchmark_suite.py
+          tests/unit/test_normalization_gold.py
+          tests/unit/test_normalization_human_gold.py
+          tests/unit/test_normalization_source_fidelity.py
+          tests/unit/test_normalization_worker_entrypoint.py
+          tests/unit/test_docling_adapter.py
+          tests/unit/test_normalization_finalization.py
+          tests/unit/test_normalization_operational_controls.py
+          tests/unit/test_isolated_docling.py
+          tests/unit/test_openrouter_structured_modes.py
+          tests/integration/test_normalization_control_plane.py
+          tests/integration/test_normalization_resume.py
+          tests/integration/test_normalization_finalizer_postgres_s3.py
+          tests/integration/test_normalization_finalizer_retry.py
+          tests/integration/test_normalization_model_evidence_persistence.py
+
+      - name: Show service state on failure
+        if: failure()
+        run: docker compose ps && docker compose logs --no-color db migrate
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile test down -v --remove-orphans

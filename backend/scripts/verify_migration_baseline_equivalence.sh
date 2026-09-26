@@ -9,11 +9,12 @@ OLD_DIR="$(mktemp -d)"
 OLD_REPO="$OLD_DIR/pre-baseline"
 OLD_PROJECT="jurisnexo-prebaseline-check"
 NEW_PROJECT="jurisnexo-baseline-check"
+BASELINE_ONLY_DIR="$OLD_DIR/baseline-only"
 ARTIFACT_DIR="${BASELINE_EQUIVALENCE_OUTPUT:-$ROOT/.artifacts/baseline-equivalence}"
 
 cleanup() {
   docker compose -p "$OLD_PROJECT" -f "$OLD_REPO/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
-  docker compose -p "$NEW_PROJECT" -f "$ROOT/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
+  docker compose -p "$NEW_PROJECT" -f "$BASELINE_ONLY_DIR/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   git worktree remove --force "$OLD_REPO" >/dev/null 2>&1 || true
   rm -rf "$OLD_DIR"
 }
@@ -50,8 +51,12 @@ dump_data() {
 echo "==> Rebuilding historical database from $PRE_BASELINE_COMMIT"
 run_stack "$OLD_PROJECT" "$OLD_REPO/compose.yaml"
 
-echo "==> Rebuilding current database from consolidated baseline"
-run_stack "$NEW_PROJECT" "$ROOT/compose.yaml"
+echo "==> Rebuilding consolidated baseline without post-baseline migrations"
+mkdir -p "$BASELINE_ONLY_DIR"
+git archive HEAD | tar -x -C "$BASELINE_ONLY_DIR"
+find "$BASELINE_ONLY_DIR/backend/migrations/versions" -maxdepth 1 -type f \
+  ! -name "0001_jurisnexo_baseline.py" -delete
+run_stack "$NEW_PROJECT" "$BASELINE_ONLY_DIR/compose.yaml"
 
 OLD_SCHEMA="$ARTIFACT_DIR/pre-baseline.schema.sql"
 NEW_SCHEMA="$ARTIFACT_DIR/baseline.schema.sql"
@@ -61,7 +66,7 @@ OLD_DATA_NORM="$ARTIFACT_DIR/pre-baseline.data.normalized.sql"
 NEW_DATA_NORM="$ARTIFACT_DIR/baseline.data.normalized.sql"
 
 dump_schema "$OLD_PROJECT" "$OLD_REPO/compose.yaml" "$OLD_SCHEMA"
-dump_schema "$NEW_PROJECT" "$ROOT/compose.yaml" "$NEW_SCHEMA"
+dump_schema "$NEW_PROJECT" "$BASELINE_ONLY_DIR/compose.yaml" "$NEW_SCHEMA"
 
 if ! diff -u "$OLD_SCHEMA" "$NEW_SCHEMA" > "$ARTIFACT_DIR/schema.diff"; then
   echo >&2 "ERROR: consolidated baseline does not reproduce the historical PostgreSQL schema"
@@ -70,7 +75,7 @@ if ! diff -u "$OLD_SCHEMA" "$NEW_SCHEMA" > "$ARTIFACT_DIR/schema.diff"; then
 fi
 
 dump_data "$OLD_PROJECT" "$OLD_REPO/compose.yaml" "$OLD_DATA"
-dump_data "$NEW_PROJECT" "$ROOT/compose.yaml" "$NEW_DATA"
+dump_data "$NEW_PROJECT" "$BASELINE_ONLY_DIR/compose.yaml" "$NEW_DATA"
 
 PYTHONPATH=backend/src python -m jurisnexo.db_dump_normalizer "$OLD_DATA" "$OLD_DATA_NORM"
 PYTHONPATH=backend/src python -m jurisnexo.db_dump_normalizer "$NEW_DATA" "$NEW_DATA_NORM"
@@ -82,7 +87,7 @@ if ! diff -u "$OLD_DATA_NORM" "$NEW_DATA_NORM" > "$ARTIFACT_DIR/data.diff"; then
 fi
 
 echo "==> Verifying Alembic control-table hardening"
-for pair in "$OLD_PROJECT|$OLD_REPO/compose.yaml" "$NEW_PROJECT|$ROOT/compose.yaml"; do
+for pair in "$OLD_PROJECT|$OLD_REPO/compose.yaml" "$NEW_PROJECT|$BASELINE_ONLY_DIR/compose.yaml"; do
   project="${pair%%|*}"
   compose_file="${pair#*|}"
   value="$(

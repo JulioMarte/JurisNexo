@@ -1,0 +1,92 @@
+name: SCJ visual judge calibration benchmark
+
+on:
+  pull_request:
+    types: [labeled]
+    branches: [development]
+  workflow_dispatch:
+    inputs:
+      page_limit:
+        description: Pages per model (max 100)
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  judge:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-smoke'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - judge: deepseek-official
+            model: deepseek/deepseek-v4.1-flash
+            provider: DeepSeek
+            structured_mode: prompt_json
+          - judge: luna-official
+            model: openai/gpt-6-luna
+            provider: OpenAI
+            structured_mode: tool
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      VISUAL_JUDGE_MODEL: ${{ matrix.model }}
+      VISUAL_JUDGE_PROVIDER: ${{ matrix.provider }}
+      VISUAL_JUDGE_REASONING: high
+      VISUAL_JUDGE_STRUCTURED_MODE: ${{ matrix.structured_mode }}
+      VISUAL_JUDGE_MAX_OUTPUT_TOKENS: "512"
+      VISUAL_JUDGE_PAGE_LIMIT: ${{ inputs.page_limit || '1' }}
+      VISUAL_JUDGE_MAX_COST_USD: "1.0"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install benchmark runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Run same-page visual judge benchmark
+        env:
+          VISUAL_JUDGE_OUTPUT: ${{ runner.temp }}/visual-judge
+        run: python benchmark/normalization/visual_judge_100_page_benchmark.py
+      - name: Add compact report to summary
+        if: always()
+        run: |
+          if [ -f "${{ runner.temp }}/visual-judge/report.json" ]; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['RUNNER_TEMP']) / 'visual-judge' / 'report.json').read_text())
+          def metric(value):
+              return "n/a" if value is None else f"{value:.4f}"
+          def money(value, digits):
+              return "n/a" if value is None else f"${value:.{digits}f}"
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write(f"## {report['model']} via {report['pinned_provider']}\n\n")
+              out.write(f"- pages: {report['page_count']}\n")
+              out.write(f"- structured mode: {report['structured_mode']}\n")
+              out.write(f"- false correction rate: {metric(report['false_correction_rate'])}\n")
+              out.write(f"- corruption detection recall: {metric(report['corruption_detection_recall'])}\n")
+              out.write(f"- observed cost: {money(report['observed_cost_usd'], 6)}\n")
+              out.write(f"- mean cost/page: {money(report['mean_cost_per_page_usd'], 8)}\n")
+              out.write(f"- mean latency: {report['mean_latency_ms']:.0f} ms\n")
+          PY
+          fi
+      - name: Preserve benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-judge-${{ matrix.judge }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/visual-judge/**
+          if-no-files-found: warn
+          retention-days: 30

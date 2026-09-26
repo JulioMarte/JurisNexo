@@ -1,0 +1,93 @@
+name: Normalization operational resume drill
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+    branches:
+      - development
+
+permissions:
+  contents: read
+
+concurrency:
+  group: normalization-operational-resume-drill-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resume-drill:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'normalization-resume-drill'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assert S3 drill configuration
+        run: |
+          test -n "$JURISNEXO_S3_BUCKET"
+          test -n "$JURISNEXO_S3_REGION"
+          test -n "$JURISNEXO_S3_ACCESS_KEY_ID"
+          test -n "$JURISNEXO_S3_SECRET_ACCESS_KEY"
+
+      - name: Build backend test image
+        run: docker compose --profile test build test
+
+      - name: Validate drill before touching storage
+        run: |
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD:/repo:ro" \
+            test ruff check \
+              /repo/backend/scripts/normalization_operational_resume_drill.py \
+              /repo/backend/scripts/normalization_finalizer_retry_drill.py
+          docker compose --profile test run --rm --no-deps \
+            -v "$PWD:/repo:ro" \
+            test python -c "paths=['/repo/backend/scripts/normalization_operational_resume_drill.py','/repo/backend/scripts/normalization_finalizer_retry_drill.py']; [compile(open(p, encoding='utf-8').read(), p, 'exec') for p in paths]"
+
+      - name: Start PostgreSQL, migrate and bootstrap
+        run: |
+          docker compose up -d db
+          docker compose run --rm migrate
+          docker compose run --rm bootstrap
+
+      - name: Inject post-S3/pre-DB crash and resume same run
+        run: |
+          mkdir -p "$RUNNER_TEMP/normalization-resume-drill"
+          docker compose --profile test run --rm --no-deps \
+            -e JURISNEXO_S3_BUCKET \
+            -e JURISNEXO_S3_ENDPOINT_URL \
+            -e JURISNEXO_S3_REGION \
+            -e JURISNEXO_S3_ACCESS_KEY_ID \
+            -e JURISNEXO_S3_SECRET_ACCESS_KEY \
+            -e JURISNEXO_S3_FORCE_PATH_STYLE \
+            -e NORMALIZATION_RESUME_DRILL_OUTPUT=/artifacts/results.json \
+            -e NORMALIZATION_FINALIZER_RETRY_OUTPUT=/artifacts/finalizer-retry.json \
+            -e GITHUB_RUN_ID \
+            -e GITHUB_RUN_ATTEMPT \
+            -v "$PWD:/repo:ro" \
+            -v "$RUNNER_TEMP/normalization-resume-drill:/artifacts" \
+            test sh -c 'uv pip install --python /app/.venv/bin/python "boto3==1.43.93" >/dev/null && /app/.venv/bin/python /repo/backend/scripts/normalization_operational_resume_drill.py && /app/.venv/bin/python /repo/backend/scripts/normalization_finalizer_retry_drill.py'
+
+      - name: Preserve operational drill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: normalization-resume-drill-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/normalization-resume-drill/**
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Show database state on failure
+        if: failure()
+        run: docker compose ps && docker compose logs --no-color db migrate
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile test down -v --remove-orphans

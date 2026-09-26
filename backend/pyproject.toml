@@ -16,6 +16,14 @@ dependencies = [
 
 [project.scripts]
 jurisnexo-db-bootstrap = "jurisnexo.entrypoints.cli.database_bootstrap:main"
+jurisnexo-normalize-run = "jurisnexo.entrypoints.worker.normalization:main"
+
+[project.optional-dependencies]
+normalization = [
+    "boto3==1.43.93",
+    "docling==2.129.0",
+    "pypdfium2==5.13.0",
+]
 
 [dependency-groups]
 dev = [
@@ -51,6 +59,11 @@ max-complexity = 10
 "tests/integration/test_extensible_judicial_semantics.py" = ["E501"]
 "tests/integration/test_legal_reality_v3_schema_contract.py" = ["E501"]
 "tests/legal_model/*.py" = ["E501"]
+# These visual-provider files predate a dedicated formatting pass. Keep the
+# exception narrow so CI still enforces all semantic Ruff rules everywhere.
+"src/jurisnexo/model_providers/openrouter_visual.py" = ["E501", "E701"]
+"src/jurisnexo/normalization/visual_corpus_benchmark.py" = ["E501"]
+"tests/unit/test_openrouter_chat_message.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests"]

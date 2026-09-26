@@ -13,6 +13,7 @@ from jurisnexo.acquisition.manifest import (
     AcquisitionRunManifestBuilder,
     FileAcquisitionManifest,
     acquire_candidates_resumable,
+    parse_acquisition_run_manifest,
 )
 from jurisnexo.acquisition.official_corpus import (
     OfficialDocumentCandidate,
@@ -480,3 +481,114 @@ def test_run_manifest_rejects_invalid_certified_inventory_digest() -> None:
             storage_bucket="official-corpus",
             certified_inventory_sha256="not-a-digest",
         )
+
+
+def test_parse_canonical_run_manifest_round_trips() -> None:
+    builder = AcquisitionRunManifestBuilder(
+        source="tc",
+        scope="decisions",
+        storage_bucket="official-corpus",
+        ingestion_id="parse-roundtrip",
+        started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
+    )
+    candidate = _candidate()
+    sha = sha256_hex(b"%PDF roundtrip")
+    builder.record_existing(
+        candidate=candidate,
+        sha256=sha,
+        object_key=object_key_for(
+            source="constitutional_court",
+            collection="decisions",
+            sha256=sha,
+        ),
+    )
+    manifest = builder.build(
+        completed_at=datetime(2026, 9, 19, 12, 1, tzinfo=UTC)
+    )
+
+    restored = parse_acquisition_run_manifest(manifest.canonical_bytes())
+
+    assert restored == manifest
+    assert restored.items[0].sha256 == sha
+
+
+def test_parse_run_manifest_rejects_noncanonical_or_tampered_counts() -> None:
+    builder = AcquisitionRunManifestBuilder(
+        source="tc",
+        scope="decisions",
+        storage_bucket="official-corpus",
+        ingestion_id="parse-invalid",
+        started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
+    )
+    candidate = _candidate()
+    sha = sha256_hex(b"%PDF invalid")
+    builder.record_existing(
+        candidate=candidate,
+        sha256=sha,
+        object_key=object_key_for(
+            source="constitutional_court",
+            collection="decisions",
+            sha256=sha,
+        ),
+    )
+    manifest = builder.build(
+        completed_at=datetime(2026, 9, 19, 12, 1, tzinfo=UTC)
+    )
+    noncanonical = json.dumps(
+        json.loads(manifest.canonical_bytes()),
+        indent=2,
+    ).encode()
+    with pytest.raises(ValueError, match="not canonical JSON"):
+        parse_acquisition_run_manifest(noncanonical)
+
+    tampered = json.loads(manifest.canonical_bytes())
+    tampered["already_present_count"] = 0
+    tampered_payload = (
+        json.dumps(
+            tampered,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    with pytest.raises(ValueError, match="status counts"):
+        parse_acquisition_run_manifest(tampered_payload)
+
+
+def test_parse_run_manifest_rejects_digest_tampering() -> None:
+    builder = AcquisitionRunManifestBuilder(
+        source="tc",
+        scope="decisions",
+        storage_bucket="official-corpus",
+        ingestion_id="parse-digest-invalid",
+        started_at=datetime(2026, 9, 19, 12, 0, tzinfo=UTC),
+    )
+    candidate = _candidate()
+    sha = sha256_hex(b"%PDF digest")
+    builder.record_existing(
+        candidate=candidate,
+        sha256=sha,
+        object_key=object_key_for(
+            source="constitutional_court",
+            collection="decisions",
+            sha256=sha,
+        ),
+    )
+    manifest = builder.build(
+        completed_at=datetime(2026, 9, 19, 12, 1, tzinfo=UTC)
+    )
+    tampered = json.loads(manifest.canonical_bytes())
+    tampered["source_inventory_sha256"] = "0" * 64
+    payload = (
+        json.dumps(
+            tampered,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+
+    with pytest.raises(ValueError, match="source inventory digest"):
+        parse_acquisition_run_manifest(payload)
