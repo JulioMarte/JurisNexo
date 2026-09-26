@@ -9,10 +9,7 @@ from typing import Any
 import psycopg
 import pytest
 
-from jurisnexo.acquisition.s3_object_store import (
-    S3ObjectStore,
-    S3ObjectStoreConfig,
-)
+from jurisnexo.acquisition.s3_object_store import S3ObjectStore, S3ObjectStoreConfig
 from jurisnexo.normalization.finalizer import NormalizationFinalizer
 from jurisnexo.normalization.planner import NormalizationPlan, NormalizationPlanItem
 from jurisnexo.normalization.repository import PostgresNormalizationLedger
@@ -115,15 +112,11 @@ def test_finalizer_retries_after_manifest_put_without_duplicate_rows(
 ) -> None:
     scope_id = "00000000-0000-0000-0000-000000000001"
     source_sha = _sha("finalizer-retry-source")
-    source_artifact_id = _insert_source(
-        connection, scope_id=scope_id, sha256=source_sha
-    )
+    source_artifact_id = _insert_source(connection, scope_id=scope_id, sha256=source_sha)
     pipeline_version = "retry-finalizer-v1"
     config_sha = _sha("retry-finalizer-config")
     manifest_sha = _sha("retry-finalizer-manifest")
-    idempotency_key = _sha(
-        f"{source_sha}:{pipeline_version}:{config_sha}"
-    )
+    idempotency_key = _sha(f"{source_sha}:{pipeline_version}:{config_sha}")
     plan = NormalizationPlan(
         manifest_sha256=manifest_sha,
         pipeline_version=pipeline_version,
@@ -140,29 +133,28 @@ def test_finalizer_retries_after_manifest_put_without_duplicate_rows(
         ),
     )
     ledger = PostgresNormalizationLedger(connection)
-    run_id = ledger.start_run(
+    run_id = ledger.create_run(
         scope_id=scope_id,
         pipeline_version=pipeline_version,
         config_sha256=config_sha,
         manifest_sha256=manifest_sha,
         manifest_locator="ci://retry/manifest.json",
+        selected_count=1,
     )
-    item = ledger.claim_item(
+    item_id = ledger.ensure_item(
         scope_id=scope_id,
         run_id=run_id,
         source_artifact_id=source_artifact_id,
-        idempotency_key=idempotency_key,
     )
-    ledger.complete_item(
+    # A failed item is a valid terminal item for reconciliation and requires no
+    # derived artifact. This keeps the test focused on manifest publication
+    # idempotency rather than on the normalization executor itself.
+    ledger.mark_running(scope_id=scope_id, item_id=item_id)
+    ledger.mark_failed(
         scope_id=scope_id,
-        run_id=run_id,
-        source_artifact_id=source_artifact_id,
-        idempotency_key=idempotency_key,
-        expected_version=item.version,
-        status="succeeded",
-        artifact_count=0,
-        error_code=None,
-        error_message=None,
+        item_id=item_id,
+        error_code="fixture_failure",
+        error_message="terminal fixture item",
     )
 
     client = _MemoryS3Client()
@@ -192,18 +184,22 @@ def test_finalizer_retries_after_manifest_put_without_duplicate_rows(
     assert len(client.objects) == 1
     manifest_key = next(iter(client.objects))
     assert manifest_key.startswith("_manifests/normalization/")
-    assert ledger.summarize_run(scope_id=scope_id, run_id=run_id).status == "running"
+    ledger.validate_resume_run(
+        scope_id=scope_id,
+        run_id=run_id,
+        manifest_sha256=manifest_sha,
+        pipeline_version=pipeline_version,
+        config_sha256=config_sha,
+    )
 
-    result = NormalizationFinalizer(
-        ledger=ledger, object_store=store
-    ).finalize(
+    result = NormalizationFinalizer(ledger=ledger, object_store=store).finalize(
         plan=plan,
         run_id=run_id,
         scope_id=scope_id,
         pipeline_version=pipeline_version,
         config_sha256=config_sha,
     )
-    assert result.status == "succeeded"
+    assert result.status == "completed_with_errors"
     assert result.manifest_object_key == manifest_key
     assert len(client.objects) == 1
 
