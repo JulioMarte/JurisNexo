@@ -18,15 +18,15 @@ on:
   workflow_dispatch:
     inputs:
       sample_size:
-        description: "Pages to benchmark with the LLM judge after admission"
+        description: "Gold pages to benchmark with every LLM after admission"
         required: true
-        default: "1"
+        default: "290"
         type: choice
-        options: ["1", "10", "20"]
+        options: ["1", "10", "20", "290"]
       alignment_audit_size:
         description: "Candidate pages to audit locally (image OCR vs native PDF text)"
         required: true
-        default: "20"
+        default: "600"
         type: choice
         options: ["20", "100", "600"]
       selection:
@@ -90,9 +90,6 @@ jobs:
       SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
       SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
-      # A normal PR synchronize is audit-only and deliberately inspects 600
-      # diverse candidates. Every admitted page is promoted into the reusable
-      # gold-benchmark-manifest.json; paid judging remains a separate action.
       SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '100' || '600' }}
       SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '20' || '600' }}
     steps:
@@ -109,7 +106,7 @@ jobs:
             tesseract-ocr-eng
       - name: Install bounded page preparation runtime
         run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Freeze 600-page calibration and promote every admitted page
+      - name: Freeze calibration evidence and benchmark sample once
         env:
           SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/prepared
         run: python backend/scripts/scj_principales_visual_calibration.py
@@ -143,12 +140,13 @@ jobs:
           retention-days: 90
 
   judge:
-    # PR synchronization performs only the local 600-page calibration. Paid
-    # model calls remain explicit via workflow_dispatch or the live-10 label.
+    # PR synchronization performs only local calibration. Paid model calls are
+    # explicit. Every matrix member downloads the exact same frozen artifact,
+    # so the four-model comparison is page-for-page and prompt-for-prompt.
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10'
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +158,14 @@ jobs:
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
+            reasoning: high
+          - judge: ling-3-flash-vl
+            model: inclusionai/ling-3.0-flash-vl
+            provider: ""
+            reasoning: high
+          - judge: gemini-2-5-flash-lite
+            model: google/gemini-2.5-flash-lite
+            provider: Google AI Studio,Google Vertex
             reasoning: high
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
