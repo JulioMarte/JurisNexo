@@ -284,7 +284,7 @@ def test_visual_provider_can_omit_output_token_limit(
     captured: dict[str, object] = {}
 
     class FakeResponse:
-        def __enter__(self) -> "FakeResponse":
+        def __enter__(self) -> FakeResponse:
             return self
 
         def __exit__(
