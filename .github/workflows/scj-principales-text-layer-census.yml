@@ -1,9 +1,11 @@
 name: SCJ Principales text-layer census
 
-# Expensive in runner time but uses no paid LLM. Manual because this is a corpus
-# census, not a per-commit regression test.
+# Expensive in runner time but uses no paid LLM. It runs only by explicit
+# workflow dispatch or the dedicated label, never on ordinary pushes/PR syncs.
 on:
   workflow_dispatch:
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
@@ -14,6 +16,7 @@ concurrency:
 
 jobs:
   contract:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'text-layer-census'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -73,10 +76,7 @@ jobs:
         run: python backend/scripts/scj_principales_text_layer_census.py --aggregate --input-root "${RUNNER_TEMP}/shards" --output "${RUNNER_TEMP}/aggregate"
       - name: Publish summary
         if: always()
-        run: |
-          if test -f "${RUNNER_TEMP}/aggregate/census-summary.json"; then
-            cat "${RUNNER_TEMP}/aggregate/census-summary.json" >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: test -f "${RUNNER_TEMP}/aggregate/census-summary.json" && cat "${RUNNER_TEMP}/aggregate/census-summary.json" >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
