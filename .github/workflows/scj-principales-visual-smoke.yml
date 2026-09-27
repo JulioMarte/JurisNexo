@@ -1,20 +1,8 @@
 name: SCJ Principales visual benchmark
 
+# Paid/long-running experiment. Keep it manual; ordinary PR synchronization must
+# never spend provider credits. Permanent results live under docs/benchmarks/.
 on:
-  pull_request:
-    types: [synchronize, opened, reopened, labeled]
-    branches: [development]
-    paths:
-      - "backend/scripts/scj_principales_visual_benchmark.py"
-      - "backend/scripts/scj_principales_visual_calibration.py"
-      - "benchmark/normalization/scj_page_selection.py"
-      - "backend/src/jurisnexo/normalization/visual_page_benchmark.py"
-      - "backend/src/jurisnexo/normalization/visual_reference_alignment.py"
-      - "backend/src/jurisnexo/normalization/visual_reference_ocr.py"
-      - "backend/tests/unit/test_visual_page_benchmark.py"
-      - "backend/tests/unit/test_visual_reference_alignment.py"
-      - "backend/tests/unit/test_visual_reference_ocr.py"
-      - ".github/workflows/scj-principales-visual-smoke.yml"
   workflow_dispatch:
     inputs:
       sample_size:
@@ -54,6 +42,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: scj-principales-visual-benchmark
+  cancel-in-progress: true
+
 jobs:
   offline-contract:
     runs-on: ubuntu-24.04
@@ -62,18 +54,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install offline test runtime
-        run: python -m pip install -e ./backend pytest==9.1.1
-      - name: Validate benchmark contracts without provider spend
-        run: |
-          pytest -q \
-            backend/tests/unit/test_visual_page_benchmark.py \
-            backend/tests/unit/test_visual_reference_alignment.py \
-            backend/tests/unit/test_visual_reference_ocr.py
-      - name: Compile benchmark entrypoints
-        run: |
-          python -m py_compile backend/scripts/scj_principales_visual_benchmark.py
-          python -m py_compile backend/scripts/scj_principales_visual_calibration.py
+      - run: python -m pip install -e ./backend pytest==9.1.1
+      - run: pytest -q backend/tests/unit/test_visual_page_benchmark.py backend/tests/unit/test_visual_reference_alignment.py backend/tests/unit/test_visual_reference_ocr.py
+      - run: python -m py_compile backend/scripts/scj_principales_visual_benchmark.py backend/scripts/scj_principales_visual_calibration.py
 
   prepare:
     needs: offline-contract
@@ -86,53 +69,27 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       SCJ_VISUAL_STAGE: prepare
-      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-290' && '290' || github.event.label.name == 'live-visual-10' && '10' || '1' }}
-      SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
-      SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
-      SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
-      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-290' && '600' || github.event.label.name == 'live-visual-10' && '100' || '600' }}
-      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-290' && '600' || github.event.label.name == 'live-visual-10' && '20' || '600' }}
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ inputs.sample_size }}
+      SCJ_VISUAL_SELECTION: ${{ inputs.selection }}
+      SCJ_VISUAL_SEED: ${{ inputs.seed }}
+      SCJ_VISUAL_CURATED_MANIFEST: ${{ inputs.curated_manifest }}
+      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ inputs.alignment_audit_size }}
+      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ inputs.alignment_audit_size }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install independent visual-reference OCR
-        run: |
+      - run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            tesseract-ocr \
-            tesseract-ocr-spa \
-            tesseract-ocr-eng
-      - name: Install bounded page preparation runtime
-        run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
       - name: Freeze calibration evidence and benchmark sample once
         env:
           SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/prepared
         run: python backend/scripts/scj_principales_visual_calibration.py
-      - name: Publish calibration summary
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          if test -f "${RUNNER_TEMP}/prepared/corpus-inventory.json"; then
-            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json, os, pathlib
-          root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "prepared"
-          inventory = json.loads((root / "corpus-inventory.json").read_text())
-          summary = json.loads((root / "alignment-summary.json").read_text())
-          audited = summary["audited_candidates"]
-          accepted = summary["accepted_candidates"]
-          print("## SCJ Principales visual calibration")
-          print(f"- PDFs: {inventory['pdf_objects']}")
-          print(f"- Total PDF pages: {inventory['total_pdf_pages']}")
-          print(f"- Candidate pages audited: {audited}")
-          print(f"- Gold pages admitted: {accepted}")
-          print(f"- Admission rate: {(accepted / audited * 100) if audited else 0:.2f}%")
-          print(f"- Candidate capacity discovered: {inventory['selected_candidate_capacity']}")
-          PY
-          fi
-      - name: Preserve common source evidence
-        if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: scj-visual-prepared-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/prepared/**
@@ -140,7 +97,6 @@ jobs:
           retention-days: 90
 
   judge:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10' || github.event.label.name == 'live-visual-290'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -148,38 +104,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - judge: deepseek-official
-            model: deepseek/deepseek-v4.1-flash
-            provider: DeepSeek
-            reasoning: high
-          - judge: luna-official
-            model: openai/gpt-6-luna
-            provider: OpenAI
-            reasoning: high
-          - judge: ling-3-flash-vl
-            model: inclusionai/ling-3.0-flash-vl
-            provider: ""
-            reasoning: high
-          - judge: gemini-2-5-flash-lite
-            model: google/gemini-2.5-flash-lite
-            provider: Google AI Studio,Google Vertex
-            reasoning: high
+          - {judge: deepseek-official, model: deepseek/deepseek-v4.1-flash, provider: DeepSeek, reasoning: high}
+          - {judge: luna-official, model: openai/gpt-6-luna, provider: OpenAI, reasoning: high}
+          - {judge: ling-3-flash-vl, model: inclusionai/ling-3.0-flash-vl, provider: "", reasoning: high}
+          - {judge: gemini-2-5-flash-lite, model: google/gemini-2.5-flash-lite, provider: "Google AI Studio,Google Vertex", reasoning: high}
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
       SCJ_VISUAL_PROVIDER_ORDER: ${{ matrix.provider }}
       SCJ_VISUAL_REASONING: ${{ matrix.reasoning }}
       SCJ_VISUAL_STAGE: run
-      SCJ_VISUAL_MAX_CONCURRENCY: ${{ github.event_name == 'workflow_dispatch' && inputs.max_concurrency || github.event.label.name == 'live-visual-290' && '20' || '10' }}
+      SCJ_VISUAL_MAX_CONCURRENCY: ${{ inputs.max_concurrency }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install bounded model runtime
-        run: python -m pip install -e ./backend
-      - name: Download exact common page evidence
-        uses: actions/download-artifact@v4
+      - run: python -m pip install -e ./backend
+      - uses: actions/download-artifact@v4
         with:
           name: scj-visual-prepared-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/prepared
@@ -191,9 +133,8 @@ jobs:
       - name: Publish model summary
         if: always()
         run: test -f "${RUNNER_TEMP}/model-output/summary.md" && cat "${RUNNER_TEMP}/model-output/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
-      - name: Preserve model output and page metrics
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: scj-visual-${{ matrix.judge }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/model-output/**
