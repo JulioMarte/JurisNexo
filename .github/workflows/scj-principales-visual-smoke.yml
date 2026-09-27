@@ -82,16 +82,15 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       SCJ_VISUAL_STAGE: prepare
-      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event.label.name == 'live-visual-audit-600' && '1' || github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-10' && '10' || '1' }}
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-10' && '10' || '1' }}
       SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
       SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
-      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event.label.name == 'live-visual-audit-600' && '600' || github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '100' || '20' }}
-      # Force the large audit to inspect the complete requested candidate set.
-      # The Python benchmark normally stops early once enough pages have been
-      # admitted for the LLM sample; setting the minimum equal to the audit
-      # target disables that early exit without weakening the admission policy.
-      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event.label.name == 'live-visual-audit-600' && '600' || github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || '20' }}
+      # A normal PR synchronize is audit-only and deliberately inspects 600
+      # candidates. This commit is the calibration run; workflow_dispatch keeps
+      # smaller explicit choices for subsequent model experiments.
+      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '100' || '600' }}
+      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '20' || '600' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -120,9 +119,9 @@ jobs:
           retention-days: 90
 
   judge:
-    # The 600-page label is deliberately audit-only: it performs no paid LLM
-    # calls. Model judging remains an explicit workflow_dispatch or live-10 run.
-    if: github.event.label.name != 'live-visual-audit-600' && (github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10')
+    # PR synchronization performs only the local 600-page calibration. Paid
+    # model calls remain explicit via workflow_dispatch or the live-10 label.
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 60
