@@ -1,0 +1,90 @@
+name: SCJ Principales text-layer census
+
+on:
+  workflow_dispatch:
+    inputs:
+      shard_count:
+        description: "Number of PDF-level shards"
+        required: true
+        default: "12"
+        type: choice
+        options: ["6", "12", "18"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-principales-text-layer-census
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend pytest==9.1.1
+      - run: python -m py_compile backend/scripts/scj_principales_text_layer_census.py
+      - run: pytest -q backend/tests/unit/test_visual_reference_alignment.py backend/tests/unit/test_visual_reference_ocr.py
+
+  census:
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Census shard
+        run: python backend/scripts/scj_principales_text_layer_census.py --shard-index ${{ matrix.shard }} --shard-count 12 --output "${RUNNER_TEMP}/census"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-text-layer-census-shard-${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/census/**
+          retention-days: 90
+
+  aggregate:
+    if: always()
+    needs: census
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scj-text-layer-census-shard-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/shards
+      - name: Aggregate census
+        run: python backend/scripts/scj_principales_text_layer_census.py --aggregate --input-root "${RUNNER_TEMP}/shards" --output "${RUNNER_TEMP}/aggregate"
+      - name: Publish summary
+        if: always()
+        run: |
+          if test -f "${RUNNER_TEMP}/aggregate/census-summary.json"; then
+            cat "${RUNNER_TEMP}/aggregate/census-summary.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-text-layer-census-summary-${{ github.run_id }}
+          path: ${{ runner.temp }}/aggregate/**
+          retention-days: 365
