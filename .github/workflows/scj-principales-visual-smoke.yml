@@ -49,8 +49,12 @@ jobs:
           python-version: "3.13"
       - name: Install offline test runtime
         run: python -m pip install -e ./backend pytest==9.1.1
-      - name: Validate page benchmark contract without provider spend
-        run: pytest -q backend/tests/unit/test_visual_page_benchmark.py
+      - name: Validate benchmark contracts without provider spend
+        run: |
+          pytest -q \
+            backend/tests/unit/test_visual_page_benchmark.py \
+            backend/tests/unit/test_visual_reference_alignment.py \
+            backend/tests/unit/test_visual_reference_ocr.py
       - name: Compile benchmark entrypoint
         run: python -m py_compile backend/scripts/scj_principales_visual_benchmark.py
 
@@ -74,6 +78,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install independent visual-reference OCR
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr \
+            tesseract-ocr-spa \
+            tesseract-ocr-eng
       - name: Install bounded page preparation runtime
         run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
       - name: Freeze pages and audit evidence once
