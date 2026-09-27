@@ -114,12 +114,13 @@ def _load_prepared_pages() -> list[tuple[PageCase, bytes]]:
 
         reference_path = root / str(raw["reference_path"])
         image_path = root / str(raw["image_path"])
-        reference = reference_path.read_text(encoding="utf-8")
+        reference_bytes = reference_path.read_bytes()
         image = image_path.read_bytes()
-        if _sha256(reference.encode("utf-8")) != str(raw["reference_sha256"]):
+        if _sha256(reference_bytes) != str(raw["reference_sha256"]):
             raise RuntimeError("prepared reference hash mismatch")
         if _sha256(image) != str(raw["image_sha256"]):
             raise RuntimeError("prepared image hash mismatch")
+        reference = reference_bytes.decode("utf-8")
 
         target = select_verification_target(reference)
         if target is None:
