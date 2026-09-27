@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any, cast
 
 SCJ_IDENTIFIER_PATTERN = re.compile(r"SCJ-[A-Z0-9-]{4,}", re.IGNORECASE)
+VERIFICATION_TOKEN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    SCJ_IDENTIFIER_PATTERN,
+    re.compile(r"\b[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}\b", re.IGNORECASE),
+    re.compile(r"\b\d{4,}\b"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +26,40 @@ class VisualIdentifierCase:
 def extract_scj_identifier(text: str) -> str | None:
     match = SCJ_IDENTIFIER_PATTERN.search(text or "")
     return match.group(0).upper() if match is not None else None
+
+
+
+
+def select_verification_target(text: str) -> tuple[str, str] | None:
+    """Return a visible token and a one-character controlled corruption.
+
+    The corruption changes only the final numeric character. This preserves
+    token shape while making the candidate demonstrably different from the
+    rendered source.
+    """
+
+    for pattern in VERIFICATION_TOKEN_PATTERNS:
+        match = pattern.search(text or "")
+        if match is None:
+            continue
+        token = match.group(0)
+        characters = list(token)
+        for index in range(len(characters) - 1, -1, -1):
+            if characters[index].isdigit():
+                characters[index] = "9" if characters[index] != "9" else "8"
+                return token, "".join(characters)
+    return None
+
+
+def visible_token_is_exact(
+    *,
+    expected_visible_token: str,
+    observed_visible_token: object,
+) -> bool:
+    return (
+        isinstance(observed_visible_token, str)
+        and observed_visible_token.strip() == expected_visible_token
+    )
 
 
 def select_visual_identifier_cases(
