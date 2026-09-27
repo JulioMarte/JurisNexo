@@ -85,7 +85,7 @@ jobs:
       SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
       SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
-      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && (inputs.sample_size == '20' && '40' || inputs.sample_size == '10' && '20' || '20') || '20' }}
+      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && (inputs.sample_size == '20' && '200' || inputs.sample_size == '10' && '100' || '20') || '20' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
