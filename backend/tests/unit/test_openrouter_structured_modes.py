@@ -326,10 +326,9 @@ def test_visual_provider_can_omit_output_token_limit(
         timeout: float,
     ) -> FakeResponse:
         del timeout
-        assert request.data is not None
-        captured["payload"] = json.loads(
-            request.data.decode()
-        )
+        data = request.data
+        assert isinstance(data, bytes)
+        captured["payload"] = json.loads(data.decode())
         return FakeResponse()
 
     monkeypatch.setattr(openrouter_visual, "urlopen", fake_urlopen)
