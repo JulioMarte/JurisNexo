@@ -93,3 +93,23 @@ def test_visible_token_exactness_is_fail_closed() -> None:
         expected_visible_token="SCJ-SS-22-0514",
         observed_visible_token=None,
     )
+
+
+def test_verification_corruption_must_be_absent_from_source() -> None:
+    assert select_verification_target("Año 2009; antecedente 2008.") == (
+        "2009",
+        "2007",
+    )
+
+
+def test_verification_target_skips_repeated_tokens() -> None:
+    assert select_verification_target(
+        "Año 2013, referencia 2013, expediente 1966."
+    ) == ("1966", "1969")
+
+
+def test_visible_token_exactness_rejects_whitespace_changes() -> None:
+    assert not visible_token_is_exact(
+        expected_visible_token="2009",
+        observed_visible_token=" 2009 ",
+    )
