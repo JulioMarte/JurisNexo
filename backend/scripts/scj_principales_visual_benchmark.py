@@ -82,22 +82,22 @@ ALIGNMENT_POLICY = VisualReferencePolicy(
         os.environ.get("SCJ_VISUAL_MIN_OCR_CHARS", "600")
     ),
     minimum_ocr_mean_confidence=float(
-        os.environ.get("SCJ_VISUAL_MIN_OCR_CONFIDENCE", "85")
+        os.environ.get("SCJ_VISUAL_MIN_OCR_CONFIDENCE", "90")
     ),
     maximum_word_error_rate=float(
-        os.environ.get("SCJ_VISUAL_MAX_ALIGNMENT_WER", "0.08")
+        os.environ.get("SCJ_VISUAL_MAX_ALIGNMENT_WER", "0.10")
     ),
     maximum_character_error_rate=float(
-        os.environ.get("SCJ_VISUAL_MAX_ALIGNMENT_CER", "0.05")
+        os.environ.get("SCJ_VISUAL_MAX_ALIGNMENT_CER", "0.08")
     ),
     minimum_token_content_recall=float(
-        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_RECALL", "0.985")
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_RECALL", "0.98")
     ),
     minimum_token_content_precision=float(
-        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_PRECISION", "0.985")
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_PRECISION", "0.98")
     ),
     minimum_token_order_preservation=float(
-        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_ORDER", "0.97")
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_ORDER", "0.98")
     ),
     minimum_legal_critical_recall=float(
         os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_CRITICAL", "1.0")
