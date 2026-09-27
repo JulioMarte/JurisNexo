@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -18,6 +19,13 @@ from jurisnexo.model_providers.openrouter_visual import OpenRouterVisualModelPro
 from jurisnexo.normalization.gold import (
     assess_reference_text_health,
     score_text_fidelity,
+)
+from jurisnexo.normalization.visual_reference_alignment import (
+    VisualReferencePolicy,
+    assess_visual_reference_alignment,
+)
+from jurisnexo.normalization.visual_reference_ocr import (
+    run_tesseract_visual_ocr,
 )
 from jurisnexo.normalization.visual_page_benchmark import (
     VisualPageCase,
@@ -56,6 +64,45 @@ SEED = int(os.environ.get("SCJ_VISUAL_SEED", "20260926"))
 SELECTION = os.environ.get("SCJ_VISUAL_SELECTION", "deterministic")
 CURATED_MANIFEST = os.environ.get("SCJ_VISUAL_CURATED_MANIFEST", "").strip()
 MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "20"))
+ALIGNMENT_AUDIT_SIZE = int(
+    os.environ.get(
+        "SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE",
+        str(max(SAMPLE_SIZE * 2, 20)),
+    )
+)
+TESSERACT_LANGUAGE = os.environ.get(
+    "SCJ_VISUAL_TESSERACT_LANGUAGE",
+    "spa+eng",
+)
+ALIGNMENT_POLICY = VisualReferencePolicy(
+    minimum_native_characters=int(
+        os.environ.get("SCJ_VISUAL_MIN_NATIVE_CHARS", "800")
+    ),
+    minimum_ocr_characters=int(
+        os.environ.get("SCJ_VISUAL_MIN_OCR_CHARS", "600")
+    ),
+    minimum_ocr_mean_confidence=float(
+        os.environ.get("SCJ_VISUAL_MIN_OCR_CONFIDENCE", "85")
+    ),
+    maximum_word_error_rate=float(
+        os.environ.get("SCJ_VISUAL_MAX_ALIGNMENT_WER", "0.08")
+    ),
+    maximum_character_error_rate=float(
+        os.environ.get("SCJ_VISUAL_MAX_ALIGNMENT_CER", "0.05")
+    ),
+    minimum_token_content_recall=float(
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_RECALL", "0.985")
+    ),
+    minimum_token_content_precision=float(
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_PRECISION", "0.985")
+    ),
+    minimum_token_order_preservation=float(
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_ORDER", "0.97")
+    ),
+    minimum_legal_critical_recall=float(
+        os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_CRITICAL", "1.0")
+    ),
+)
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 PROMPT = (
     "Transcribe every visible word exactly as written. "
@@ -133,12 +180,7 @@ def _render_page(pdf_bytes: bytes, page_index: int) -> bytes:
             try:
                 image = bitmap.to_pil()
                 output = io.BytesIO()
-                image.save(
-                    output,
-                    format="JPEG",
-                    quality=90,
-                    optimize=True,
-                )
+                image.save(output, format="PNG")
                 return output.getvalue()
             finally:
                 bitmap.close()
@@ -210,6 +252,10 @@ def _discover_cases(
 def _prepare() -> int:
     if SAMPLE_SIZE < 1 or SAMPLE_SIZE > 500:
         raise ValueError("SCJ_VISUAL_SAMPLE_SIZE must be between 1 and 500")
+    if ALIGNMENT_AUDIT_SIZE < SAMPLE_SIZE:
+        raise ValueError(
+            "SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE must be >= sample size"
+        )
 
     store = build_s3_object_store()
     pool = (
@@ -217,55 +263,158 @@ def _prepare() -> int:
         if CURATED_MANIFEST
         else _discover_cases(
             store,
-            limit=max(100, SAMPLE_SIZE * 10),
+            limit=max(100, SAMPLE_SIZE * 10, ALIGNMENT_AUDIT_SIZE),
         )
     )
+    if len(pool) < SAMPLE_SIZE:
+        raise RuntimeError(
+            f"only {len(pool)} candidate pages available for "
+            f"{SAMPLE_SIZE} requested pages"
+        )
+
+    audit_candidates = pool[: min(len(pool), ALIGNMENT_AUDIT_SIZE)]
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    evidence_root = OUTPUT / "alignment-evidence"
+    audit_records: list[dict[str, Any]] = []
+    aligned_cases: list[VisualPageCase] = []
+    aligned_payloads: dict[tuple[str, int], dict[str, Any]] = {}
+    rejection_reasons: Counter[str] = Counter()
+
+    for audit_index, case in enumerate(audit_candidates):
+        audit_id = f"audit-{audit_index:04d}"
+        pdf_bytes = _read_pdf(store, case.object_key)
+        reference = _native_text(pdf_bytes, case.page_index)
+        image = _render_page(pdf_bytes, case.page_index)
+        visual = run_tesseract_visual_ocr(
+            image,
+            language=TESSERACT_LANGUAGE,
+        )
+        assessment = assess_visual_reference_alignment(
+            native_text=reference,
+            ocr_text=visual.text,
+            ocr_mean_confidence=visual.mean_confidence,
+            policy=ALIGNMENT_POLICY,
+        )
+        assessment_json = assessment.to_json_dict()
+        record = {
+            "audit_id": audit_id,
+            "object_key": case.object_key,
+            "page_index": case.page_index,
+            "gold_source": case.gold_source,
+            "accepted": assessment.accepted,
+            "assessment": assessment_json,
+            "source_pdf_sha256": _sha256(pdf_bytes),
+            "native_text_sha256": _sha256(reference.encode("utf-8")),
+            "visual_ocr_sha256": _sha256(visual.text.encode("utf-8")),
+            "image_sha256": _sha256(image),
+            "visual_ocr_engine": visual.engine_version,
+            "visual_ocr_language": visual.language,
+        }
+        audit_records.append(record)
+
+        audit_dir = (
+            evidence_root
+            / ("accepted" if assessment.accepted else "rejected")
+            / audit_id
+        )
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        (audit_dir / "input-page.png").write_bytes(image)
+        (audit_dir / "reference-native.txt").write_text(
+            reference,
+            encoding="utf-8",
+        )
+        (audit_dir / "reference-visual-ocr.txt").write_text(
+            visual.text,
+            encoding="utf-8",
+        )
+        (audit_dir / "alignment.json").write_text(
+            json.dumps(
+                record,
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        if assessment.accepted:
+            aligned_case = VisualPageCase(
+                object_key=case.object_key,
+                page_index=case.page_index,
+                gold_source="aligned_native_visual",
+            )
+            aligned_cases.append(aligned_case)
+            aligned_payloads[
+                (case.object_key, case.page_index)
+            ] = {
+                "reference": reference,
+                "image": image,
+                "visual_text": visual.text,
+                "alignment": assessment_json,
+                "visual_ocr_engine": visual.engine_version,
+                "visual_ocr_language": visual.language,
+            }
+        else:
+            rejection_reasons.update(assessment.rejection_reasons)
+
+    if len(aligned_cases) < SAMPLE_SIZE:
+        raise RuntimeError(
+            f"needed {SAMPLE_SIZE} aligned pages, found "
+            f"{len(aligned_cases)} after auditing "
+            f"{len(audit_records)} candidates"
+        )
+
     selected = select_visual_page_cases(
-        pool,
+        aligned_cases,
         sample_size=SAMPLE_SIZE,
         selection=SELECTION,
         seed=SEED,
     )
-
-    OUTPUT.mkdir(parents=True, exist_ok=True)
     manifest_cases: list[dict[str, Any]] = []
-
     for index, case in enumerate(selected):
         sample_id = f"case-{index:04d}"
         case_dir = OUTPUT / "cases" / sample_id
         case_dir.mkdir(parents=True, exist_ok=True)
-
-        pdf_bytes = _read_pdf(store, case.object_key)
-        reference = _native_text(pdf_bytes, case.page_index)
-        image = _render_page(pdf_bytes, case.page_index)
-        health = assess_reference_text_health(reference)
+        evidence = aligned_payloads[(case.object_key, case.page_index)]
+        reference = str(evidence["reference"])
+        image = bytes(evidence["image"])
+        visual_text = str(evidence["visual_text"])
 
         reference_path = case_dir / "reference-native.txt"
-        image_path = case_dir / "input-page.jpg"
+        visual_reference_path = case_dir / "reference-visual-ocr.txt"
+        image_path = case_dir / "input-page.png"
         metadata_path = case_dir / "source.json"
         reference_path.write_text(reference, encoding="utf-8")
+        visual_reference_path.write_text(
+            visual_text,
+            encoding="utf-8",
+        )
         image_path.write_bytes(image)
 
         metadata = {
             "sample_id": sample_id,
             "object_key": case.object_key,
             "page_index": case.page_index,
-            "gold_source": case.gold_source,
-            "source_pdf_sha256": _sha256(pdf_bytes),
+            "gold_source": "aligned_native_visual",
+            "source_pdf_sha256": None,
             "reference_sha256": _sha256(reference.encode("utf-8")),
+            "visual_reference_sha256": _sha256(
+                visual_text.encode("utf-8")
+            ),
             "image_sha256": _sha256(image),
             "reference_characters": len(reference),
-            "reference_reliable": health.is_reliable,
-            "reference_authority": (
-                "provisional_native_text"
-                if case.gold_source == "pdf_text_layer"
-                else "curated"
-            ),
+            "reference_reliable": True,
+            "reference_authority": "dual_channel_aligned",
             "reference_caveat": (
-                "Native PDF text is comparison evidence, not authoritative visual gold."
-                if case.gold_source == "pdf_text_layer"
-                else None
+                "Native PDF text is used for scoring only because an "
+                "independent OCR reading of the exact rendered page passed "
+                "the admission policy. The preserved image remains the "
+                "primary human-auditable evidence."
             ),
+            "alignment": evidence["alignment"],
+            "visual_ocr_engine": evidence["visual_ocr_engine"],
+            "visual_ocr_language": evidence["visual_ocr_language"],
         }
         metadata_path.write_text(
             json.dumps(
@@ -283,6 +432,9 @@ def _prepare() -> int:
                 "reference_path": str(
                     reference_path.relative_to(OUTPUT)
                 ),
+                "visual_reference_path": str(
+                    visual_reference_path.relative_to(OUTPUT)
+                ),
                 "image_path": str(image_path.relative_to(OUTPUT)),
                 "metadata_path": str(
                     metadata_path.relative_to(OUTPUT)
@@ -290,14 +442,44 @@ def _prepare() -> int:
             }
         )
 
+    (OUTPUT / "alignment-audit.jsonl").write_text(
+        "".join(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
+            for record in audit_records
+        ),
+        encoding="utf-8",
+    )
+    audited = len(audit_records)
+    accepted = sum(
+        bool(record["accepted"]) for record in audit_records
+    )
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark_kind": "full_page_visual_transcription",
         "selection": {
             "mode": SELECTION,
             "seed": SEED,
             "sample_size": SAMPLE_SIZE,
             "curated_manifest": CURATED_MANIFEST or None,
+        },
+        "reference_admission": {
+            "kind": "dual_channel_visual_native",
+            "audited_candidates": audited,
+            "accepted_candidates": accepted,
+            "rejected_candidates": audited - accepted,
+            "observed_acceptance_rate": (
+                accepted / audited if audited else 0.0
+            ),
+            "rejection_reasons": dict(
+                sorted(rejection_reasons.items())
+            ),
+            "visual_ocr_language": TESSERACT_LANGUAGE,
+            "policy": asdict(ALIGNMENT_POLICY),
         },
         "prompt": PROMPT,
         "cases": manifest_cases,
@@ -316,6 +498,11 @@ def _prepare() -> int:
         json.dumps(
             {
                 "prepared_cases": len(manifest_cases),
+                "audited_candidates": audited,
+                "accepted_candidates": accepted,
+                "observed_acceptance_rate": (
+                    accepted / audited if audited else 0.0
+                ),
                 "output": str(OUTPUT),
             },
             sort_keys=True,
@@ -376,7 +563,7 @@ def _run_one(
             try:
                 response = provider.verify_image_text(
                     image=image,
-                    media_type="image/jpeg",
+                    media_type="image/png",
                     prompt=PROMPT,
                     json_schema={"type": "object"},
                     max_output_tokens=None,
@@ -638,10 +825,12 @@ def _run_model() -> int:
         },
         "reference_semantics": {
             "pdf_text_layer_is_authoritative_gold": False,
+            "reference_status": "dual_channel_aligned",
             "purpose": (
-                "Use native text for provisional comparison only; "
-                "inspect preserved page image, native text, and model output "
-                "when discrepancies are material."
+                "Score against native text only after independent OCR of the "
+                "exact rendered page agrees under the admission policy. "
+                "The preserved image remains the primary human-auditable "
+                "evidence for adjudicating material discrepancies."
             ),
         },
         "records": [asdict(result) for result in results],
