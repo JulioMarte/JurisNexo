@@ -37,7 +37,7 @@ sys.path.insert(
     0,
     str(Path(__file__).resolve().parents[2] / "benchmark" / "normalization"),
 )
-from scj_page_selection import has_native_text, select_reference_page  # noqa: E402
+from scj_page_selection import has_native_text, select_reference_pages  # noqa: E402
 
 OUTPUT = Path(
     os.environ.get(
@@ -225,7 +225,17 @@ def _discover_cases(
     *,
     limit: int,
 ) -> list[VisualPageCase]:
-    cases: list[VisualPageCase] = []
+    if limit < 1:
+        raise ValueError("limit must be positive")
+
+    # Build several distributed body-page candidates per document, then
+    # interleave by page rank. This preserves document diversity: every
+    # eligible PDF contributes its first candidate before any PDF contributes
+    # a second one. The admission gate remains unchanged; this only gives it a
+    # sufficiently large local pool to find aligned pages without weakening
+    # quality thresholds.
+    per_document: list[list[VisualPageCase]] = []
+    max_pages_per_document = 4
     for key in _list_pdf_keys(store):
         try:
             pdf_bytes = _read_pdf(store, key)
@@ -233,22 +243,33 @@ def _discover_cases(
             continue
         if not has_native_text(pdf_bytes):
             continue
-        selected = select_reference_page(
+        selected_pages = select_reference_pages(
             pdf_bytes,
             min_reference_chars=800,
             max_pages_to_scan=120,
+            max_pages_per_document=max_pages_per_document,
         )
-        if selected is None:
+        if not selected_pages:
             continue
-        cases.append(
-            VisualPageCase(
-                object_key=key,
-                page_index=selected.page_index,
-                gold_source="pdf_text_layer",
-            )
+        per_document.append(
+            [
+                VisualPageCase(
+                    object_key=key,
+                    page_index=selected.page_index,
+                    gold_source="pdf_text_layer",
+                )
+                for selected in selected_pages
+            ]
         )
-        if len(cases) >= limit:
-            break
+
+    cases: list[VisualPageCase] = []
+    for page_rank in range(max_pages_per_document):
+        for document_cases in per_document:
+            if page_rank >= len(document_cases):
+                continue
+            cases.append(document_cases[page_rank])
+            if len(cases) >= limit:
+                return cases
     return cases
 
 
