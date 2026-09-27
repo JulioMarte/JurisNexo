@@ -16,22 +16,23 @@ on:
   workflow_dispatch:
     inputs:
       sample_size:
-        description: "Pages to benchmark"
+        description: "Pages to benchmark with the LLM judge after admission"
         required: true
         default: "1"
         type: choice
-        options:
-          - "1"
-          - "10"
-          - "20"
+        options: ["1", "10", "20"]
+      alignment_audit_size:
+        description: "Candidate pages to audit locally (image OCR vs native PDF text)"
+        required: true
+        default: "20"
+        type: choice
+        options: ["20", "100", "600"]
       selection:
         description: "How to select from the eligible page pool"
         required: true
         default: deterministic
         type: choice
-        options:
-          - deterministic
-          - random
+        options: [deterministic, random]
       seed:
         description: "Seed used when selection=random"
         required: true
@@ -73,7 +74,7 @@ jobs:
   prepare:
     needs: offline-contract
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 120
     env:
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
       JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
@@ -81,11 +82,16 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       SCJ_VISUAL_STAGE: prepare
-      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-10' && '10' || '1' }}
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event.label.name == 'live-visual-audit-600' && '1' || github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-10' && '10' || '1' }}
       SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
       SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
-      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && (inputs.sample_size == '20' && '200' || inputs.sample_size == '10' && '100' || '20') || github.event.label.name == 'live-visual-10' && '100' || '20' }}
+      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event.label.name == 'live-visual-audit-600' && '600' || github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '100' || '20' }}
+      # Force the large audit to inspect the complete requested candidate set.
+      # The Python benchmark normally stops early once enough pages have been
+      # admitted for the LLM sample; setting the minimum equal to the audit
+      # target disables that early exit without weakening the admission policy.
+      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event.label.name == 'live-visual-audit-600' && '600' || github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || '20' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -114,7 +120,9 @@ jobs:
           retention-days: 90
 
   judge:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10'
+    # The 600-page label is deliberately audit-only: it performs no paid LLM
+    # calls. Model judging remains an explicit workflow_dispatch or live-10 run.
+    if: github.event.label.name != 'live-visual-audit-600' && (github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10')
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 60
