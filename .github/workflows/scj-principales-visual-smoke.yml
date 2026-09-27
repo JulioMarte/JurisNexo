@@ -105,6 +105,7 @@ jobs:
           SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/prepared
         run: python backend/scripts/scj_principales_visual_benchmark.py
       - name: Preserve common source evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scj-visual-prepared-${{ github.run_id }}-${{ github.run_attempt }}
