@@ -50,7 +50,7 @@ class OpenRouterVisualModelProvider:
         media_type: str,
         prompt: str,
         json_schema: JsonObject,
-        max_output_tokens: int,
+        max_output_tokens: int | None,
     ) -> StructuredGenerationResult:
         encoded = base64.b64encode(image).decode("ascii")
         payload: JsonObject = {
@@ -62,10 +62,13 @@ class OpenRouterVisualModelProvider:
                     {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{encoded}"}},
                 ],
             }],
-            "max_tokens": max_output_tokens,
             "provider": self._provider_routing(),
             "usage": {"include": True},
         }
+        if max_output_tokens is not None:
+            if max_output_tokens < 1:
+                raise ValueError("max_output_tokens must be positive when provided")
+            payload["max_tokens"] = max_output_tokens
         self._apply_structured_output(payload=payload, json_schema=json_schema)
         if self.reasoning_effort != "none":
             payload["reasoning"] = {"effort": self.reasoning_effort, "exclude": True}
