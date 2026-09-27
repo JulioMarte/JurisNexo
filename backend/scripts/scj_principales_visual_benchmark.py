@@ -67,8 +67,11 @@ MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "20"))
 ALIGNMENT_AUDIT_SIZE = int(
     os.environ.get(
         "SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE",
-        str(max(SAMPLE_SIZE * 2, 20)),
+        str(max(SAMPLE_SIZE * 10, 20)),
     )
+)
+MIN_ALIGNMENT_AUDIT_SIZE = int(
+    os.environ.get("SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE", "20")
 )
 TESSERACT_LANGUAGE = os.environ.get(
     "SCJ_VISUAL_TESSERACT_LANGUAGE",
@@ -372,12 +375,20 @@ def _prepare() -> int:
                 "reference": reference,
                 "image": image,
                 "visual_text": visual.text,
+                "source_pdf_sha256": _sha256(pdf_bytes),
                 "alignment": assessment_json,
                 "visual_ocr_engine": visual.engine_version,
                 "visual_ocr_language": visual.language,
             }
         else:
             rejection_reasons.update(assessment.rejection_reasons)
+
+        audited_count = audit_index + 1
+        if (
+            len(aligned_cases) >= SAMPLE_SIZE
+            and audited_count >= MIN_ALIGNMENT_AUDIT_SIZE
+        ):
+            break
 
     (OUTPUT / "alignment-audit.jsonl").write_text(
         "".join(
@@ -449,7 +460,7 @@ def _prepare() -> int:
             "object_key": case.object_key,
             "page_index": case.page_index,
             "gold_source": "aligned_native_visual",
-            "source_pdf_sha256": None,
+            "source_pdf_sha256": evidence["source_pdf_sha256"],
             "reference_sha256": _sha256(reference.encode("utf-8")),
             "visual_reference_sha256": _sha256(
                 visual_text.encode("utf-8")
