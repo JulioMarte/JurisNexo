@@ -21,7 +21,7 @@ class _NotFound(Exception):
 
 @dataclass
 class _MemoryS3Client:
-    objects: dict[str, bytes] = field(default_factory=dict)
+    objects: dict[str, bytes] = field(default_factory=lambda: {})
 
     def head_object(self, *, Bucket: str, Key: str) -> object:
         del Bucket
