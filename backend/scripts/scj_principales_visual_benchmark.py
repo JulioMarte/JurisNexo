@@ -311,6 +311,27 @@ def _prepare() -> int:
             "visual_ocr_language": visual.language,
         }
         audit_records.append(record)
+        score = assessment.score
+        print(
+            json.dumps(
+                {
+                    "alignment_audit": audit_id,
+                    "accepted": assessment.accepted,
+                    "reasons": list(assessment.rejection_reasons),
+                    "wer": score.word_error_rate,
+                    "cer": score.character_error_rate,
+                    "recall": score.token_content_recall,
+                    "precision": score.token_content_precision,
+                    "order": score.token_order_preservation,
+                    "critical": score.legal_critical_recall,
+                    "ocr_confidence": visual.mean_confidence,
+                    "native_chars": len(reference),
+                    "ocr_chars": len(visual.text),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
 
         audit_dir = (
             evidence_root
@@ -358,7 +379,38 @@ def _prepare() -> int:
         else:
             rejection_reasons.update(assessment.rejection_reasons)
 
+    (OUTPUT / "alignment-audit.jsonl").write_text(
+        "".join(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
+            for record in audit_records
+        ),
+        encoding="utf-8",
+    )
+    audit_summary = {
+        "audited_candidates": len(audit_records),
+        "accepted_candidates": len(aligned_cases),
+        "rejected_candidates": len(audit_records) - len(aligned_cases),
+        "rejection_reasons": dict(sorted(rejection_reasons.items())),
+        "policy": asdict(ALIGNMENT_POLICY),
+    }
+    (OUTPUT / "alignment-summary.json").write_text(
+        json.dumps(
+            audit_summary,
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     if len(aligned_cases) < SAMPLE_SIZE:
+        print(json.dumps(audit_summary, sort_keys=True), flush=True)
         raise RuntimeError(
             f"needed {SAMPLE_SIZE} aligned pages, found "
             f"{len(aligned_cases)} after auditing "
@@ -442,18 +494,6 @@ def _prepare() -> int:
             }
         )
 
-    (OUTPUT / "alignment-audit.jsonl").write_text(
-        "".join(
-            json.dumps(
-                record,
-                ensure_ascii=False,
-                sort_keys=True,
-            )
-            + "\n"
-            for record in audit_records
-        ),
-        encoding="utf-8",
-    )
     audited = len(audit_records)
     accepted = sum(
         bool(record["accepted"]) for record in audit_records
