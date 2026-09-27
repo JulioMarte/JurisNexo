@@ -71,7 +71,7 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       SCJ_VISUAL_STAGE: prepare
-      SCJ_VISUAL_SAMPLE_SIZE: ${{ inputs.sample_size || '1' }}
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ inputs.sample_size || '10' }}
       SCJ_VISUAL_SELECTION: ${{ inputs.selection || 'deterministic' }}
       SCJ_VISUAL_SEED: ${{ inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ inputs.curated_manifest || '' }}
@@ -120,7 +120,7 @@ jobs:
       SCJ_VISUAL_PROVIDER_ORDER: ${{ matrix.provider }}
       SCJ_VISUAL_REASONING: none
       SCJ_VISUAL_STAGE: run
-      SCJ_VISUAL_MAX_CONCURRENCY: ${{ inputs.max_concurrency || '1' }}
+      SCJ_VISUAL_MAX_CONCURRENCY: ${{ inputs.max_concurrency || '10' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
