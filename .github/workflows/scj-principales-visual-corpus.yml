@@ -108,3 +108,32 @@ jobs:
           path: ${{ runner.temp }}/visual-corpus/**
           if-no-files-found: warn
           retention-days: 90
+
+
+  compare:
+    needs: judge
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Download all model reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scj-visual-corpus-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/model-reports
+          merge-multiple: false
+      - name: Build per-page cross-model comparison
+        run: |
+          python backend/scripts/compare_visual_corpus_reports.py \
+            --input "${RUNNER_TEMP}/model-reports" \
+            --output "${RUNNER_TEMP}/comparison"
+          cat "${RUNNER_TEMP}/comparison/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve cross-model comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-visual-corpus-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/comparison/**
+          retention-days: 90
