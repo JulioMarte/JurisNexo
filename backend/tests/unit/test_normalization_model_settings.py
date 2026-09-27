@@ -24,6 +24,12 @@ def test_prompt_json_is_available_to_luna_for_provider_compatibility() -> None:
     assert settings.luna_structured_mode == "prompt_json"
 
 
-def test_unknown_structured_mode_is_rejected() -> None:
+def test_unknown_structured_mode_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "JURISNEXO_OPENROUTER_DEEPSEEK_STRUCTURED_MODE",
+        "not-a-mode",
+    )
     with pytest.raises(ValidationError):
-        NormalizationModelSettings(deepseek_structured_mode="not-a-mode")
+        NormalizationModelSettings()
