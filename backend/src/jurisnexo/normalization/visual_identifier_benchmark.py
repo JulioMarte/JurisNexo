@@ -31,23 +31,37 @@ def extract_scj_identifier(text: str) -> str | None:
 
 
 def select_verification_target(text: str) -> tuple[str, str] | None:
-    """Return a visible token and a one-character controlled corruption.
+    """Return a unique visible token and a guaranteed-absent corruption.
 
-    The corruption changes only the final numeric character. This preserves
-    token shape while making the candidate demonstrably different from the
-    rendered source.
+    A benchmark corruption is valid only when the source token occurs exactly
+    once on the page and the one-character mutant does not occur anywhere in
+    the reference text. This avoids counting a different, genuinely visible
+    year or identifier as a model error.
     """
 
+    source = text or ""
+    folded = source.casefold()
     for pattern in VERIFICATION_TOKEN_PATTERNS:
-        match = pattern.search(text or "")
-        if match is None:
-            continue
-        token = match.group(0)
-        characters = list(token)
-        for index in range(len(characters) - 1, -1, -1):
-            if characters[index].isdigit():
-                characters[index] = "9" if characters[index] != "9" else "8"
-                return token, "".join(characters)
+        for match in pattern.finditer(source):
+            token = match.group(0)
+            if folded.count(token.casefold()) != 1:
+                continue
+            characters = list(token)
+            digit_positions = [
+                index
+                for index in range(len(characters) - 1, -1, -1)
+                if characters[index].isdigit()
+            ]
+            for index in digit_positions:
+                original_digit = characters[index]
+                for replacement in "9876543210":
+                    if replacement == original_digit:
+                        continue
+                    mutated = characters.copy()
+                    mutated[index] = replacement
+                    candidate = "".join(mutated)
+                    if candidate.casefold() not in folded:
+                        return token, candidate
     return None
 
 
@@ -58,7 +72,7 @@ def visible_token_is_exact(
 ) -> bool:
     return (
         isinstance(observed_visible_token, str)
-        and observed_visible_token.strip() == expected_visible_token
+        and observed_visible_token == expected_visible_token
     )
 
 
