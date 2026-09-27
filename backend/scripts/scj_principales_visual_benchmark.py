@@ -256,6 +256,16 @@ def _prepare() -> int:
             "image_sha256": _sha256(image),
             "reference_characters": len(reference),
             "reference_reliable": health.is_reliable,
+            "reference_authority": (
+                "provisional_native_text"
+                if case.gold_source == "pdf_text_layer"
+                else "curated"
+            ),
+            "reference_caveat": (
+                "Native PDF text is comparison evidence, not authoritative visual gold."
+                if case.gold_source == "pdf_text_layer"
+                else None
+            ),
         }
         metadata_path.write_text(
             json.dumps(
@@ -600,7 +610,7 @@ def _run_model() -> int:
                 else None
             ),
         },
-        "quality": {
+        "quality_vs_reference": {
             "mean_word_error_rate": _mean_optional(
                 [result.word_error_rate for result in completed]
             ),
@@ -624,6 +634,14 @@ def _run_model() -> int:
                     result.legal_critical_recall
                     for result in completed
                 ]
+            ),
+        },
+        "reference_semantics": {
+            "pdf_text_layer_is_authoritative_gold": False,
+            "purpose": (
+                "Use native text for provisional comparison only; "
+                "inspect preserved page image, native text, and model output "
+                "when discrepancies are material."
             ),
         },
         "records": [asdict(result) for result in results],
@@ -657,9 +675,9 @@ def _run_model() -> int:
         f"- Wall clock: {wall_ms} ms\n"
         f"- Mean latency/page: {report['latency_ms']['mean']} ms\n"
         f"- Cost total: ${report['cost']['total_usd']:.8f}\n"
-        f"- Mean WER: {report['quality']['mean_word_error_rate']}\n"
-        f"- Mean legal-critical recall: "
-        f"{report['quality']['mean_legal_critical_recall']}\n"
+        f"- Mean WER vs reference: {report['quality_vs_reference']['mean_word_error_rate']}\n"
+        f"- Mean legal-critical recall vs reference: "
+        f"{report['quality_vs_reference']['mean_legal_critical_recall']}\n"
         f"- Tokens in/out/thinking: "
         f"{report['tokens']['input_total']} / "
         f"{report['tokens']['output_total']} / "
