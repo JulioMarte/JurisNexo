@@ -99,7 +99,7 @@ jobs:
           - judge: deepseek-official
             model: deepseek/deepseek-v4.1-flash
             provider: DeepSeek
-            structured_mode: json_schema
+            structured_mode: json_object
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
