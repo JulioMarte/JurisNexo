@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_text_provider_tool_mode_forces_function_call() -> None:
     from jurisnexo.model_providers.contracts import JsonObject
@@ -267,8 +269,12 @@ def test_text_provider_does_not_retry_http_or_transport_failures() -> None:
     assert provider.calls == 1
 
 
-def test_visual_provider_can_omit_output_token_limit(monkeypatch) -> None:
+def test_visual_provider_can_omit_output_token_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import json
+    from types import TracebackType
+    from urllib.request import Request
 
     from jurisnexo.model_providers import openrouter_visual
     from jurisnexo.model_providers.openrouter_visual import (
@@ -278,10 +284,16 @@ def test_visual_provider_can_omit_output_token_limit(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeResponse:
-        def __enter__(self):
+        def __enter__(self) -> "FakeResponse":
             return self
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> None:
+            del exc_type, exc, tb
             return None
 
         def read(self) -> bytes:
@@ -309,9 +321,15 @@ def test_visual_provider_can_omit_output_token_limit(monkeypatch) -> None:
                 }
             ).encode()
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(
+        request: Request,
+        timeout: float,
+    ) -> FakeResponse:
         del timeout
-        captured["payload"] = json.loads(request.data.decode())
+        assert request.data is not None
+        captured["payload"] = json.loads(
+            request.data.decode()
+        )
         return FakeResponse()
 
     monkeypatch.setattr(openrouter_visual, "urlopen", fake_urlopen)
