@@ -56,8 +56,9 @@ def assess_visual_reference_alignment(
     native_text: str,
     ocr_text: str,
     ocr_mean_confidence: float | None,
-    policy: VisualReferencePolicy = VisualReferencePolicy(),
+    policy: VisualReferencePolicy | None = None,
 ) -> VisualReferenceAssessment:
+    policy = policy or VisualReferencePolicy()
     native_health = assess_reference_text_health(native_text)
     score = score_text_fidelity(
         expected_text=native_text,
