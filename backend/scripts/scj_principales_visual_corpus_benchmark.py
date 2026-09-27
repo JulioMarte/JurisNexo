@@ -383,6 +383,10 @@ def _run_prepared(
             "object_key": sample["object_key"],
             "page_index": sample["page_index"],
             "reference_characters": len(item.reference),
+            "reference_text": item.reference,
+            "reference_sha256": hashlib.sha256(
+                item.reference.encode("utf-8")
+            ).hexdigest(),
             "transcription_characters": len(transcription),
             "transcription": transcription,
             "preparation_ms": item.preparation_ms,
@@ -410,6 +414,10 @@ def _run_prepared(
             "object_key": sample["object_key"],
             "page_index": sample["page_index"],
             "reference_characters": len(item.reference),
+            "reference_text": item.reference,
+            "reference_sha256": hashlib.sha256(
+                item.reference.encode("utf-8")
+            ).hexdigest(),
             "transcription_characters": 0,
             "transcription": "",
             "preparation_ms": item.preparation_ms,
