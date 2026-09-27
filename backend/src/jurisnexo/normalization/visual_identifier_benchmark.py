@@ -5,6 +5,7 @@ import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 SCJ_IDENTIFIER_PATTERN = re.compile(r"SCJ-[A-Z0-9-]{4,}", re.IGNORECASE)
 
@@ -43,16 +44,33 @@ def select_visual_identifier_cases(
 
 
 def load_visual_identifier_manifest(path: str | Path) -> list[VisualIdentifierCase]:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    rows = data.get("cases", data) if isinstance(data, dict) else data
-    if not isinstance(rows, list):
-        raise ValueError("visual identifier manifest must contain a list of cases")
-    return [
-        VisualIdentifierCase(
-            object_key=str(row["object_key"]),
-            page_index=int(row["page_index"]),
-            expected_identifier=str(row["expected_identifier"]).upper(),
-            gold_source=str(row.get("gold_source") or "curated"),
+    loaded: Any = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows_raw: Any
+    if isinstance(loaded, dict):
+        loaded_dict = cast(dict[str, Any], loaded)
+        rows_raw = loaded_dict.get("cases", loaded_dict)
+    else:
+        rows_raw = loaded
+    if not isinstance(rows_raw, list):
+        raise ValueError(
+            "visual identifier manifest must contain a list of cases"
         )
-        for row in rows
-    ]
+    rows = cast(list[Any], rows_raw)
+    cases: list[VisualIdentifierCase] = []
+    for raw_row in rows:
+        if not isinstance(raw_row, dict):
+            raise ValueError("each visual case must be an object")
+        row = cast(dict[str, Any], raw_row)
+        cases.append(
+            VisualIdentifierCase(
+                object_key=str(row["object_key"]),
+                page_index=int(row["page_index"]),
+                expected_identifier=str(
+                    row["expected_identifier"]
+                ).upper(),
+                gold_source=str(
+                    row.get("gold_source") or "curated"
+                ),
+            )
+        )
+    return cases
