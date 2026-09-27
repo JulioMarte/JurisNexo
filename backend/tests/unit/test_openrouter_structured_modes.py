@@ -265,3 +265,76 @@ def test_text_provider_does_not_retry_http_or_transport_failures() -> None:
     else:
         raise AssertionError("transport failure must propagate")
     assert provider.calls == 1
+
+
+def test_visual_provider_can_omit_output_token_limit(monkeypatch) -> None:
+    import json
+
+    from jurisnexo.model_providers import openrouter_visual
+    from jurisnexo.model_providers.openrouter_visual import (
+        OpenRouterVisualModelProvider,
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "id": "fixture",
+                    "model": "fixture",
+                    "provider": "Fixture",
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 2,
+                        },
+                        "total_tokens": 15,
+                        "cost": 0.001,
+                    },
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "fixture transcription",
+                            }
+                        }
+                    ],
+                }
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        del timeout
+        captured["payload"] = json.loads(request.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(openrouter_visual, "urlopen", fake_urlopen)
+
+    provider = OpenRouterVisualModelProvider(
+        api_key="test-key",
+        model="fixture",
+        reasoning_effort="none",
+        structured_mode="raw_text",
+    )
+    result = provider.verify_image_text(
+        image=b"fixture-image",
+        media_type="image/png",
+        prompt="transcribe",
+        json_schema={"type": "object"},
+        max_output_tokens=None,
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert "max_tokens" not in payload
+    assert result.usage.input_tokens == 10
+    assert result.usage.output_tokens == 5
+    assert result.usage.thinking_tokens == 2
+    assert result.usage.total_tokens == 15
+    assert result.cost_usd == 0.001
