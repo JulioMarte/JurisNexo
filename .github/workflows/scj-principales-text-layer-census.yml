@@ -1,14 +1,9 @@
 name: SCJ Principales text-layer census
 
+# Expensive in runner time but uses no paid LLM. Manual because this is a corpus
+# census, not a per-commit regression test.
 on:
   workflow_dispatch:
-    inputs:
-      shard_count:
-        description: "Number of PDF-level shards"
-        required: true
-        default: "12"
-        type: choice
-        options: ["6", "12", "18"]
 
 permissions:
   contents: read
@@ -27,7 +22,7 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -e ./backend pytest==9.1.1
       - run: python -m py_compile backend/scripts/scj_principales_text_layer_census.py
-      - run: pytest -q backend/tests/unit/test_visual_reference_alignment.py backend/tests/unit/test_visual_reference_ocr.py
+      - run: pytest -q backend/tests/unit/test_scj_principales_text_layer_census.py backend/tests/unit/test_visual_reference_alignment.py backend/tests/unit/test_visual_reference_ocr.py
 
   census:
     needs: contract
