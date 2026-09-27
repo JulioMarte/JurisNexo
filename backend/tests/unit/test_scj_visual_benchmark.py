@@ -5,7 +5,9 @@ import pytest
 from jurisnexo.normalization.visual_identifier_benchmark import (
     VisualIdentifierCase,
     extract_scj_identifier,
+    select_verification_target,
     select_visual_identifier_cases,
+    visible_token_is_exact,
 )
 
 
@@ -63,3 +65,31 @@ def test_selection_refuses_oversampling() -> None:
             selection="deterministic",
             seed=7,
         )
+
+
+def test_select_verification_target_prefers_legal_identifier() -> None:
+    assert select_verification_target(
+        "Sentencia SCJ-SS-22-0514 del año 2026"
+    ) == ("SCJ-SS-22-0514", "SCJ-SS-22-0519")
+
+
+def test_select_verification_target_falls_back_to_long_number() -> None:
+    assert select_verification_target("Expediente número 123456") == (
+        "123456",
+        "123459",
+    )
+
+
+def test_visible_token_exactness_is_fail_closed() -> None:
+    assert visible_token_is_exact(
+        expected_visible_token="SCJ-SS-22-0514",
+        observed_visible_token="SCJ-SS-22-0514",
+    )
+    assert not visible_token_is_exact(
+        expected_visible_token="SCJ-SS-22-0514",
+        observed_visible_token="SCJ-SS-22-0519",
+    )
+    assert not visible_token_is_exact(
+        expected_visible_token="SCJ-SS-22-0514",
+        observed_visible_token=None,
+    )
