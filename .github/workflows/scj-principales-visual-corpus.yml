@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       page_count:
-        description: "Number of pages to benchmark"
+        description: "Number of full pages to benchmark"
         required: true
         default: "1"
         type: choice
@@ -66,22 +66,21 @@ jobs:
           - judge: deepseek-official
             model: deepseek/deepseek-v4.1-flash
             provider: DeepSeek
-            reasoning: high
           - judge: luna-official
             model: openai/gpt-6-luna
             provider: OpenAI
-            reasoning: high
           - judge: ling-vl
             model: inclusionai/ling-3.0-flash-vl
             provider: ""
-            reasoning: none
+          - judge: gemini-flash-lite
+            model: google/gemini-2.5-flash-lite
+            provider: ""
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
       SCJ_VISUAL_PROVIDER: ${{ matrix.provider }}
       SCJ_VISUAL_STRUCTURED_MODE: raw_text
-      SCJ_VISUAL_REASONING: ${{ matrix.reasoning }}
-      SCJ_VISUAL_MAX_COST_USD: "1.00"
+      SCJ_VISUAL_REASONING: none
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -93,7 +92,7 @@ jobs:
         with:
           name: scj-visual-corpus-manifest-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/manifest
-      - name: Run visual corpus benchmark
+      - name: Run full-page visual benchmark without JurisNexo token cap
         env:
           SCJ_VISUAL_CORPUS_MODE: run
           SCJ_VISUAL_CORPUS_MANIFEST: ${{ runner.temp }}/manifest/manifest.json
