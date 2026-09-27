@@ -14,12 +14,6 @@ on:
         required: true
         default: "1"
         type: string
-  pull_request:
-    types: [synchronize]
-    branches: [development]
-    paths:
-      - ".github/workflows/scj-principales-visual-corpus.yml"
-
 permissions:
   contents: read
 
@@ -34,8 +28,8 @@ env:
   JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
   JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
   JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
-  SCJ_VISUAL_PAGE_COUNT: ${{ inputs.page_count || '1' }}
-  SCJ_VISUAL_MAX_CONCURRENCY: ${{ inputs.max_concurrency || '1' }}
+  SCJ_VISUAL_PAGE_COUNT: ${{ inputs.page_count }}
+  SCJ_VISUAL_MAX_CONCURRENCY: ${{ inputs.max_concurrency }}
   SCJ_VISUAL_CORPUS_SEED: jurisnexo-principales-visual-v1
 
 jobs:
