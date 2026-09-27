@@ -1,6 +1,18 @@
 name: SCJ Principales visual benchmark
 
 on:
+  pull_request:
+    types: [synchronize, opened, reopened]
+    branches: [development]
+    paths:
+      - "backend/scripts/scj_principales_visual_benchmark.py"
+      - "backend/src/jurisnexo/normalization/visual_page_benchmark.py"
+      - "backend/src/jurisnexo/normalization/visual_reference_alignment.py"
+      - "backend/src/jurisnexo/normalization/visual_reference_ocr.py"
+      - "backend/tests/unit/test_visual_page_benchmark.py"
+      - "backend/tests/unit/test_visual_reference_alignment.py"
+      - "backend/tests/unit/test_visual_reference_ocr.py"
+      - ".github/workflows/scj-principales-visual-smoke.yml"
   workflow_dispatch:
     inputs:
       sample_size:
@@ -69,10 +81,11 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       SCJ_VISUAL_STAGE: prepare
-      SCJ_VISUAL_SAMPLE_SIZE: ${{ inputs.sample_size }}
-      SCJ_VISUAL_SELECTION: ${{ inputs.selection }}
-      SCJ_VISUAL_SEED: ${{ inputs.seed }}
-      SCJ_VISUAL_CURATED_MANIFEST: ${{ inputs.curated_manifest }}
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.sample_size || '1' }}
+      SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
+      SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
+      SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
+      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && (inputs.sample_size == '20' && '40' || inputs.sample_size == '10' && '20' || '20') || '20' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -100,6 +113,7 @@ jobs:
           retention-days: 90
 
   judge:
+    if: github.event_name == 'workflow_dispatch'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 60
