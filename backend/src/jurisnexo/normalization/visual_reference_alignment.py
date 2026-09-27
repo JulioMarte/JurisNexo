@@ -14,12 +14,12 @@ from jurisnexo.normalization.gold import (
 class VisualReferencePolicy:
     minimum_native_characters: int = 800
     minimum_ocr_characters: int = 600
-    minimum_ocr_mean_confidence: float = 85.0
-    maximum_word_error_rate: float = 0.08
-    maximum_character_error_rate: float = 0.05
-    minimum_token_content_recall: float = 0.985
-    minimum_token_content_precision: float = 0.985
-    minimum_token_order_preservation: float = 0.97
+    minimum_ocr_mean_confidence: float = 90.0
+    maximum_word_error_rate: float = 0.10
+    maximum_character_error_rate: float = 0.08
+    minimum_token_content_recall: float = 0.98
+    minimum_token_content_precision: float = 0.98
+    minimum_token_order_preservation: float = 0.98
     minimum_legal_critical_recall: float = 1.0
 
 
