@@ -87,8 +87,7 @@ jobs:
       SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
       # A normal PR synchronize is audit-only and deliberately inspects 600
-      # candidates. This commit is the calibration run; workflow_dispatch keeps
-      # smaller explicit choices for subsequent model experiments.
+      # candidates. Keep this path separate from paid model judging.
       SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '100' || '600' }}
       SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '20' || '600' }}
     steps:
