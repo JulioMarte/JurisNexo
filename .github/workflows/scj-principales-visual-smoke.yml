@@ -86,12 +86,12 @@ jobs:
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       SCJ_VISUAL_STAGE: prepare
-      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-10' && '10' || '1' }}
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.sample_size || github.event.label.name == 'live-visual-290' && '290' || github.event.label.name == 'live-visual-10' && '10' || '1' }}
       SCJ_VISUAL_SELECTION: ${{ github.event_name == 'workflow_dispatch' && inputs.selection || 'deterministic' }}
       SCJ_VISUAL_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '20260926' }}
       SCJ_VISUAL_CURATED_MANIFEST: ${{ github.event_name == 'workflow_dispatch' && inputs.curated_manifest || '' }}
-      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '100' || '600' }}
-      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-10' && '20' || '600' }}
+      SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-290' && '600' || github.event.label.name == 'live-visual-10' && '100' || '600' }}
+      SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_audit_size || github.event.label.name == 'live-visual-290' && '600' || github.event.label.name == 'live-visual-10' && '20' || '600' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -140,10 +140,7 @@ jobs:
           retention-days: 90
 
   judge:
-    # PR synchronization performs only local calibration. Paid model calls are
-    # explicit. Every matrix member downloads the exact same frozen artifact,
-    # so the four-model comparison is page-for-page and prompt-for-prompt.
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10'
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'live-visual-10' || github.event.label.name == 'live-visual-290'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -173,7 +170,7 @@ jobs:
       SCJ_VISUAL_PROVIDER_ORDER: ${{ matrix.provider }}
       SCJ_VISUAL_REASONING: ${{ matrix.reasoning }}
       SCJ_VISUAL_STAGE: run
-      SCJ_VISUAL_MAX_CONCURRENCY: ${{ github.event_name == 'workflow_dispatch' && inputs.max_concurrency || '10' }}
+      SCJ_VISUAL_MAX_CONCURRENCY: ${{ github.event_name == 'workflow_dispatch' && inputs.max_concurrency || github.event.label.name == 'live-visual-290' && '20' || '10' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
