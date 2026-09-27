@@ -205,13 +205,16 @@ def main() -> int:
             image=image,
             media_type="image/png",
             prompt=(
-                "Read the legal-document page image itself. Locate the exact "
-                "visible token referred to by CANDIDATE_TOKEN. Return "
-                "matches=true only if the visible token is character-for-"
+                "Read the legal-document page image itself. "
+                "CANDIDATE_TOKEN was produced for one specific token on this "
+                "page and may contain exactly one corrupted character. Find "
+                "the corresponding visible token in the image. Return "
+                "matches=true only if that visible token is character-for-"
                 "character identical to CANDIDATE_TOKEN. Always return "
-                "visible_token as the exact token you see in the image; use "
-                "null only if you genuinely cannot locate it. Do not infer, "
-                "repair, normalize, or substitute from context.\n\n"
+                "visible_token as the exact corresponding token you see, "
+                "even when it differs from CANDIDATE_TOKEN; use null only if "
+                "no plausible corresponding token can be located. Do not "
+                "repair, normalize, or substitute the visible text.\n\n"
                 f"CANDIDATE_TOKEN: {case.candidate_token}"
             ),
             json_schema=_schema(),
