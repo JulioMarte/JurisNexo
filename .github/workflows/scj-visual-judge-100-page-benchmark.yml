@@ -110,7 +110,7 @@ jobs:
       VISUAL_JUDGE_PROVIDER: ${{ matrix.provider }}
       VISUAL_JUDGE_REASONING: high
       VISUAL_JUDGE_STRUCTURED_MODE: ${{ matrix.structured_mode }}
-      VISUAL_JUDGE_MAX_OUTPUT_TOKENS: "256"
+      VISUAL_JUDGE_MAX_OUTPUT_TOKENS: "2048"
       VISUAL_JUDGE_PAGE_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.page_limit || github.event.label.name == 'live-visual-10' && '10' || '1' }}
       VISUAL_JUDGE_MAX_COST_USD: "1.0"
     steps:
