@@ -190,10 +190,14 @@ def _safe_response_diagnostic(*, message: dict[str, object] | None, value: JsonO
                 diagnostic[f"{key}_preview"] = item[:1000]
         reasoning_details = message.get("reasoning_details")
         if isinstance(reasoning_details, list):
-            diagnostic["reasoning_detail_count"] = len(reasoning_details)
+            diagnostic["reasoning_detail_count"] = len(
+                cast(list[object], reasoning_details)
+            )
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list):
-            diagnostic["tool_call_count"] = len(tool_calls)
+            diagnostic["tool_call_count"] = len(
+                cast(list[object], tool_calls)
+            )
     return json.dumps(diagnostic, ensure_ascii=False, sort_keys=True, default=str)[:3000]
 
 
