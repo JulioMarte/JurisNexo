@@ -2,6 +2,39 @@ name: SCJ Principales visual benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      sample_size:
+        description: "Pages to benchmark"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "10"
+          - "20"
+      selection:
+        description: "How to select from the eligible page pool"
+        required: true
+        default: deterministic
+        type: choice
+        options:
+          - deterministic
+          - random
+      seed:
+        description: "Seed used when selection=random"
+        required: true
+        default: "20260926"
+        type: string
+      max_concurrency:
+        description: "Maximum provider calls in flight per model"
+        required: true
+        default: "20"
+        type: string
+      curated_manifest:
+        description: "Optional repo-relative curated manifest path"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -16,15 +49,49 @@ jobs:
           python-version: "3.13"
       - name: Install offline test runtime
         run: python -m pip install -e ./backend pytest==9.1.1
-      - name: Validate benchmark contract without provider spend
-        run: pytest -q backend/tests/unit/test_scj_visual_benchmark.py
+      - name: Validate page benchmark contract without provider spend
+        run: pytest -q backend/tests/unit/test_visual_page_benchmark.py
       - name: Compile benchmark entrypoint
-        run: python -m py_compile backend/scripts/scj_principales_visual_smoke.py
+        run: python -m py_compile backend/scripts/scj_principales_visual_benchmark.py
 
-  visual-smoke:
+  prepare:
     needs: offline-contract
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      SCJ_VISUAL_STAGE: prepare
+      SCJ_VISUAL_SAMPLE_SIZE: ${{ inputs.sample_size }}
+      SCJ_VISUAL_SELECTION: ${{ inputs.selection }}
+      SCJ_VISUAL_SEED: ${{ inputs.seed }}
+      SCJ_VISUAL_CURATED_MANIFEST: ${{ inputs.curated_manifest }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install bounded page preparation runtime
+        run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Freeze pages and audit evidence once
+        env:
+          SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/prepared
+        run: python backend/scripts/scj_principales_visual_benchmark.py
+      - name: Preserve common source evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-visual-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared/**
+          if-no-files-found: error
+          retention-days: 90
+
+  judge:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -43,36 +110,36 @@ jobs:
             provider: ""
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
-      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
-      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
-      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
-      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
-      JURISNEXO_OPENROUTER_DEEPSEEK_PROVIDER_ORDER: ${{ matrix.provider }}
-      SCJ_PRINCIPALES_VISUAL_REASONING: none
-      SCJ_VISUAL_SAMPLE_SIZE: "1"
-      SCJ_VISUAL_SELECTION: deterministic
-      SCJ_VISUAL_SEED: "20260926"
-      SCJ_VISUAL_MAX_CONCURRENCY: "1"
-      SCJ_VISUAL_MAX_OUTPUT_TOKENS: "512"
-      SCJ_PRINCIPALES_VISUAL_MAX_COST_USD: "0.01"
+      SCJ_VISUAL_PROVIDER_ORDER: ${{ matrix.provider }}
+      SCJ_VISUAL_REASONING: none
+      SCJ_VISUAL_STAGE: run
+      SCJ_VISUAL_MAX_CONCURRENCY: ${{ inputs.max_concurrency }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install bounded visual runtime
-        run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Run exactly one visual page per model
+      - name: Install bounded model runtime
+        run: python -m pip install -e ./backend
+      - name: Download exact common page evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: scj-visual-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Run model on frozen pages
         env:
-          SCJ_PRINCIPALES_VISUAL_OUTPUT: ${{ runner.temp }}/principales-visual
-        run: python backend/scripts/scj_principales_visual_smoke.py
-      - name: Preserve final visual evidence
+          SCJ_VISUAL_PREPARED_MANIFEST: ${{ runner.temp }}/prepared/prepared-manifest.json
+          SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/model-output
+        run: python backend/scripts/scj_principales_visual_benchmark.py
+      - name: Publish model summary
+        if: always()
+        run: test -f "${RUNNER_TEMP}/model-output/summary.md" && cat "${RUNNER_TEMP}/model-output/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Preserve model output and page metrics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scj-visual-${{ matrix.judge }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/principales-visual/**
+          name: scj-visual-${{ matrix.judge }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/model-output/**
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90
