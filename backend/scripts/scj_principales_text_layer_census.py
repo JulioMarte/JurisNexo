@@ -32,6 +32,9 @@ PREFIX = "jurisdictions/do/scj/principales-sentencias/"
 POLICY = VisualReferencePolicy()
 LOW_INFORMATION_NATIVE_CHARS = 80
 LOW_INFORMATION_OCR_CHARS = 80
+RENDER_SCALE = 2.0
+OCR_LANGUAGE = "spa+eng"
+OCR_PAGE_SEGMENTATION_MODE = 6
 _STOP = False
 
 
@@ -159,7 +162,7 @@ def _page_text(page: Any) -> str:
 
 
 def _render(page: Any) -> bytes:
-    bitmap = page.render(scale=2.0)
+    bitmap = page.render(scale=RENDER_SCALE)
     try:
         image = bitmap.to_pil()
         output = io.BytesIO()
@@ -170,13 +173,20 @@ def _render(page: Any) -> bytes:
 
 
 def classify_page(*, native_text: str, image: bytes) -> dict[str, Any]:
-    ocr = run_tesseract_visual_ocr(image, language="spa+eng")
+    ocr = run_tesseract_visual_ocr(
+        image,
+        language=OCR_LANGUAGE,
+        page_segmentation_mode=OCR_PAGE_SEGMENTATION_MODE,
+    )
     native_chars = len(native_text.strip())
     ocr_chars = len(ocr.text.strip())
     base = {
         "native_characters": native_chars,
         "ocr_characters": ocr_chars,
         "ocr_mean_confidence": ocr.mean_confidence,
+        "ocr_engine_version": ocr.engine_version,
+        "ocr_language": ocr.language,
+        "ocr_page_segmentation_mode": OCR_PAGE_SEGMENTATION_MODE,
         "native_text_sha256": _sha256(native_text.encode("utf-8")),
         "ocr_text_sha256": _sha256(ocr.text.encode("utf-8")),
     }
@@ -349,6 +359,24 @@ def _document_summary(
         records,
         {"misaligned", "no_native_text", "processing_error"},
     )
+    policy = {
+        name: getattr(POLICY, name)
+        for name in POLICY.__dataclass_fields__
+    }
+    policy_sha256 = _sha256(
+        json.dumps(
+            policy,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    ocr_engine_versions = sorted(
+        {
+            str(record["ocr_engine_version"])
+            for record in records
+            if record.get("ocr_engine_version")
+        }
+    )
 
     return {
         "schema_version": 4,
@@ -380,10 +408,13 @@ def _document_summary(
             (run["page_count"] for run in problem_runs),
             default=0,
         ),
-        "policy": {
-            name: getattr(POLICY, name)
-            for name in POLICY.__dataclass_fields__
-        },
+        "render_scale": RENDER_SCALE,
+        "ocr_language": OCR_LANGUAGE,
+        "ocr_page_segmentation_mode": OCR_PAGE_SEGMENTATION_MODE,
+        "ocr_engine_versions": ocr_engine_versions,
+        "policy": policy,
+        "policy_sha256": policy_sha256,
+        "code_revision": os.environ.get("GITHUB_SHA"),
     }
 
 
