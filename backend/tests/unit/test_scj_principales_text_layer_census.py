@@ -129,6 +129,7 @@ def test_document_summary_requires_complete_scan_for_complete_tier() -> None:
         records=records,
     )
     assert summary["verification_tier"] == "verified_complete"
+    assert summary["verified_share_of_all_pages"] == 1.0
     assert summary["complete_scan"] is True
     assert summary["longest_verified_run_pages"] == 10
 
@@ -140,6 +141,19 @@ def test_document_summary_requires_complete_scan_for_complete_tier() -> None:
     )
     assert incomplete["verification_tier"] == "unsuitable"
     assert incomplete["complete_scan"] is False
+
+    low_information = [
+        *records[:-1],
+        {"page_index": 9, "classification": "low_information"},
+    ]
+    unresolved = module._document_summary(
+        key="a.pdf",
+        pdf_sha="a" * 64,
+        source_page_count=10,
+        records=low_information,
+    )
+    assert unresolved["verification_tier"] != "verified_complete"
+    assert unresolved["verified_share_of_all_pages"] == pytest.approx(0.9)
 
 
 def test_document_summary_assigns_near_complete_tier() -> None:
@@ -191,6 +205,7 @@ def test_aggregate_rejects_missing_inventory_documents(
                 "page_counts": {"aligned": 10},
                 "relevant_pages": 10,
                 "aligned_share_of_relevant": 1.0,
+                "verified_share_of_all_pages": 1.0,
                 "verification_tier": "verified_complete",
                 "verified_runs": [],
                 "longest_verified_run_pages": 10,
