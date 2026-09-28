@@ -35,6 +35,10 @@ LOW_INFORMATION_OCR_CHARS = 80
 _STOP = False
 
 
+class SourceIdentityDriftError(RuntimeError):
+    """The downloaded object no longer matches the frozen inventory."""
+
+
 def _request_stop(signum: int, _frame: Any) -> None:
     global _STOP
     _STOP = True
@@ -115,17 +119,17 @@ def _read_pdf(
             actual_etag = _normalized_etag(response.get("ETag"))
 
             if expected_size is not None and actual_size != expected_size:
-                raise RuntimeError(
+                raise SourceIdentityDriftError(
                     f"source object size drift for {key}: "
                     f"expected {expected_size}, got {actual_size}"
                 )
             if expected_size is not None and len(data) != expected_size:
-                raise RuntimeError(
+                raise SourceIdentityDriftError(
                     f"downloaded byte count drift for {key}: "
                     f"expected {expected_size}, got {len(data)}"
                 )
             if expected_etag and actual_etag != expected_etag:
-                raise RuntimeError(
+                raise SourceIdentityDriftError(
                     f"source object ETag drift for {key}: "
                     f"expected {expected_etag}, got {actual_etag or '<missing>'}"
                 )
@@ -135,6 +139,8 @@ def _read_pdf(
                 tmp.write_bytes(data)
                 os.replace(tmp, path)
             return data
+        except SourceIdentityDriftError:
+            raise
         except Exception as exc:
             last = exc
             if attempt < 3:
