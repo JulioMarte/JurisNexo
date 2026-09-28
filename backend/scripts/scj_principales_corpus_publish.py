@@ -235,6 +235,7 @@ def restore_document(
     inventory_sha256: str,
     document_id: str,
     code_revision: str,
+    object_key: str,
 ) -> dict[str, str] | None:
     inventory_sha = _require_hex(
         inventory_sha256,
@@ -301,6 +302,8 @@ def restore_document(
     document = json.loads(document_path.read_text(encoding="utf-8"))
     if str(document.get("policy_sha256")) != _policy_sha256():
         raise RuntimeError("restored archive policy SHA mismatch")
+    if str(document.get("object_key") or "") != object_key:
+        raise RuntimeError("restored archive object key mismatch")
     if str(document.get("code_revision") or "") != revision:
         raise RuntimeError("restored archive code revision mismatch")
 
@@ -528,6 +531,7 @@ def main() -> int:
     restore.add_argument("--inventory-sha256", required=True)
     restore.add_argument("--document-id", required=True)
     restore.add_argument("--code-revision", required=True)
+    restore.add_argument("--object-key", required=True)
 
     document = subparsers.add_parser("document")
     document.add_argument("--input-dir", type=Path, required=True)
@@ -549,6 +553,7 @@ def main() -> int:
             inventory_sha256=args.inventory_sha256,
             document_id=args.document_id,
             code_revision=args.code_revision,
+            object_key=args.object_key,
         )
         print(
             json.dumps(
