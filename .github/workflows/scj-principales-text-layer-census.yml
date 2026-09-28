@@ -24,10 +24,21 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - run: python -m pip install -e ./backend pytest==9.1.1 "pypdfium2==5.13.0" "pillow==12.3.0"
       - run: |
-          python -m py_compile backend/scripts/scj_principales_corpus_inventory.py backend/scripts/scj_principales_text_layer_census.py
-          pytest -q backend/tests/unit/test_scj_principales_text_layer_census.py backend/tests/unit/test_visual_reference_alignment.py backend/tests/unit/test_visual_reference_ocr.py
+          python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - run: |
+          python -m py_compile \
+            backend/scripts/scj_principales_corpus_inventory.py \
+            backend/scripts/scj_principales_text_layer_census.py
+          ruff check \
+            backend/scripts/scj_principales_corpus_inventory.py \
+            backend/scripts/scj_principales_text_layer_census.py \
+            backend/tests/unit/test_scj_principales_text_layer_census.py
+          pytest -q \
+            backend/tests/unit/test_scj_principales_text_layer_census.py \
+            backend/tests/unit/test_visual_reference_alignment.py \
+            backend/tests/unit/test_visual_reference_ocr.py
 
   inventory:
     needs: contract
@@ -49,7 +60,9 @@ jobs:
       - id: inventory
         run: |
           mkdir -p "$RUNNER_TEMP/inventory"
-          python backend/scripts/scj_principales_corpus_inventory.py --output "$RUNNER_TEMP/inventory/inventory.json" > "$RUNNER_TEMP/inventory/matrix.json"
+          python backend/scripts/scj_principales_corpus_inventory.py \
+            --output "$RUNNER_TEMP/inventory/inventory.json" \
+            > "$RUNNER_TEMP/inventory/matrix.json"
           echo "matrix=$(cat "$RUNNER_TEMP/inventory/matrix.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -71,6 +84,9 @@ jobs:
       JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      SCJ_OBJECT_KEY: ${{ matrix.object_key }}
+      SCJ_EXPECTED_SIZE: ${{ matrix.size_bytes }}
+      SCJ_EXPECTED_ETAG: ${{ matrix.etag }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -78,12 +94,19 @@ jobs:
           python-version: "3.13"
       - run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
-      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Verify complete PDF
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+      - run: |
+          python -m pip install -e ./backend \
+            "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Verify complete immutable PDF
         run: |
           mkdir -p "$RUNNER_TEMP/document"
-          python backend/scripts/scj_principales_text_layer_census.py --object-key '${{ matrix.object_key }}' --output "$RUNNER_TEMP/document"
+          python backend/scripts/scj_principales_text_layer_census.py \
+            --object-key "$SCJ_OBJECT_KEY" \
+            --expected-size "$SCJ_EXPECTED_SIZE" \
+            --expected-etag "$SCJ_EXPECTED_ETAG" \
+            --output "$RUNNER_TEMP/document"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -94,35 +117,68 @@ jobs:
 
   aggregate:
     if: ${{ always() && needs.verify-document.result != 'skipped' }}
-    needs: verify-document
+    needs: [inventory, verify-document]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend "pypdfium2==5.13.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-corpus-verification-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}/inventory
       - uses: actions/download-artifact@v4
         with:
           pattern: scj-corpus-document-*-${{ github.run_id }}
           path: ${{ runner.temp }}/documents
           merge-multiple: false
       - name: Aggregate and rank verified documents
-        run: python backend/scripts/scj_principales_text_layer_census.py --aggregate --input-root "$RUNNER_TEMP/documents" --output "$RUNNER_TEMP/aggregate"
+        run: |
+          python backend/scripts/scj_principales_text_layer_census.py \
+            --aggregate \
+            --input-root "$RUNNER_TEMP/documents" \
+            --inventory "$RUNNER_TEMP/inventory/inventory.json" \
+            --output "$RUNNER_TEMP/aggregate"
       - name: Publish compact summary
         if: always()
         run: |
           python - <<'PY'
-          import json, os
+          import json
+          import os
           from pathlib import Path
-          path = Path(os.environ['RUNNER_TEMP']) / 'aggregate' / 'census-summary.json'
-          if not path.exists(): raise SystemExit(0)
-          report = json.loads(path.read_text())
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
-              out.write('# SCJ Principales verification census\n\n')
-              out.write(f"Documents: {report['documents']}  \nTotal pages: {report['total_pages']}  \nAligned relevant share: {report['aligned_share_of_relevant']:.4%}\n\n")
-              out.write('| rank | tier | aligned | longest run | document |\n|---:|---|---:|---:|---|\n')
-              for rank, doc in enumerate(report['document_ranking'], 1):
-                  out.write(f"| {rank} | {doc['verification_tier']} | {doc['aligned_share_of_relevant']:.4%} | {doc['longest_verified_run_pages']} | `{Path(doc['object_key']).name}` |\n")
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "aggregate" / "census-summary.json"
+          if not path.exists():
+              raise SystemExit(0)
+          report = json.loads(path.read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("# SCJ Principales verification census\n\n")
+              out.write(
+                  f"Documents: {report['documents']}/{report['expected_documents']}  \n"
+                  f"Total pages: {report['total_pages']}  \n"
+                  f"Aligned relevant share: "
+                  f"{report['aligned_share_of_relevant']:.4%}\n\n"
+              )
+              if report["missing_documents"]:
+                  out.write(
+                      f"Missing documents: {len(report['missing_documents'])}  \n\n"
+                  )
+              out.write(
+                  "| rank | tier | aligned | longest verified | "
+                  "longest problem | document |\n"
+                  "|---:|---|---:|---:|---:|---|\n"
+              )
+              for rank, doc in enumerate(report["document_ranking"], 1):
+                  out.write(
+                      f"| {rank} | {doc['verification_tier']} | "
+                      f"{doc['aligned_share_of_relevant']:.4%} | "
+                      f"{doc['longest_verified_run_pages']} | "
+                      f"{doc['longest_problem_run_pages']} | "
+                      f"`{Path(doc['object_key']).name}` |\n"
+                  )
           PY
       - uses: actions/upload-artifact@v4
         if: always()
