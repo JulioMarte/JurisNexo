@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Publish corpus-verification evidence as immutable, content-checked S3 objects."""
+
+from __future__ import annotations
 
 import argparse
 import gzip
@@ -87,25 +87,23 @@ def build_deterministic_archive(source: Path, destination: Path) -> str:
         raise RuntimeError(f"no files found under {source}")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("wb") as raw:
-        with gzip.GzipFile(
-            filename="",
-            mode="wb",
-            fileobj=raw,
-            mtime=0,
-        ) as compressed:
-            with tarfile.open(
-                mode="w",
-                fileobj=compressed,
-                format=tarfile.PAX_FORMAT,
-            ) as archive:
-                for path in files:
-                    relative = path.relative_to(source).as_posix()
-                    _archive_member(
-                        archive,
-                        relative_path=relative,
-                        payload=path.read_bytes(),
-                    )
+    with destination.open("wb") as raw, gzip.GzipFile(
+        filename="",
+        mode="wb",
+        fileobj=raw,
+        mtime=0,
+    ) as compressed, tarfile.open(
+        mode="w",
+        fileobj=compressed,
+        format=tarfile.PAX_FORMAT,
+    ) as archive:
+        for path in files:
+            relative = path.relative_to(source).as_posix()
+            _archive_member(
+                archive,
+                relative_path=relative,
+                payload=path.read_bytes(),
+            )
 
     return _sha256_bytes(destination.read_bytes())
 
@@ -274,27 +272,29 @@ def restore_document(
         raise RuntimeError("restored document archive checksum mismatch")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as compressed:
-        with tarfile.open(
-            mode="r:",
-            fileobj=compressed,
-        ) as archive:
-            members = archive.getmembers()
-            for member in members:
-                if not member.isfile():
-                    raise RuntimeError(
-                        "restored corpus archive contains non-file member"
-                    )
-                target = (output_dir / member.name).resolve()
-                if output_dir.resolve() not in target.parents:
-                    raise RuntimeError(
-                        "restored corpus archive escaped output directory"
-                    )
-            archive.extractall(
-                path=output_dir,
-                members=members,
-                filter="data",
-            )
+    with gzip.GzipFile(
+        fileobj=io.BytesIO(payload),
+        mode="rb",
+    ) as compressed, tarfile.open(
+        mode="r:",
+        fileobj=compressed,
+    ) as archive:
+        members = archive.getmembers()
+        for member in members:
+            if not member.isfile():
+                raise RuntimeError(
+                    "restored corpus archive contains non-file member"
+                )
+            target = (output_dir / member.name).resolve()
+            if output_dir.resolve() not in target.parents:
+                raise RuntimeError(
+                    "restored corpus archive escaped output directory"
+                )
+        archive.extractall(
+            path=output_dir,
+            members=members,
+            filter="data",
+        )
 
     document_path = output_dir / "document.json"
     if not document_path.is_file():
