@@ -5,6 +5,7 @@ import io
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +60,7 @@ def parse_tesseract_tsv(tsv_text: str) -> tuple[str, float | None]:
     return "\n".join(lines), mean_confidence
 
 
+@lru_cache(maxsize=1)
 def tesseract_version() -> str:
     result = subprocess.run(
         ["tesseract", "--version"],
