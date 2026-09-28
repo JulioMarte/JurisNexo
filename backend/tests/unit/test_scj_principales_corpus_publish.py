@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -117,3 +117,76 @@ def test_summary_publish_requires_document_receipts(tmp_path: Path) -> None:
             documents_root=documents,
             code_revision=revision,
         )
+
+
+def test_restore_document_verifies_archive_and_source_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publish = _module()
+    inventory_sha = "a" * 64
+    revision = "c" * 40
+    document_id = "d" * 16
+    object_key = "jurisdictions/do/scj/principales-sentencias/a.pdf"
+
+    source = tmp_path / "source"
+    source.mkdir()
+    document = {
+        "complete_scan": True,
+        "interrupted": False,
+        "policy_sha256": publish._policy_sha256(),
+        "code_revision": revision,
+        "source_pdf_sha256": "e" * 64,
+        "object_key": object_key,
+    }
+    (source / "document.json").write_text(
+        __import__("json").dumps(document),
+        encoding="utf-8",
+    )
+    archive_path = tmp_path / "document.tar.gz"
+    archive_sha = publish.build_deterministic_archive(
+        source,
+        archive_path,
+    )
+    payload = archive_path.read_bytes()
+
+    class Body:
+        def read(self) -> bytes:
+            return payload
+
+    class Client:
+        def head_object(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "Metadata": {
+                    "payload-sha256": archive_sha,
+                }
+            }
+
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            return {"Body": Body()}
+
+    store = SimpleNamespace(
+        client=Client(),
+        config=SimpleNamespace(bucket="bucket"),
+        is_not_found=lambda _exc: False,
+    )
+    monkeypatch.setattr(
+        publish,
+        "build_s3_object_store",
+        lambda: store,
+    )
+
+    output = tmp_path / "restored"
+    receipt = publish.restore_document(
+        output_dir=output,
+        inventory_sha256=inventory_sha,
+        document_id=document_id,
+        code_revision=revision,
+        object_key=object_key,
+    )
+
+    assert receipt is not None
+    assert receipt["archive_sha256"] == archive_sha
+    assert receipt["object_key"] == object_key
+    assert (output / "document.json").is_file()
+    assert (output / "publish.json").is_file()
