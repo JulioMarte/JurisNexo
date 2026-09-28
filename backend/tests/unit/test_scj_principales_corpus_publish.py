@@ -86,25 +86,34 @@ def test_summary_publish_requires_document_receipts(tmp_path: Path) -> None:
 
     inventory = tmp_path / "inventory.json"
     inventory.write_text(
-        (
-            '{"inventory_sha256":"'
-            + inventory_sha
-            + '","documents":[{"object_key":"a.pdf"}]}'
+        json.dumps(
+            {
+                "inventory_sha256": inventory_sha,
+                "document_count": 1,
+                "documents": [{"object_key": "a.pdf"}],
+            }
         ),
         encoding="utf-8",
     )
     summary = tmp_path / "census-summary.json"
     summary.write_text(
-        (
-            '{"inventory_sha256":"'
-            + inventory_sha
-            + '","documents":1,"total_pages":1,'
-            + '"document_ranking":[{"object_key":"a.pdf",'
-            + '"source_pdf_sha256":"'
-            + source_sha
-            + '","policy_sha256":"'
-            + policy_sha
-            + '"}]}'
+        json.dumps(
+            {
+                "inventory_sha256": inventory_sha,
+                "documents": 1,
+                "expected_documents": 1,
+                "missing_documents": [],
+                "unexpected_documents": [],
+                "incomplete_documents": [],
+                "total_pages": 1,
+                "document_ranking": [
+                    {
+                        "object_key": "a.pdf",
+                        "source_pdf_sha256": source_sha,
+                        "policy_sha256": policy_sha,
+                    }
+                ],
+            }
         ),
         encoding="utf-8",
     )
