@@ -172,7 +172,12 @@ def _render(page: Any) -> bytes:
         bitmap.close()
 
 
-def classify_page(*, native_text: str, image: bytes) -> dict[str, Any]:
+def classify_page(
+    *,
+    native_text: str,
+    image: bytes,
+    include_ocr_text: bool = False,
+) -> dict[str, Any]:
     ocr = run_tesseract_visual_ocr(
         image,
         language=OCR_LANGUAGE,
@@ -190,6 +195,8 @@ def classify_page(*, native_text: str, image: bytes) -> dict[str, Any]:
         "native_text_sha256": _sha256(native_text.encode("utf-8")),
         "ocr_text_sha256": _sha256(ocr.text.encode("utf-8")),
     }
+    if include_ocr_text:
+        base["ocr_text"] = ocr.text
     if (
         native_chars < LOW_INFORMATION_NATIVE_CHARS
         and ocr_chars < LOW_INFORMATION_OCR_CHARS
@@ -469,6 +476,20 @@ def run_document(
                 result = classify_page(
                     native_text=native_text,
                     image=image,
+                    include_ocr_text=True,
+                )
+                ocr_text = str(result.pop("ocr_text"))
+                observation_native = output / "observations" / "native"
+                observation_ocr = output / "observations" / "ocr"
+                observation_native.mkdir(parents=True, exist_ok=True)
+                observation_ocr.mkdir(parents=True, exist_ok=True)
+                (observation_native / f"page-{page_index:05d}.txt").write_text(
+                    native_text,
+                    encoding="utf-8",
+                )
+                (observation_ocr / f"page-{page_index:05d}.txt").write_text(
+                    ocr_text,
+                    encoding="utf-8",
                 )
                 if result["classification"] == "aligned":
                     text_dir = output / "reference-text"
