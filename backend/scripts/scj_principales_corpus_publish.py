@@ -59,7 +59,12 @@ def _archive_member(
 
 
 def build_deterministic_archive(source: Path, destination: Path) -> str:
-    files = sorted(path for path in source.rglob("*") if path.is_file())
+    files = sorted(
+        path
+        for path in source.rglob("*")
+        if path.is_file()
+        and path.relative_to(source).as_posix() != "publish.json"
+    )
     if not files:
         raise RuntimeError(f"no files found under {source}")
 
@@ -210,6 +215,11 @@ def publish_document(
         length=64,
         label="policy_sha256",
     )
+    document_revision = str(document.get("code_revision") or "")
+    if document_revision and document_revision != code_revision:
+        raise RuntimeError(
+            "document code revision does not match publisher revision"
+        )
     source_sha = _require_hex(
         str(document["source_pdf_sha256"]),
         length=64,
@@ -242,6 +252,12 @@ def publish_document(
     return {
         "key": key,
         "archive_sha256": archive_sha,
+        "inventory_sha256": inventory_sha256,
+        "policy_sha256": policy_sha,
+        "code_revision": code_revision,
+        "document_id": doc_id,
+        "source_pdf_sha256": source_sha,
+        "object_key": str(document["object_key"]),
     }
 
 
@@ -249,6 +265,7 @@ def publish_summary(
     *,
     summary_path: Path,
     inventory_path: Path,
+    documents_root: Path,
     code_revision: str,
 ) -> dict[str, str]:
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -277,6 +294,37 @@ def publish_summary(
         policy_sha256=policy_sha,
         code_revision=code_revision,
     )
+
+    receipts = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(documents_root.rglob("publish.json"))
+    ]
+    if len(receipts) != int(summary["documents"]):
+        raise RuntimeError(
+            "durable document receipt count does not match aggregate"
+        )
+
+    expected_sources = {
+        str(item["source_pdf_sha256"])
+        for item in summary["document_ranking"]
+    }
+    observed_sources: set[str] = set()
+    for receipt in receipts:
+        if str(receipt.get("inventory_sha256")) != inventory_sha:
+            raise RuntimeError("document receipt inventory SHA mismatch")
+        if str(receipt.get("policy_sha256")) != policy_sha:
+            raise RuntimeError("document receipt policy SHA mismatch")
+        if str(receipt.get("code_revision")) != code_revision:
+            raise RuntimeError("document receipt code revision mismatch")
+        source_sha = str(receipt.get("source_pdf_sha256") or "")
+        if source_sha in observed_sources:
+            raise RuntimeError("duplicate durable document receipt")
+        observed_sources.add(source_sha)
+
+    if observed_sources != expected_sources:
+        raise RuntimeError(
+            "durable document receipts do not cover aggregate documents"
+        )
 
     store = build_s3_object_store()
     common_metadata = {
@@ -336,6 +384,7 @@ def main() -> int:
     summary = subparsers.add_parser("summary")
     summary.add_argument("--summary", type=Path, required=True)
     summary.add_argument("--inventory", type=Path, required=True)
+    summary.add_argument("--documents-root", type=Path, required=True)
     summary.add_argument("--code-revision", required=True)
 
     args = parser.parse_args()
@@ -347,10 +396,20 @@ def main() -> int:
             code_revision=args.code_revision,
             archive_path=args.archive,
         )
+        (args.input_dir / "publish.json").write_text(
+            json.dumps(
+                result,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     else:
         result = publish_summary(
             summary_path=args.summary,
             inventory_path=args.inventory,
+            documents_root=args.documents_root,
             code_revision=args.code_revision,
         )
 
