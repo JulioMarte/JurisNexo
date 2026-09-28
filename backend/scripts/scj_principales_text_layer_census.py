@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-"""Exhaustively classify SCJ Principales PDF pages without paid LLM calls.
+"""Exhaustively verify SCJ Principales native text against independent OCR.
 
-Designed for both GitHub Actions and long-running local execution. Results are
-append-only JSONL, PDFs can be cached locally, completed pages are skipped on
-resume, and SIGINT/CTRL+C leaves a valid checkpoint that can be resumed.
+The primary execution unit is one immutable PDF. Legacy shard mode remains for
+local/backward-compatible use. Per-document artifacts contain enough evidence
+to rank documents and reuse admitted page text without repeating paid work.
 """
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import signal
@@ -21,7 +22,10 @@ from typing import Any
 import pypdfium2 as pdfium
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
-from jurisnexo.normalization.visual_reference_alignment import VisualReferencePolicy, assess_visual_reference_alignment
+from jurisnexo.normalization.visual_reference_alignment import (
+    VisualReferencePolicy,
+    assess_visual_reference_alignment,
+)
 from jurisnexo.normalization.visual_reference_ocr import run_tesseract_visual_ocr
 
 PREFIX = "jurisdictions/do/scj/principales-sentencias/"
@@ -62,6 +66,7 @@ def _cache_path(cache_dir: Path, key: str) -> Path:
 
 
 def _read_pdf(store: Any, key: str, cache_dir: Path | None = None) -> bytes:
+    path: Path | None = None
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         path = _cache_path(cache_dir, key)
@@ -72,7 +77,7 @@ def _read_pdf(store: Any, key: str, cache_dir: Path | None = None) -> bytes:
         try:
             body = store.client.get_object(Bucket=store.config.bucket, Key=key)["Body"].read()
             data = body if isinstance(body, bytes) else bytes(body)
-            if cache_dir is not None:
+            if path is not None:
                 tmp = path.with_suffix(path.suffix + ".tmp")
                 tmp.write_bytes(data)
                 os.replace(tmp, path)
@@ -94,7 +99,6 @@ def _page_text(page: Any) -> str:
 
 
 def _render(page: Any) -> bytes:
-    import io
     bitmap = page.render(scale=2.0)
     try:
         image = bitmap.to_pil()
@@ -109,12 +113,28 @@ def classify_page(*, native_text: str, image: bytes) -> dict[str, Any]:
     ocr = run_tesseract_visual_ocr(image, language="spa+eng")
     native_chars = len(native_text.strip())
     ocr_chars = len(ocr.text.strip())
+    base = {
+        "native_characters": native_chars,
+        "ocr_characters": ocr_chars,
+        "ocr_mean_confidence": ocr.mean_confidence,
+        "native_text_sha256": _sha256(native_text.encode("utf-8")),
+        "ocr_text_sha256": _sha256(ocr.text.encode("utf-8")),
+    }
     if native_chars < LOW_INFORMATION_NATIVE_CHARS and ocr_chars < LOW_INFORMATION_OCR_CHARS:
-        return {"classification": "low_information", "native_characters": native_chars, "ocr_characters": ocr_chars, "ocr_mean_confidence": ocr.mean_confidence}
+        return {"classification": "low_information", **base}
     if native_chars < LOW_INFORMATION_NATIVE_CHARS and ocr_chars >= LOW_INFORMATION_OCR_CHARS:
-        return {"classification": "no_native_text", "native_characters": native_chars, "ocr_characters": ocr_chars, "ocr_mean_confidence": ocr.mean_confidence}
-    assessment = assess_visual_reference_alignment(native_text=native_text, ocr_text=ocr.text, ocr_mean_confidence=ocr.mean_confidence, policy=POLICY)
-    return {"classification": "aligned" if assessment.accepted else "misaligned", "native_characters": native_chars, "ocr_characters": ocr_chars, "ocr_mean_confidence": ocr.mean_confidence, "assessment": assessment.to_json_dict()}
+        return {"classification": "no_native_text", **base}
+    assessment = assess_visual_reference_alignment(
+        native_text=native_text,
+        ocr_text=ocr.text,
+        ocr_mean_confidence=ocr.mean_confidence,
+        policy=POLICY,
+    )
+    return {
+        "classification": "aligned" if assessment.accepted else "misaligned",
+        **base,
+        "assessment": assessment.to_json_dict(),
+    }
 
 
 def _load_completed(records_path: Path) -> tuple[set[tuple[str, int]], Counter[str]]:
@@ -123,106 +143,153 @@ def _load_completed(records_path: Path) -> tuple[set[tuple[str, int]], Counter[s
     if not records_path.exists():
         return completed, counts
     with records_path.open(encoding="utf-8") as source:
-        for line_no, line in enumerate(source, 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                # Only tolerate a torn final append from an interrupted process.
-                if source.read(1):
-                    raise RuntimeError(f"corrupt checkpoint at line {line_no}")
-                break
-            classification = str(record.get("classification") or "")
-            if classification:
-                counts[classification] += 1
-            if record.get("scope") != "document" and "page_index" in record:
-                completed.add((str(record["object_key"]), int(record["page_index"])))
+        lines = source.readlines()
+    for line_no, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            if line_no != len(lines):
+                raise RuntimeError(f"corrupt checkpoint at line {line_no}")
+            break
+        classification = str(record.get("classification") or "")
+        if classification:
+            counts[classification] += 1
+        if record.get("scope") != "document" and "page_index" in record:
+            completed.add((str(record["object_key"]), int(record["page_index"])))
     return completed, counts
 
 
-def _write_summary(output: Path, shard_index: int, shard_count: int, keys: list[str], owned: list[str], counts: Counter[str], interrupted: bool) -> None:
-    summary = {"schema_version": 2, "shard_index": shard_index, "shard_count": shard_count, "pdf_objects_total": len(keys), "pdf_objects_owned": len(owned), "page_counts": dict(sorted(counts.items())), "pages_processed": sum(counts.values()), "interrupted": interrupted, "policy": {name: getattr(POLICY, name) for name in POLICY.__dataclass_fields__}}
-    (output / f"summary-{shard_index:03d}.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def _verified_runs(records: list[dict[str, Any]]) -> list[dict[str, int]]:
+    aligned = sorted(int(record["page_index"]) for record in records if record.get("classification") == "aligned")
+    if not aligned:
+        return []
+    runs: list[dict[str, int]] = []
+    start = previous = aligned[0]
+    for page_index in aligned[1:]:
+        if page_index != previous + 1:
+            runs.append({"start_page_index": start, "end_page_index": previous, "page_count": previous - start + 1})
+            start = page_index
+        previous = page_index
+    runs.append({"start_page_index": start, "end_page_index": previous, "page_count": previous - start + 1})
+    return runs
 
 
-def run(*, shard_index: int, shard_count: int, output: Path, resume: bool = False, cache_dir: Path | None = None, progress_every: int = 25) -> int:
-    if shard_count < 1 or not 0 <= shard_index < shard_count:
-        raise ValueError("invalid shard")
+def _document_summary(*, key: str, pdf_sha: str, page_count: int, records: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = Counter(str(record.get("classification") or "") for record in records)
+    relevant = page_count - counts["low_information"] - counts["processing_error"]
+    aligned = counts["aligned"]
+    failures = counts["misaligned"] + counts["no_native_text"]
+    ratio = aligned / relevant if relevant else 0.0
+    if counts["processing_error"] == 0 and failures == 0:
+        tier = "verified_complete"
+    elif counts["processing_error"] == 0 and ratio >= 0.995:
+        tier = "verified_near_complete"
+    elif counts["processing_error"] == 0 and ratio >= 0.95:
+        tier = "verified_partial"
+    else:
+        tier = "unsuitable"
+    runs = _verified_runs(records)
+    return {
+        "schema_version": 3,
+        "object_key": key,
+        "source_pdf_sha256": pdf_sha,
+        "page_count": page_count,
+        "page_counts": dict(sorted(counts.items())),
+        "relevant_pages": relevant,
+        "aligned_share_of_relevant": ratio,
+        "verification_tier": tier,
+        "verified_runs": runs,
+        "longest_verified_run_pages": max((run["page_count"] for run in runs), default=0),
+        "policy": {name: getattr(POLICY, name) for name in POLICY.__dataclass_fields__},
+    }
+
+
+def run_document(*, object_key: str, output: Path, cache_dir: Path | None = None, progress_every: int = 25) -> int:
     output.mkdir(parents=True, exist_ok=True)
     store = build_s3_object_store()
-    keys = _list_pdf_keys(store)
-    owned = [key for index, key in enumerate(keys) if index % shard_count == shard_index]
-    records_path = output / f"pages-{shard_index:03d}.jsonl"
-    if records_path.exists() and not resume:
-        raise RuntimeError(f"{records_path} already exists; pass --resume or choose another --output")
-    completed, counts = _load_completed(records_path) if resume else (set(), Counter())
+    pdf_bytes = _read_pdf(store, object_key, cache_dir)
+    pdf_sha = _sha256(pdf_bytes)
+    document = pdfium.PdfDocument(pdf_bytes)
+    records: list[dict[str, Any]] = []
     started = time.monotonic()
-    newly_processed = 0
-    print(f"SCJ census: {len(keys)} PDFs total; worker owns {len(owned)}; resuming {len(completed)} completed pages", flush=True)
-    with records_path.open("a", encoding="utf-8", buffering=1) as sink:
-        for key in owned:
+    try:
+        for page_index in range(len(document)):
             if _STOP:
                 break
             try:
-                pdf_bytes = _read_pdf(store, key, cache_dir)
-                document = pdfium.PdfDocument(pdf_bytes)
+                page = document[page_index]
+                try:
+                    native_text = _page_text(page)
+                    image = _render(page)
+                    image_sha = _sha256(image)
+                finally:
+                    page.close()
+                result = classify_page(native_text=native_text, image=image)
+                if result["classification"] == "aligned":
+                    text_dir = output / "reference-text"
+                    text_dir.mkdir(exist_ok=True)
+                    (text_dir / f"page-{page_index:05d}.txt").write_text(native_text, encoding="utf-8")
             except Exception as exc:
-                marker = (key, -1)
-                if marker not in completed:
-                    counts["processing_error"] += 1
-                    sink.write(json.dumps({"object_key": key, "classification": "processing_error", "scope": "document", "error": f"{type(exc).__name__}: {exc}"}) + "\n")
-                continue
-            try:
-                pdf_sha = _sha256(pdf_bytes)
-                for page_index in range(len(document)):
-                    if _STOP:
-                        break
-                    if (key, page_index) in completed:
-                        continue
-                    try:
-                        page = document[page_index]
-                        try:
-                            native_text = _page_text(page)
-                            image = _render(page)
-                        finally:
-                            page.close()
-                        result = classify_page(native_text=native_text, image=image)
-                    except Exception as exc:
-                        result = {"classification": "processing_error", "error": f"{type(exc).__name__}: {exc}"}
-                    classification = str(result["classification"])
-                    counts[classification] += 1
-                    sink.write(json.dumps({"object_key": key, "source_pdf_sha256": pdf_sha, "page_index": page_index, **result}, ensure_ascii=False, sort_keys=True) + "\n")
-                    completed.add((key, page_index))
-                    newly_processed += 1
-                    if newly_processed % max(progress_every, 1) == 0:
-                        elapsed = max(time.monotonic() - started, 0.001)
-                        rate = newly_processed / elapsed
-                        print(f"processed={len(completed)} new={newly_processed} rate={rate:.2f} pages/s aligned={counts['aligned']} misaligned={counts['misaligned']} no_native={counts['no_native_text']} low_info={counts['low_information']} errors={counts['processing_error']}", flush=True)
-            finally:
-                document.close()
-    _write_summary(output, shard_index, shard_count, keys, owned, counts, _STOP)
-    print(json.dumps({"pages_processed": sum(counts.values()), "newly_processed": newly_processed, "interrupted": _STOP, "page_counts": dict(counts)}, sort_keys=True), flush=True)
+                image_sha = None
+                result = {"classification": "processing_error", "error": f"{type(exc).__name__}: {exc}"}
+            record = {
+                "object_key": object_key,
+                "source_pdf_sha256": pdf_sha,
+                "page_index": page_index,
+                "render_sha256": image_sha,
+                **result,
+            }
+            records.append(record)
+            if len(records) % max(progress_every, 1) == 0:
+                elapsed = max(time.monotonic() - started, 0.001)
+                print(f"{Path(object_key).name}: {len(records)}/{len(document)} pages ({len(records) / elapsed:.2f} pages/s)", flush=True)
+    finally:
+        document.close()
+    records_path = output / "pages.jsonl"
+    records_path.write_text("".join(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n" for record in records), encoding="utf-8")
+    summary = _document_summary(key=object_key, pdf_sha=pdf_sha, page_count=len(records), records=records)
+    summary["interrupted"] = _STOP
+    (output / "document.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2, sort_keys=True))
     if _STOP:
         return 130
-    return 0 if counts["processing_error"] == 0 else 2
+    return 0 if summary["page_counts"].get("processing_error", 0) == 0 else 2
 
 
 def aggregate(*, input_root: Path, output: Path) -> int:
-    summaries = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(input_root.rglob("summary-*.json"))]
-    if not summaries:
-        raise RuntimeError("no shard summaries found")
+    documents = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(input_root.rglob("document.json"))]
+    if not documents:
+        raise RuntimeError("no document summaries found")
+    documents.sort(key=lambda item: (-float(item["aligned_share_of_relevant"]), -int(item["longest_verified_run_pages"]), str(item["object_key"])))
     counts: Counter[str] = Counter()
-    for summary in summaries:
-        counts.update(summary["page_counts"])
+    for document in documents:
+        counts.update(document["page_counts"])
     total = sum(counts.values())
     relevant = total - counts["low_information"] - counts["processing_error"]
-    needs_normalization = counts["misaligned"] + counts["no_native_text"]
-    report = {"schema_version": 2, "shards": len(summaries), "total_pages": total, "page_counts": dict(sorted(counts.items())), "relevant_pages": relevant, "aligned_share_of_relevant": counts["aligned"] / relevant if relevant else 0.0, "pages_needing_normalization": needs_normalization, "normalization_share_of_relevant": needs_normalization / relevant if relevant else 0.0, "processing_errors": counts["processing_error"], "interrupted_shards": sum(bool(x.get("interrupted")) for x in summaries)}
+    report = {
+        "schema_version": 3,
+        "documents": len(documents),
+        "total_pages": total,
+        "page_counts": dict(sorted(counts.items())),
+        "relevant_pages": relevant,
+        "aligned_share_of_relevant": counts["aligned"] / relevant if relevant else 0.0,
+        "verification_tiers": dict(Counter(str(item["verification_tier"]) for item in documents)),
+        "document_ranking": documents,
+    }
     output.mkdir(parents=True, exist_ok=True)
-    (output / "census-summary.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (output / "census-summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if counts["processing_error"] == 0 and not report["interrupted_shards"] else 2
+    return 0 if counts["processing_error"] == 0 and not any(item.get("interrupted") for item in documents) else 2
+
+
+def run_legacy_shard(*, shard_index: int, shard_count: int, output: Path, cache_dir: Path | None = None) -> int:
+    store = build_s3_object_store()
+    keys = _list_pdf_keys(store)
+    owned = [key for index, key in enumerate(keys) if index % shard_count == shard_index]
+    statuses = [run_document(object_key=key, output=output / f"document-{index:03d}", cache_dir=cache_dir) for index, key in enumerate(owned)]
+    return max(statuses, default=0)
 
 
 def main() -> int:
@@ -231,19 +298,21 @@ def main() -> int:
         signal.signal(signal.SIGTERM, _request_stop)
     parser = argparse.ArgumentParser()
     parser.add_argument("--aggregate", action="store_true")
+    parser.add_argument("--object-key")
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--input-root", type=Path)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--resume", action="store_true", help="Resume from append-only JSONL checkpoint")
-    parser.add_argument("--cache-dir", type=Path, help="Cache downloaded source PDFs locally")
+    parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--progress-every", type=int, default=25)
     args = parser.parse_args()
     if args.aggregate:
         if args.input_root is None:
             parser.error("--input-root is required with --aggregate")
         return aggregate(input_root=args.input_root, output=args.output)
-    return run(shard_index=args.shard_index, shard_count=args.shard_count, output=args.output, resume=args.resume, cache_dir=args.cache_dir, progress_every=args.progress_every)
+    if args.object_key:
+        return run_document(object_key=args.object_key, output=args.output, cache_dir=args.cache_dir, progress_every=args.progress_every)
+    return run_legacy_shard(shard_index=args.shard_index, shard_count=args.shard_count, output=args.output, cache_dir=args.cache_dir)
 
 
 if __name__ == "__main__":
