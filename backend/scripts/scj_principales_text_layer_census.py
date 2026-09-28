@@ -296,6 +296,11 @@ def _document_summary(
     aligned = counts["aligned"]
     failures = counts["misaligned"] + counts["no_native_text"]
     ratio = aligned / relevant if relevant else 0.0
+    verified_share = (
+        aligned / source_page_count
+        if source_page_count
+        else 0.0
+    )
 
     score_rows = [
         record["assessment"]["score"]
@@ -314,20 +319,20 @@ def _document_summary(
     if (
         complete_scan
         and counts["processing_error"] == 0
-        and failures == 0
+        and aligned == source_page_count
     ):
         tier = "verified_complete"
     elif (
         complete_scan
         and counts["processing_error"] == 0
         and critical_failures == 0
-        and ratio >= 0.995
+        and verified_share >= 0.995
     ):
         tier = "verified_near_complete"
     elif (
         complete_scan
         and counts["processing_error"] == 0
-        and ratio >= 0.95
+        and verified_share >= 0.95
     ):
         tier = "verified_partial"
     else:
@@ -349,6 +354,7 @@ def _document_summary(
         "page_counts": dict(sorted(counts.items())),
         "relevant_pages": relevant,
         "aligned_share_of_relevant": ratio,
+        "verified_share_of_all_pages": verified_share,
         "verification_tier": tier,
         "critical_alignment_failures": critical_failures,
         "worst_word_error_rate": max(wers, default=None),
@@ -513,7 +519,7 @@ def aggregate(
 
     documents.sort(
         key=lambda item: (
-            -float(item["aligned_share_of_relevant"]),
+            -float(item["verified_share_of_all_pages"]),
             -int(item["longest_verified_run_pages"]),
             str(item["object_key"]),
         )
@@ -571,6 +577,11 @@ def aggregate(
         "aligned_share_of_relevant": (
             counts["aligned"] / relevant
             if relevant
+            else 0.0
+        ),
+        "verified_share_of_all_pages": (
+            counts["aligned"] / total
+            if total
             else 0.0
         ),
         "verification_tiers": dict(
