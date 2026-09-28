@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,53 @@ class PostgresSettings(BaseSettings):
     user: str
     password: SecretStr
     sslmode: str = "require"
+
+
+class OpenRouterSettings(BaseSettings):
+    """Optional hosted-model gateway settings.
+
+    The API key is deliberately optional so deterministic CI and offline workers
+    do not require provider credentials merely to start.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPENROUTER_",
+        extra="ignore",
+        str_strip_whitespace=True,
+    )
+
+    api_key: SecretStr | None = None
+    base_url: str = "https://openrouter.ai/api/v1"
+    decisions_base_url: str = "https://openrouter.ai/api/alpha"
+
+
+StructuredMode = Literal["tool", "json_schema", "json_object", "prompt_json"]
+
+
+class NormalizationModelSettings(BaseSettings):
+    """Model aliases and reproducible provider routes used by normalization QA."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="JURISNEXO_OPENROUTER_",
+        extra="ignore",
+        str_strip_whitespace=True,
+    )
+
+    jev_model: str = "~typesafe/jev-latest"
+    deepseek_model: str = "deepseek/deepseek-v4.1-flash"
+    deepseek_reasoning_effort: Literal["high", "xhigh"] = "high"
+    # Strict provider-native modes are preferred when supported. ``prompt_json``
+    # is the explicit compatibility mode for providers that reject structured
+    # response parameters; the response is still parsed and validated locally.
+    deepseek_structured_mode: StructuredMode = "json_schema"
+    deepseek_provider_order: str = "DeepSeek"
+    deepseek_allow_provider_fallbacks: bool = False
+    luna_model: str = "openai/gpt-6-luna"
+    luna_reasoning_effort: Literal["high", "xhigh"] = "high"
+    luna_structured_mode: StructuredMode = "json_schema"
+    luna_provider_order: str = "OpenAI"
+    luna_allow_provider_fallbacks: bool = False
+    visual_model: str | None = None
 
 
 class RuntimeSettings(BaseSettings):
@@ -57,3 +105,13 @@ def get_postgres_settings() -> PostgresSettings:
 @lru_cache
 def get_runtime_settings() -> RuntimeSettings:
     return RuntimeSettings()
+
+
+@lru_cache
+def get_openrouter_settings() -> OpenRouterSettings:
+    return OpenRouterSettings()
+
+
+@lru_cache
+def get_normalization_model_settings() -> NormalizationModelSettings:
+    return NormalizationModelSettings()

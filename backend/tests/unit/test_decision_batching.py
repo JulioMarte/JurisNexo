@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import pytest
+
+from jurisnexo.model_providers.contracts import JsonObject
+from jurisnexo.normalization.decision_batching import (
+    DecisionBatchPolicy,
+    DecisionRecord,
+    estimate_legal_text_tokens,
+    plan_decision_batches,
+    plan_record_scoped_decision_batches,
+)
+from jurisnexo.normalization.jev_quality import (
+    JevRoutingPolicy,
+    TextQualityProbabilities,
+)
+
+
+def _questions() -> dict[str, JsonObject]:
+    return {
+        "quality": {
+            "type": "choice",
+            "criteria": {
+                "acceptable": "usable",
+                "material_error": "damaged",
+                "uncertain": "uncertain",
+            },
+        }
+    }
+
+
+def test_batch_planner_keeps_headroom_below_32k_context() -> None:
+    records = tuple(
+        DecisionRecord(
+            record_id=f"r{index}",
+            text=("Artículo 53 de la Ley 137-11. " * 180),
+        )
+        for index in range(8)
+    )
+    policy = DecisionBatchPolicy(
+        max_context_tokens=32_000,
+        target_total_tokens=12_000,
+        reserved_instruction_tokens=2_000,
+        max_records_per_batch=20,
+    )
+
+    batches = plan_decision_batches(
+        records,
+        questions=_questions(),
+        state_description="Dominican legal-text quality routing.",
+        policy=policy,
+    )
+
+    assert len(batches) >= 2
+    assert all(
+        batch.estimated_total_tokens < policy.max_context_tokens
+        for batch in batches
+    )
+    assert all(
+        batch.estimated_total_tokens <= policy.target_total_tokens
+        for batch in batches
+    )
+    flattened = tuple(
+        record.record_id
+        for batch in batches
+        for record in batch.records
+    )
+    assert flattened == tuple(record.record_id for record in records)
+
+
+def test_batch_planner_never_silently_truncates_oversized_record() -> None:
+    record = DecisionRecord(
+        record_id="oversized",
+        text="x" * 100_000,
+    )
+    with pytest.raises(ValueError, match="exceeds the safe JEV batch budget"):
+        plan_decision_batches(
+            (record,),
+            questions=_questions(),
+            state_description="quality",
+        )
+
+
+def test_token_estimator_is_conservative_for_legal_identifiers() -> None:
+    text = "TC/0001/26 Artículo 53 Ley 137-11 RD$ 12,500.00"
+    estimated = estimate_legal_text_tokens(text)
+
+    assert estimated > 0
+    assert estimated >= len(text.encode("utf-8")) // 4
+
+
+
+def test_record_scoped_batching_counts_only_questions_sent_with_each_batch() -> None:
+    records = tuple(
+        DecisionRecord(
+            record_id=f"r{index}",
+            text=("Artículo 53 de la Ley 137-11. " * 120),
+        )
+        for index in range(6)
+    )
+
+    def question_factory(record_ids: tuple[str, ...]) -> dict[str, JsonObject]:
+        return {
+            f"{record_id}__quality": {
+                "type": "choice",
+                "instructions": "Clasifique la calidad de transcripción.",
+                "criteria": {
+                    "acceptable": "usable",
+                    "material_error": "damaged",
+                    "uncertain": "uncertain",
+                },
+            }
+            for record_id in record_ids
+        }
+
+    policy = DecisionBatchPolicy(
+        max_context_tokens=32_000,
+        target_total_tokens=24_000,
+        reserved_instruction_tokens=4_000,
+        max_records_per_batch=20,
+    )
+    batches = plan_record_scoped_decision_batches(
+        records,
+        question_factory=question_factory,
+        state_description="Dominican legal-text quality routing.",
+        policy=policy,
+    )
+
+    assert batches
+    assert all(
+        batch.estimated_total_tokens <= policy.target_total_tokens
+        for batch in batches
+    )
+    assert tuple(
+        record.record_id
+        for batch in batches
+        for record in batch.records
+    ) == tuple(record.record_id for record in records)
+
+
+
+def test_shadow_routing_escalates_uncertainty_and_visual_critical_risk() -> None:
+    policy = JevRoutingPolicy()
+
+    assert policy.recommend(
+        TextQualityProbabilities(
+            acceptable=0.20,
+            material_error=0.10,
+            uncertain=0.70,
+            legal_critical_damage=0.10,
+            needs_visual_review=0.10,
+        )
+    ) == "human_review"
+
+    assert policy.recommend(
+        TextQualityProbabilities(
+            acceptable=0.80,
+            material_error=0.10,
+            uncertain=0.05,
+            legal_critical_damage=0.90,
+            needs_visual_review=0.30,
+        )
+    ) == "visual_review"
+
+
+def test_shadow_routing_keeps_borderline_clean_text_in_sentinel_band() -> None:
+    policy = JevRoutingPolicy()
+
+    assert policy.recommend(
+        TextQualityProbabilities(
+            acceptable=0.95,
+            material_error=0.04,
+            uncertain=0.01,
+            legal_critical_damage=0.01,
+            needs_visual_review=0.01,
+        )
+    ) == "sentinel"
+
+    assert policy.recommend(
+        TextQualityProbabilities(
+            acceptable=0.99,
+            material_error=0.005,
+            uncertain=0.005,
+            legal_critical_damage=0.0,
+            needs_visual_review=0.0,
+        )
+    ) == "accept"
+
+
+
+def test_shadow_mode_never_activates_recommended_route() -> None:
+    probabilities = TextQualityProbabilities(
+        acceptable=0.10,
+        material_error=0.80,
+        uncertain=0.05,
+        legal_critical_damage=0.90,
+        needs_visual_review=0.85,
+    )
+    shadow = JevRoutingPolicy(promotion_state="shadow")
+    active = JevRoutingPolicy(promotion_state="active")
+
+    assert shadow.recommend(probabilities) == "visual_review"
+    assert shadow.route(probabilities) == "shadow_observe"
+    assert active.route(probabilities) == "visual_review"

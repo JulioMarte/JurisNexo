@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import pytest
+
+from jurisnexo.model_providers.chat_message import (
+    extract_chat_message_text,
+    extract_structured_object,
+    validate_structured_object,
+)
+
+
+def test_extracts_plain_string_content() -> None:
+    assert extract_chat_message_text({"content": "{}"}) == "{}"
+
+
+def test_extracts_content_part_list() -> None:
+    message = {"content": [{"type": "text", "text": '{"matches":'}, {"type": "text", "text": " true}",}]}
+    assert extract_chat_message_text(message) == '{"matches": true}'
+
+
+def test_extracts_dict_content() -> None:
+    assert extract_chat_message_text({"content": {"text": "ok"}}) == "ok"
+
+
+def test_ignores_non_text_parts() -> None:
+    message = {"content": [{"type": "reasoning", "text": "hidden"}, {"type": "text", "text": "visible"}]}
+    assert extract_chat_message_text(message) == "visible"
+
+
+def test_falls_back_to_reasoning_content_when_content_empty() -> None:
+    message = {"content": None, "reasoning_content": '{"escalate": false}'}
+    assert extract_chat_message_text(message) == '{"escalate": false}'
+
+
+def test_raises_when_no_textual_content_exists() -> None:
+    with pytest.raises(TypeError):
+        extract_chat_message_text({"content": None})
+
+
+def test_structured_object_uses_preparsed_value() -> None:
+    assert extract_structured_object({"parsed": {"matches": True}, "content": "ignored"}) == {"matches": True}
+
+
+def test_structured_object_never_treats_reasoning_as_final_answer() -> None:
+    message = {"content": None, "reasoning": '{"matches": true}', "reasoning_details": [{"type": "reasoning.text"}]}
+    with pytest.raises(TypeError, match="reasoning but no final structured content"):
+        extract_structured_object(message)
+
+
+def test_structured_object_prefers_final_content_over_reasoning() -> None:
+    message = {"content": '{"matches": false}', "reasoning": "internal analysis that is not JSON"}
+    assert extract_structured_object(message) == {"matches": False}
+
+
+def test_structured_object_strips_markdown_fence() -> None:
+    message = {"content": '```json\n{"matches": false, "corrected_text": null}\n```'}
+    assert extract_structured_object(message) == {"matches": False, "corrected_text": None}
+
+
+def test_structured_object_recovers_object_from_prose() -> None:
+    message = {"content": 'Result follows.\n{"escalate": false, "risk": "low"}'}
+    assert extract_structured_object(message) == {"escalate": False, "risk": "low"}
+
+
+def test_structured_object_rejects_non_object_json() -> None:
+    with pytest.raises(TypeError):
+        extract_structured_object({"content": "[1, 2, 3]"})
+
+
+def test_structured_object_rejects_non_json_text() -> None:
+    with pytest.raises(ValueError):
+        extract_structured_object({"content": "no json here"})
+
+
+def test_structured_object_uses_tool_call_arguments() -> None:
+    message = {"content": "", "tool_calls": [{"type": "function", "function": {"name": "jurisnexo_visual_verification", "arguments": '{"matches": true, "corrected_text": null, "material_differences": []}'}}]}
+    assert extract_structured_object(message) == {"matches": True, "corrected_text": None, "material_differences": []}
+
+
+def test_validate_structured_object_accepts_current_visual_shape() -> None:
+    schema = {"type": "object", "properties": {"matches": {"type": "boolean"}, "corrected_text": {"type": ["string", "null"]}, "material_differences": {"type": "array", "items": {"type": "string"}, "maxItems": 2}}, "required": ["matches", "corrected_text", "material_differences"], "additionalProperties": False}
+    validate_structured_object({"matches": True, "corrected_text": None, "material_differences": []}, schema)
+
+
+def test_validate_structured_object_rejects_missing_and_extra_fields() -> None:
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"], "additionalProperties": False}
+    with pytest.raises(ValueError, match="missing required"):
+        validate_structured_object({}, schema)
+    with pytest.raises(ValueError, match="unexpected keys"):
+        validate_structured_object({"ok": True, "extra": 1}, schema)

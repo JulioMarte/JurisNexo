@@ -402,3 +402,103 @@ evidence = ["invariant", "integration"]
 guarantee = "INV-ACQUISITION-RECONCILIATION-001"
 path = "backend/tests/architecture/test_acquisition_run_manifest_contract.py"
 evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-LINEAGE-001"
+path = "backend/tests/integration/test_normalization_control_plane.py"
+evidence = ["invariant", "integration", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-RECONCILIATION-001"
+path = "backend/tests/unit/test_normalization_finalization.py"
+evidence = ["invariant", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-RECONCILIATION-001"
+path = "backend/tests/integration/test_normalization_finalizer_postgres_s3.py"
+evidence = ["invariant", "integration", "provenance"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-RECONCILIATION-001"
+path = "backend/scripts/normalization_operational_resume_drill.py"
+evidence = ["integration", "provenance", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_control_plane_primitives.py"
+evidence = ["contract"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/integration/test_normalization_control_plane.py"
+evidence = ["invariant"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/evaluate_jev_principales.py"
+evidence = ["benchmark"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/evaluate_scj_principales_pdf_policy_holdout.py"
+evidence = ["benchmark"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/principales_corpus_suite.py"
+evidence = ["benchmark"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_benchmark_suite.py"
+evidence = ["unit", "contract"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/integration/test_normalization_model_evidence_persistence.py"
+evidence = ["invariant", "integration", "provenance"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_gold.py"
+evidence = ["unit", "contract"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_source_fidelity.py"
+evidence = ["unit", "contract", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/tests/unit/test_normalization_human_gold.py"
+evidence = ["unit", "contract", "adversarial"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "benchmark/normalization/principales_failed_page_diagnostics.py"
+evidence = ["benchmark", "adversarial"]
+
+[[proofs]]
+guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+path = "backend/tests/architecture/test_normalization_source_agnostic.py"
+evidence = ["fitness"]
+
+[[proofs]]
+guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+path = "backend/tests/unit/test_normalization_contracts.py"
+evidence = ["contract"]
+
+[[proofs]]
+guarantee = "FIT-NORMALIZATION-SOURCE-AGNOSTIC-001"
+path = "backend/scripts/tc_second_source_normalization_smoke.py"
+evidence = ["integration"]
+
+[[proofs]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+path = "backend/scripts/normalization_live_evidence_smoke.py"
+evidence = ["integration", "provenance", "adversarial"]
+
+[[gaps]]
+guarantee = "INV-NORMALIZATION-EVIDENCE-RESOLUTION-001"
+missing_evidence = ["benchmark"]
+reason = "Exact-head live run 36084961719 proves a real OpenRouter JEV response is persisted through model_call -> text-quality observation -> resolved evidence lineage -> immutable manifest using PostgreSQL and the production normalization executor/finalizer path. The human-gold schema/validator now enforces review metadata and document-level split isolation, but a reviewed stratified/adversarial normalization corpus and independently human-verified clean visual gold are still not populated. JEV remains shadow by policy and visual promotion remains blocked until that evidence exists."

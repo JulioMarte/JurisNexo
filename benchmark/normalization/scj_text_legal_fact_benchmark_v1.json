@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "scj_principales_text_legal_fact_extraction",
+  "source_visual_benchmark": {
+    "workflow_run_id": 36294070183,
+    "workflow_commit": "bb8226b7c42751c9167546b6f3aa67cbe466b3df",
+    "artifact_id": 10923961244,
+    "artifact_name": "scj-visual-prepared-36294070183-1",
+    "artifact_digest": "sha256:b39093f083af7cb5d01d5e05827deefa3e0b64514e0e146a09622d86fc028e85",
+    "expected_records": 290
+  },
+  "calibration_source_pdf_sha256": [
+    "052a9335269c446eb73dc8ddf0c9198391acf5dc19971f7d94f644dd3b967440",
+    "1c0cded32991d33366bffd729557682098b1a101e2846c93864fb664a1e83a14",
+    "4ba2d5d61a3ac877e3f7f35d73caef8bf3a26158fbdf61709e1f93053c405414"
+  ],
+  "expected_calibration_records": 50,
+  "expected_holdout_records": 240,
+  "reference_authority": "dual_channel_aligned",
+  "oracle": "benchmark/normalization/legal_fact_gold_v1.py"
+}

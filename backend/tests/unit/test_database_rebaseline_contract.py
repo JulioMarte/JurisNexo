@@ -18,9 +18,33 @@ def _assignment(module: ast.Module, name: str) -> object | None:
     return None
 
 
-def test_rebaseline_has_exactly_one_active_revision() -> None:
-    revisions = sorted(path for path in VERSIONS.glob("*.py") if path.name != "__init__.py")
-    assert [path.name for path in revisions] == ["0001_jurisnexo_baseline.py"]
+def test_rebaseline_keeps_one_root_and_one_linear_head() -> None:
+    revisions = sorted(
+        path for path in VERSIONS.glob("*.py") if path.name != "__init__.py"
+    )
+    parsed: dict[str, str | None] = {}
+    for path in revisions:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        revision = _assignment(tree, "revision")
+        down_revision = _assignment(tree, "down_revision")
+        assert isinstance(revision, str)
+        assert down_revision is None or isinstance(down_revision, str)
+        assert revision not in parsed
+        parsed[revision] = down_revision
+
+    roots = [revision for revision, parent in parsed.items() if parent is None]
+    assert roots == ["baseline_20260919"]
+
+    children: dict[str, list[str]] = {revision: [] for revision in parsed}
+    for revision, parent in parsed.items():
+        if parent is None:
+            continue
+        assert parent in parsed, f"{revision} references unknown parent {parent}"
+        children[parent].append(revision)
+
+    assert all(len(items) <= 1 for items in children.values())
+    heads = [revision for revision, items in children.items() if not items]
+    assert len(heads) == 1
 
 
 def test_rebaseline_revision_is_new_root() -> None:

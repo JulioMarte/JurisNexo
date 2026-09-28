@@ -1,0 +1,181 @@
+name: SCJ Principales text legal-fact benchmark
+
+# Paid semantic benchmark over a frozen, independently admitted text corpus.
+# Ordinary PR synchronization only proves contracts; provider calls are manual.
+on:
+  pull_request:
+    branches: [development]
+    paths:
+      - "benchmark/normalization/evaluate_text_legal_fact_extraction.py"
+      - "benchmark/normalization/scj_text_legal_fact_benchmark_v1.json"
+      - "benchmark/normalization/legal_fact_gold_v1.py"
+      - "backend/src/jurisnexo/normalization/legal_fact_extraction.py"
+      - "backend/tests/unit/test_legal_fact_extraction.py"
+      - "benchmark/normalization/test_legal_fact_gold_v1.py"
+      - ".github/workflows/scj-principales-text-legal-fact-benchmark.yml"
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "smoke=10 calibration pages; calibration=50 pages; full=all 290 pages"
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, calibration, full]
+      profiles:
+        description: "Comma-separated profiles: deepseek-high,luna-high,ling-low,ling-medium,ling-high"
+        required: true
+        default: "deepseek-high,luna-high,ling-low,ling-medium,ling-high"
+        type: string
+      max_concurrency:
+        description: "Maximum provider calls in flight per profile"
+        required: true
+        default: "8"
+        type: string
+      max_cost_usd_per_profile:
+        description: "Observed provider-cost ceiling; job fails above it"
+        required: true
+        default: "1.00"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: scj-principales-text-legal-fact-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend pytest==9.1.1
+      - run: pytest -q backend/tests/unit/test_legal_fact_extraction.py benchmark/normalization/test_legal_fact_gold_v1.py
+      - run: python -m py_compile benchmark/normalization/evaluate_text_legal_fact_extraction.py
+
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    needs: offline-contract
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          PROFILES: ${{ inputs.profiles }}
+          PHASE: ${{ inputs.phase }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          catalog = {
+              "deepseek-high": {
+                  "name": "deepseek-high",
+                  "model": "deepseek/deepseek-v4.1-flash",
+                  "reasoning": "high",
+                  "provider_order": "DeepSeek",
+              },
+              "luna-high": {
+                  "name": "luna-high",
+                  "model": "openai/gpt-6-luna",
+                  "reasoning": "high",
+                  "provider_order": "OpenAI",
+              },
+              "ling-low": {
+                  "name": "ling-low",
+                  "model": "inclusionai/ling-3.0-flash-vl",
+                  "reasoning": "low",
+                  "provider_order": "",
+              },
+              "ling-medium": {
+                  "name": "ling-medium",
+                  "model": "inclusionai/ling-3.0-flash-vl",
+                  "reasoning": "medium",
+                  "provider_order": "",
+              },
+              "ling-high": {
+                  "name": "ling-high",
+                  "model": "inclusionai/ling-3.0-flash-vl",
+                  "reasoning": "high",
+                  "provider_order": "",
+              },
+          }
+          requested = [item.strip() for item in os.environ["PROFILES"].split(",") if item.strip()]
+          unknown = sorted(set(requested) - set(catalog))
+          if unknown:
+              raise SystemExit(f"unknown benchmark profiles: {unknown}")
+          if not requested:
+              raise SystemExit("at least one benchmark profile is required")
+          if len(requested) != len(set(requested)):
+              raise SystemExit("benchmark profiles must not be duplicated")
+          if os.environ["PHASE"] == "full":
+              ling_profiles = [item for item in requested if item.startswith("ling-")]
+              if len(ling_profiles) > 1:
+                  raise SystemExit(
+                      "full phase accepts at most one Ling reasoning profile; "
+                      "select it during calibration first"
+                  )
+              if len(requested) > 3:
+                  raise SystemExit(
+                      "full phase accepts at most three finalist profiles"
+                  )
+          # Full runs must be deliberate: reasoning variants are narrowed during calibration.
+          print(
+              "matrix="
+              + json.dumps(
+                  {"include": [catalog[item] for item in requested]},
+                  separators=(",", ":"),
+              )
+          )
+          PY
+
+  benchmark:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [offline-contract, plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: llm-benchmark
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend
+      - name: Download frozen 290-page visual gold artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: scj-visual-prepared-36294070183-1
+          path: ${{ runner.temp }}/prepared-290
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: JulioMarte/JurisNexo
+          run-id: 36294070183
+      - name: Run one-call extraction profile
+        run: |
+          python benchmark/normalization/evaluate_text_legal_fact_extraction.py \
+            --output "${RUNNER_TEMP}/text-legal-facts" \
+            --prepared-root "${RUNNER_TEMP}/prepared-290" \
+            --phase "${{ inputs.phase }}" \
+            --model "${{ matrix.model }}" \
+            --reasoning "${{ matrix.reasoning }}" \
+            --structured-mode tool \
+            --provider-order "${{ matrix.provider_order }}" \
+            --max-concurrency "${{ inputs.max_concurrency }}" \
+            --max-cost-usd "${{ inputs.max_cost_usd_per_profile }}"
+      - name: Publish benchmark summary
+        if: always()
+        run: test -f "${RUNNER_TEMP}/text-legal-facts/summary.md" && cat "${RUNNER_TEMP}/text-legal-facts/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-text-legal-facts-${{ inputs.phase }}-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/text-legal-facts/**
+          if-no-files-found: warn
+          retention-days: 90

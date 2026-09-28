@@ -23,6 +23,8 @@ class StructuredGenerationResult:
     model_version: str | None
     response_id: str | None
     usage: ModelUsage
+    cost_usd: float | None = None
+    provider_metadata: JsonObject | None = None
 
 
 class ModelProviderError(RuntimeError):
