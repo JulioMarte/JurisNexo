@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unicodedata
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 from jurisnexo.model_providers.contracts import JsonObject, JsonValue
 
