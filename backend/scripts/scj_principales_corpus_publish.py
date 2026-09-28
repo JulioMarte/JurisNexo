@@ -10,7 +10,7 @@ import json
 import re
 import tarfile
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 
