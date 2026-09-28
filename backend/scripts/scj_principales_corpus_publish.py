@@ -210,6 +210,11 @@ def publish_document(
     if document.get("interrupted"):
         raise RuntimeError("refusing to publish an interrupted document scan")
 
+    inventory_sha = _require_hex(
+        inventory_sha256,
+        length=64,
+        label="inventory_sha256",
+    )
     policy_sha = _require_hex(
         str(document["policy_sha256"]),
         length=64,
@@ -227,7 +232,7 @@ def publish_document(
     )
     doc_id = _require_hex(document_id, length=16, label="document_id")
     prefix = _dataset_prefix(
-        inventory_sha256=inventory_sha256,
+        inventory_sha256=inventory_sha,
         policy_sha256=policy_sha,
         code_revision=code_revision,
     )
@@ -241,7 +246,7 @@ def publish_document(
         path=archive_path,
         content_type="application/gzip",
         metadata={
-            "inventory-sha256": inventory_sha256,
+            "inventory-sha256": inventory_sha,
             "policy-sha256": policy_sha,
             "source-pdf-sha256": source_sha,
             "document-id": doc_id,
@@ -252,7 +257,7 @@ def publish_document(
     return {
         "key": key,
         "archive_sha256": archive_sha,
-        "inventory_sha256": inventory_sha256,
+        "inventory_sha256": inventory_sha,
         "policy_sha256": policy_sha,
         "code_revision": code_revision,
         "document_id": doc_id,
