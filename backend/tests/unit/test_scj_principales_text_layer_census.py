@@ -105,11 +105,16 @@ def test_classifies_low_information_and_missing_native(
         lambda *_a, **_k: SimpleNamespace(
             text="",
             mean_confidence=99.0,
+            engine_version="tesseract-test",
+            language="spa+eng",
         ),
     )
     result = module.classify_page(native_text="", image=b"png")
     assert result["classification"] == "low_information"
     assert len(result["native_text_sha256"]) == 64
+    assert result["ocr_engine_version"] == "tesseract-test"
+    assert result["ocr_language"] == "spa+eng"
+    assert result["ocr_page_segmentation_mode"] == 6
 
     visible = "palabra " * 100
     monkeypatch.setattr(
@@ -118,6 +123,8 @@ def test_classifies_low_information_and_missing_native(
         lambda *_a, **_k: SimpleNamespace(
             text=visible,
             mean_confidence=99.0,
+            engine_version="tesseract-test",
+            language="spa+eng",
         ),
     )
     result = module.classify_page(native_text="", image=b"png")
@@ -194,6 +201,9 @@ def test_document_summary_requires_complete_scan_for_complete_tier() -> None:
     assert summary["verified_share_of_all_pages"] == 1.0
     assert summary["complete_scan"] is True
     assert summary["longest_verified_run_pages"] == 10
+    assert summary["render_scale"] == 2.0
+    assert summary["ocr_language"] == "spa+eng"
+    assert len(summary["policy_sha256"]) == 64
 
     incomplete = module._document_summary(
         key="a.pdf",
