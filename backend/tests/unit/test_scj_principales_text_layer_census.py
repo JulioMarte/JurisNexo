@@ -228,6 +228,32 @@ def test_document_summary_requires_complete_scan_for_complete_tier() -> None:
     assert unresolved["verified_share_of_all_pages"] == pytest.approx(0.9)
 
 
+def test_document_summary_rejects_zero_or_duplicate_page_coverage() -> None:
+    module = _module()
+
+    empty = module._document_summary(
+        key="empty.pdf",
+        pdf_sha="e" * 64,
+        source_page_count=0,
+        records=[],
+    )
+    assert empty["verification_tier"] == "unsuitable"
+    assert empty["complete_scan"] is False
+
+    duplicate = [
+        {"page_index": 0, "classification": "aligned"},
+        {"page_index": 0, "classification": "aligned"},
+    ]
+    summary = module._document_summary(
+        key="duplicate.pdf",
+        pdf_sha="d" * 64,
+        source_page_count=2,
+        records=duplicate,
+    )
+    assert summary["verification_tier"] == "unsuitable"
+    assert summary["complete_scan"] is False
+
+
 def test_document_summary_assigns_near_complete_tier() -> None:
     module = _module()
     records = [
