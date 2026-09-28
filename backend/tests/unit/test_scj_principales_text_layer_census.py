@@ -3,10 +3,12 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 
-def _module():
+def _module() -> ModuleType:
     path = (
         Path(__file__).resolve().parents[2]
         / "scripts"
@@ -19,34 +21,33 @@ def _module():
     return module
 
 
-def test_classifies_low_information_and_missing_native(monkeypatch):
+def test_classifies_low_information_and_missing_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = _module()
-    monkeypatch.setattr(
-        module,
-        "run_tesseract_visual_ocr",
-        lambda *_args, **_kwargs: SimpleNamespace(text="", mean_confidence=99.0),
-    )
+
+    def empty_ocr(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text="", mean_confidence=99.0)
+
+    monkeypatch.setattr(module, "run_tesseract_visual_ocr", empty_ocr)
     assert (
         module.classify_page(native_text="", image=b"png")["classification"]
         == "low_information"
     )
 
     visible = "palabra " * 100
-    monkeypatch.setattr(
-        module,
-        "run_tesseract_visual_ocr",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            text=visible,
-            mean_confidence=99.0,
-        ),
-    )
+
+    def visible_ocr(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text=visible, mean_confidence=99.0)
+
+    monkeypatch.setattr(module, "run_tesseract_visual_ocr", visible_ocr)
     assert (
         module.classify_page(native_text="", image=b"png")["classification"]
         == "no_native_text"
     )
 
 
-def test_aggregate_counts_normalization_need(tmp_path: Path):
+def test_aggregate_counts_normalization_need(tmp_path: Path) -> None:
     module = _module()
     shards = tmp_path / "shards"
     shards.mkdir()
