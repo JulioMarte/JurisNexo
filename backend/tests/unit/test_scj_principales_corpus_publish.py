@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -140,7 +141,7 @@ def test_restore_document_verifies_archive_and_source_key(
         "object_key": object_key,
     }
     (source / "document.json").write_text(
-        __import__("json").dumps(document),
+        json.dumps(document),
         encoding="utf-8",
     )
     archive_path = tmp_path / "document.tar.gz"
@@ -165,15 +166,22 @@ def test_restore_document_verifies_archive_and_source_key(
         def get_object(self, **_kwargs: object) -> dict[str, object]:
             return {"Body": Body()}
 
+    def is_not_found(_exc: Exception) -> bool:
+        return False
+
     store = SimpleNamespace(
         client=Client(),
         config=SimpleNamespace(bucket="bucket"),
-        is_not_found=lambda _exc: False,
+        is_not_found=is_not_found,
     )
+
+    def build_store() -> SimpleNamespace:
+        return store
+
     monkeypatch.setattr(
         publish,
         "build_s3_object_store",
-        lambda: store,
+        build_store,
     )
 
     output = tmp_path / "restored"
