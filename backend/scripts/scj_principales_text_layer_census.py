@@ -423,7 +423,10 @@ def _document_summary(
         "ocr_engine_versions": ocr_engine_versions,
         "policy": policy,
         "policy_sha256": policy_sha256,
-        "code_revision": os.environ.get("GITHUB_SHA"),
+        "code_revision": (
+            os.environ.get("SCJ_CODE_REVISION")
+            or os.environ.get("GITHUB_SHA")
+        ),
     }
 
 
