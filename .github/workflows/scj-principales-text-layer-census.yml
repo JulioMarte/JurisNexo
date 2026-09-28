@@ -179,6 +179,7 @@ jobs:
           python backend/scripts/scj_principales_corpus_publish.py summary \
             --summary "$RUNNER_TEMP/aggregate/census-summary.json" \
             --inventory "$RUNNER_TEMP/inventory/inventory.json" \
+            --documents-root "$RUNNER_TEMP/documents" \
             --code-revision "$SCJ_CODE_REVISION"
       - name: Publish compact summary
         if: always()
