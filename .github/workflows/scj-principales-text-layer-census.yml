@@ -34,7 +34,9 @@ jobs:
           ruff check \
             backend/scripts/scj_principales_corpus_inventory.py \
             backend/scripts/scj_principales_text_layer_census.py \
-            backend/tests/unit/test_scj_principales_text_layer_census.py
+            backend/src/jurisnexo/normalization/visual_reference_ocr.py \
+            backend/tests/unit/test_scj_principales_text_layer_census.py \
+            backend/tests/unit/test_visual_reference_ocr.py
           pytest -q \
             backend/tests/unit/test_scj_principales_text_layer_census.py \
             backend/tests/unit/test_visual_reference_alignment.py \
