@@ -56,6 +56,47 @@ def test_classifies_low_information_and_missing_native(
     )
 
 
+def test_resume_checkpoint_reconstructs_completed_pages_and_counts(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    records = tmp_path / "pages-000.jsonl"
+    records.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "object_key": "a.pdf",
+                        "page_index": 0,
+                        "classification": "aligned",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "object_key": "a.pdf",
+                        "page_index": 1,
+                        "classification": "misaligned",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "object_key": "b.pdf",
+                        "page_index": 0,
+                        "classification": "low_information",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    completed, counts = module._load_completed(records)
+    assert completed == {("a.pdf", 0), ("a.pdf", 1), ("b.pdf", 0)}
+    assert counts["aligned"] == 1
+    assert counts["misaligned"] == 1
+    assert counts["low_information"] == 1
+
+
 def test_aggregate_counts_normalization_need(tmp_path: Path) -> None:
     module = _module()
     shards = tmp_path / "shards"
@@ -68,7 +109,8 @@ def test_aggregate_counts_normalization_need(tmp_path: Path) -> None:
                     "misaligned": 2,
                     "no_native_text": 1,
                     "low_information": 1,
-                }
+                },
+                "interrupted": False,
             }
         )
     )
@@ -78,7 +120,8 @@ def test_aggregate_counts_normalization_need(tmp_path: Path) -> None:
                 "page_counts": {
                     "aligned": 3,
                     "processing_error": 1,
-                }
+                },
+                "interrupted": False,
             }
         )
     )
@@ -90,3 +133,4 @@ def test_aggregate_counts_normalization_need(tmp_path: Path) -> None:
     assert report["relevant_pages"] == 13
     assert report["pages_needing_normalization"] == 3
     assert report["processing_errors"] == 1
+    assert report["interrupted_shards"] == 0
