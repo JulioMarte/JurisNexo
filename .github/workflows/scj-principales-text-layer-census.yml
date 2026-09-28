@@ -117,7 +117,8 @@ jobs:
             --output-dir "$RUNNER_TEMP/document" \
             --inventory-sha256 "$SCJ_INVENTORY_SHA256" \
             --document-id "$SCJ_DOCUMENT_ID" \
-            --code-revision "$SCJ_CODE_REVISION"
+            --code-revision "$SCJ_CODE_REVISION" \
+            --object-key "$SCJ_OBJECT_KEY"
           if test -f "$RUNNER_TEMP/document/publish.json"; then
             echo "restored=true" >> "$GITHUB_OUTPUT"
           else
