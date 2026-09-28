@@ -47,7 +47,9 @@ def test_duplicate_predictions_do_not_inflate_precision_or_recall() -> None:
 
 
 def test_payload_rejects_missing_schema_fields() -> None:
-    value = {field: [] for field in LEGAL_FACT_FIELDS[:-1]}
+    value: dict[str, object] = {
+        field: list[str]() for field in LEGAL_FACT_FIELDS[:-1]
+    }
     try:
         validate_legal_fact_payload(value)
     except ValueError as exc:
