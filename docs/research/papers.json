@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-19",
+  "papers": [
+    {
+      "id": "2512.24601",
+      "slug": "recursive-language-models",
+      "title": "Recursive Language Models",
+      "year": 2025,
+      "abs_url": "https://arxiv.org/abs/2512.24601",
+      "pdf_url": "https://arxiv.org/pdf/2512.24601",
+      "path": "papers/2512.24601-recursive-language-models.pdf"
+    },
+    {
+      "id": "2410.12189",
+      "slug": "docetl",
+      "title": "DocETL: Agentic Query Rewriting and Evaluation for Complex Document Processing",
+      "year": 2024,
+      "abs_url": "https://arxiv.org/abs/2410.12189",
+      "pdf_url": "https://arxiv.org/pdf/2410.12189",
+      "path": "papers/2410.12189-docetl.pdf"
+    },
+    {
+      "id": "2407.11418",
+      "slug": "semantic-operators-lotus",
+      "title": "Semantic Operators: A Declarative Model for Rich, AI-based Analytics Over Text Data",
+      "year": 2024,
+      "abs_url": "https://arxiv.org/abs/2407.11418",
+      "pdf_url": "https://arxiv.org/pdf/2407.11418",
+      "path": "papers/2407.11418-semantic-operators-lotus.pdf"
+    },
+    {
+      "id": "2406.19760",
+      "slug": "keller",
+      "title": "Learning Interpretable Legal Case Retrieval via Knowledge-Guided Case Reformulation",
+      "year": 2024,
+      "abs_url": "https://arxiv.org/abs/2406.19760",
+      "pdf_url": "https://arxiv.org/pdf/2406.19760",
+      "path": "papers/2406.19760-keller.pdf"
+    },
+    {
+      "id": "2505.23832",
+      "slug": "legalsearchlm",
+      "title": "LegalSearchLM: Rethinking Legal Case Retrieval as Legal Elements Generation",
+      "year": 2025,
+      "abs_url": "https://arxiv.org/abs/2505.23832",
+      "pdf_url": "https://arxiv.org/pdf/2505.23832",
+      "path": "papers/2505.23832-legalsearchlm.pdf"
+    },
+    {
+      "id": "2210.05188",
+      "slug": "legal-elements",
+      "title": "Legal Element-oriented Modeling with Multi-view Contrastive Learning for Legal Case Retrieval",
+      "year": 2022,
+      "abs_url": "https://arxiv.org/abs/2210.05188",
+      "pdf_url": "https://arxiv.org/pdf/2210.05188",
+      "path": "papers/2210.05188-legal-elements.pdf"
+    },
+    {
+      "id": "2312.11229",
+      "slug": "casegnn",
+      "title": "CaseGNN: Graph Neural Networks for Legal Case Retrieval with Text-Attributed Graphs",
+      "year": 2023,
+      "abs_url": "https://arxiv.org/abs/2312.11229",
+      "pdf_url": "https://arxiv.org/pdf/2312.11229",
+      "path": "papers/2312.11229-casegnn.pdf"
+    },
+    {
+      "id": "2403.17780",
+      "slug": "caselink",
+      "title": "CaseLink: Inductive Graph Learning for Legal Case Retrieval",
+      "year": 2024,
+      "abs_url": "https://arxiv.org/abs/2403.17780",
+      "pdf_url": "https://arxiv.org/pdf/2403.17780",
+      "path": "papers/2403.17780-caselink.pdf"
+    },
+    {
+      "id": "2401.18059",
+      "slug": "raptor",
+      "title": "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval",
+      "year": 2024,
+      "abs_url": "https://arxiv.org/abs/2401.18059",
+      "pdf_url": "https://arxiv.org/pdf/2401.18059",
+      "path": "papers/2401.18059-raptor.pdf"
+    },
+    {
+      "id": "2605.28120",
+      "slug": "legalgraphrag",
+      "title": "LegalGraphRAG: Multi-Agent Graph Retrieval-Augmented Generation for Reliable Legal Reasoning",
+      "year": 2026,
+      "abs_url": "https://arxiv.org/abs/2605.28120",
+      "pdf_url": "https://arxiv.org/pdf/2605.28120",
+      "path": "papers/2605.28120-legalgraphrag.pdf"
+    }
+  ]
+}
