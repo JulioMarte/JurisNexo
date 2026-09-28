@@ -74,3 +74,46 @@ def test_dataset_prefix_is_content_addressed() -> None:
     assert prefix.endswith(
         f"/{'a' * 64}/{'b' * 64}/{'c' * 40}"
     )
+
+
+def test_summary_publish_requires_document_receipts(tmp_path: Path) -> None:
+    publish = _module()
+    inventory_sha = "a" * 64
+    policy_sha = "b" * 64
+    revision = "c" * 40
+    source_sha = "d" * 64
+
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(
+        (
+            '{"inventory_sha256":"'
+            + inventory_sha
+            + '","documents":[{"object_key":"a.pdf"}]}'
+        ),
+        encoding="utf-8",
+    )
+    summary = tmp_path / "census-summary.json"
+    summary.write_text(
+        (
+            '{"inventory_sha256":"'
+            + inventory_sha
+            + '","documents":1,"total_pages":1,'
+            + '"document_ranking":[{"object_key":"a.pdf",'
+            + '"source_pdf_sha256":"'
+            + source_sha
+            + '","policy_sha256":"'
+            + policy_sha
+            + '"}]}'
+        ),
+        encoding="utf-8",
+    )
+    documents = tmp_path / "documents"
+    documents.mkdir()
+
+    with pytest.raises(RuntimeError, match="receipt count"):
+        publish.publish_summary(
+            summary_path=summary,
+            inventory_path=inventory,
+            documents_root=documents,
+            code_revision=revision,
+        )
