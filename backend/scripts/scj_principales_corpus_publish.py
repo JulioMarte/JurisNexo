@@ -10,12 +10,30 @@ import json
 import re
 import tarfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
+from jurisnexo.normalization.visual_reference_alignment import (
+    VisualReferencePolicy,
+)
 
 BASE_PREFIX = "benchmarks/scj-principales/corpus-verification/v1"
 _HEX = re.compile(r"^[0-9a-f]+$")
+POLICY = VisualReferencePolicy()
+
+
+def _policy_sha256() -> str:
+    policy = {
+        name: getattr(POLICY, name)
+        for name in POLICY.__dataclass_fields__
+    }
+    return _sha256_bytes(
+        json.dumps(
+            policy,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def _require_hex(value: str, *, length: int, label: str) -> str:
@@ -192,6 +210,126 @@ def _put_immutable_file(
     return payload_sha
 
 
+def _document_archive_key(
+    *,
+    inventory_sha256: str,
+    document_id: str,
+    code_revision: str,
+) -> str:
+    prefix = _dataset_prefix(
+        inventory_sha256=inventory_sha256,
+        policy_sha256=_policy_sha256(),
+        code_revision=code_revision,
+    )
+    doc_id = _require_hex(
+        document_id,
+        length=16,
+        label="document_id",
+    )
+    return f"{prefix}/documents/{doc_id}.tar.gz"
+
+
+def restore_document(
+    *,
+    output_dir: Path,
+    inventory_sha256: str,
+    document_id: str,
+    code_revision: str,
+) -> dict[str, str] | None:
+    inventory_sha = _require_hex(
+        inventory_sha256,
+        length=64,
+        label="inventory_sha256",
+    )
+    revision = _require_hex(
+        code_revision,
+        length=40,
+        label="code_revision",
+    )
+    key = _document_archive_key(
+        inventory_sha256=inventory_sha,
+        document_id=document_id,
+        code_revision=revision,
+    )
+    store = build_s3_object_store()
+    metadata = _head_metadata(store, key)
+    if metadata is None:
+        return None
+
+    expected_sha = _require_hex(
+        metadata.get("payload-sha256", ""),
+        length=64,
+        label="payload-sha256",
+    )
+    client = cast(Any, store.client)
+    response = client.get_object(
+        Bucket=store.config.bucket,
+        Key=key,
+    )
+    body = response["Body"].read()
+    payload = body if isinstance(body, bytes) else bytes(body)
+    actual_sha = _sha256_bytes(payload)
+    if actual_sha != expected_sha:
+        raise RuntimeError("restored document archive checksum mismatch")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as compressed:
+        with tarfile.open(
+            mode="r:",
+            fileobj=compressed,
+        ) as archive:
+            members = archive.getmembers()
+            for member in members:
+                if not member.isfile():
+                    raise RuntimeError(
+                        "restored corpus archive contains non-file member"
+                    )
+                target = (output_dir / member.name).resolve()
+                if output_dir.resolve() not in target.parents:
+                    raise RuntimeError(
+                        "restored corpus archive escaped output directory"
+                    )
+            archive.extractall(
+                path=output_dir,
+                members=members,
+                filter="data",
+            )
+
+    document_path = output_dir / "document.json"
+    if not document_path.is_file():
+        raise RuntimeError("restored archive omitted document.json")
+    document = json.loads(document_path.read_text(encoding="utf-8"))
+    if str(document.get("policy_sha256")) != _policy_sha256():
+        raise RuntimeError("restored archive policy SHA mismatch")
+    if str(document.get("code_revision") or "") != revision:
+        raise RuntimeError("restored archive code revision mismatch")
+
+    receipt = {
+        "key": key,
+        "archive_sha256": actual_sha,
+        "inventory_sha256": inventory_sha,
+        "policy_sha256": _policy_sha256(),
+        "code_revision": revision,
+        "document_id": _require_hex(
+            document_id,
+            length=16,
+            label="document_id",
+        ),
+        "source_pdf_sha256": str(document["source_pdf_sha256"]),
+        "object_key": str(document["object_key"]),
+    }
+    (output_dir / "publish.json").write_text(
+        json.dumps(
+            receipt,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return receipt
+
+
 def publish_document(
     *,
     input_dir: Path,
@@ -238,7 +376,7 @@ def publish_document(
     )
 
     archive_sha = build_deterministic_archive(input_dir, archive_path)
-    key = f"{prefix}/documents/{doc_id}-{source_sha[:16]}.tar.gz"
+    key = f"{prefix}/documents/{doc_id}.tar.gz"
     store = build_s3_object_store()
     stored_sha = _put_immutable_file(
         store,
@@ -385,6 +523,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    restore = subparsers.add_parser("restore")
+    restore.add_argument("--output-dir", type=Path, required=True)
+    restore.add_argument("--inventory-sha256", required=True)
+    restore.add_argument("--document-id", required=True)
+    restore.add_argument("--code-revision", required=True)
+
     document = subparsers.add_parser("document")
     document.add_argument("--input-dir", type=Path, required=True)
     document.add_argument("--inventory-sha256", required=True)
@@ -399,6 +543,25 @@ def main() -> int:
     summary.add_argument("--code-revision", required=True)
 
     args = parser.parse_args()
+    if args.command == "restore":
+        result = restore_document(
+            output_dir=args.output_dir,
+            inventory_sha256=args.inventory_sha256,
+            document_id=args.document_id,
+            code_revision=args.code_revision,
+        )
+        print(
+            json.dumps(
+                {
+                    "restored": result is not None,
+                    "receipt": result,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
     if args.command == "document":
         result = publish_document(
             input_dir=args.input_dir,
