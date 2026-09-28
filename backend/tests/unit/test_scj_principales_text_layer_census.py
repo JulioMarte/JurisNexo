@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -10,6 +11,14 @@ import pytest
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
+
+# The census module imports pypdfium2, which belongs to the optional
+# "normalization" extra that the generic test image intentionally omits. These
+# logic tests never render PDFs, and the dedicated census workflow installs the
+# real dependency. Stub the renderer boundary when absent so classification and
+# aggregation contracts still execute in the generic suite.
+if importlib.util.find_spec("pypdfium2") is None:
+    sys.modules["pypdfium2"] = ModuleType("pypdfium2")
 
 
 def _module() -> ModuleType:
