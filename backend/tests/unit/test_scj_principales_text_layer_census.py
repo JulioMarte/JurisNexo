@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -99,15 +100,24 @@ def test_classifies_low_information_and_missing_native(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _module()
-    monkeypatch.setattr(
-        module,
-        "run_tesseract_visual_ocr",
-        lambda *_a, **_k: SimpleNamespace(
+    def empty_ocr(
+        _image: bytes,
+        *,
+        language: str = "spa+eng",
+        page_segmentation_mode: int = 6,
+    ) -> SimpleNamespace:
+        del page_segmentation_mode
+        return SimpleNamespace(
             text="",
             mean_confidence=99.0,
             engine_version="tesseract-test",
-            language="spa+eng",
-        ),
+            language=language,
+        )
+
+    monkeypatch.setattr(
+        module,
+        "run_tesseract_visual_ocr",
+        empty_ocr,
     )
     result = module.classify_page(native_text="", image=b"png")
     assert result["classification"] == "low_information"
@@ -117,15 +127,24 @@ def test_classifies_low_information_and_missing_native(
     assert result["ocr_page_segmentation_mode"] == 6
 
     visible = "palabra " * 100
-    monkeypatch.setattr(
-        module,
-        "run_tesseract_visual_ocr",
-        lambda *_a, **_k: SimpleNamespace(
+    def visible_ocr(
+        _image: bytes,
+        *,
+        language: str = "spa+eng",
+        page_segmentation_mode: int = 6,
+    ) -> SimpleNamespace:
+        del page_segmentation_mode
+        return SimpleNamespace(
             text=visible,
             mean_confidence=99.0,
             engine_version="tesseract-test",
-            language="spa+eng",
-        ),
+            language=language,
+        )
+
+    monkeypatch.setattr(
+        module,
+        "run_tesseract_visual_ocr",
+        visible_ocr,
     )
     result = module.classify_page(native_text="", image=b"png")
     assert result["classification"] == "no_native_text"
@@ -264,7 +283,7 @@ def test_document_summary_rejects_zero_or_duplicate_page_coverage() -> None:
 
 def test_document_summary_assigns_near_complete_tier() -> None:
     module = _module()
-    records = [
+    records: list[dict[str, Any]] = [
         {"page_index": index, "classification": "aligned"}
         for index in range(999)
     ]
