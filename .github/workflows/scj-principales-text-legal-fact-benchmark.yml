@@ -39,6 +39,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: scj-principales-text-legal-fact-${{ github.event.pull_request.number || github.ref }}
@@ -108,7 +109,20 @@ jobs:
               raise SystemExit(f"unknown benchmark profiles: {unknown}")
           if not requested:
               raise SystemExit("at least one benchmark profile is required")
-          # Full runs must be deliberate: the caller explicitly names finalists.
+          if len(requested) != len(set(requested)):
+              raise SystemExit("benchmark profiles must not be duplicated")
+          if os.environ["PHASE"] == "full":
+              ling_profiles = [item for item in requested if item.startswith("ling-")]
+              if len(ling_profiles) > 1:
+                  raise SystemExit(
+                      "full phase accepts at most one Ling reasoning profile; "
+                      "select it during calibration first"
+                  )
+              if len(requested) > 3:
+                  raise SystemExit(
+                      "full phase accepts at most three finalist profiles"
+                  )
+          # Full runs must be deliberate: reasoning variants are narrowed during calibration.
           print(
               "matrix="
               + json.dumps(
