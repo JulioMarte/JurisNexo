@@ -101,7 +101,7 @@ jobs:
       SCJ_EXPECTED_ETAG: ${{ matrix.etag }}
       SCJ_DOCUMENT_ID: ${{ matrix.document_id }}
       SCJ_INVENTORY_SHA256: ${{ needs.inventory.outputs.inventory_sha256 }}
-      SCJ_CODE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      SCJ_CODE_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -152,7 +152,7 @@ jobs:
       JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
-      SCJ_CODE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      SCJ_CODE_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
