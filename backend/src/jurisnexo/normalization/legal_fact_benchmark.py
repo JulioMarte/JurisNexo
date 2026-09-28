@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 # Benchmark oracle deliberately lives outside the model prompt/provider path.
 # These patterns are independently scored against the already-admitted text.
 LEGAL_FACT_PATTERNS: dict[str, re.Pattern[str]] = {
     "dates": re.compile(r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})\b"),
-    "amounts": re.compile(r"(?i)(?:RD\$|US\$|DOP|USD)\s*\d[\d.,]*"),
+    "amounts": re.compile(r"(?i)(?:RD\$|US\$|DOP|USD)\s*\d[\d,]*(?:\.\d+)?"),
     "articles": re.compile(r"(?i)\bart(?:í|i)culo\s+\d+(?:[.-]\d+)*\b"),
     "laws": re.compile(r"(?i)\bley\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"),
     "decrees": re.compile(r"(?i)\bdecreto(?:-ley)?\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"),
@@ -17,8 +17,12 @@ LEGAL_FACT_PATTERNS: dict[str, re.Pattern[str]] = {
     "rnc": re.compile(r"(?i)\bRNC\b[\s:.#-]*\d{9}\b"),
     "cedulas": re.compile(r"(?i)\bc[eé]dula\b[\s:.#-]*\d{3}-?\d{7}-?\d\b"),
     "matriculas": re.compile(r"(?i)\bmatr[ií]cula\s+(?:núm(?:ero)?\.?\s*)?\d+[\d-]*\b"),
-    "cadastral_references": re.compile(r"(?i)\b(?:parcela|distrito catastral|designaci[oó]n catastral)\b[^\n]{0,40}?\d[\d-]*"),
-    "case_identifiers": re.compile(r"(?i)\b(?:TC|SCJ|expediente|sentencia)[\s:.-]*[A-Z0-9./-]{3,}\b"),
+    "cadastral_references": re.compile(
+        r"(?i)\b(?:parcela|distrito catastral|designaci[oó]n catastral)\b[^\n]{0,40}?\d[\d-]*"
+    ),
+    "case_identifiers": re.compile(
+        r"(?i)\b(?:TC|SCJ|expediente|sentencia)[\s:.-]*[A-Z0-9./-]{3,}\b"
+    ),
     "citations": re.compile(r"(?i)\bTC/\d{4}/\d{2}\b|\bSCJ-[A-Z0-9-]{4,}\b"),
 }
 FACT_FIELDS = tuple(LEGAL_FACT_PATTERNS)
