@@ -32,6 +32,10 @@ The documents are intentionally ordered from product intent to implementation, o
 
 24. [`38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md`](./38-jurisprudential-intelligence-flywheel-and-corpus-strategy.md) — canonical current corpus/product strategy: two-speed breadth/depth, SCJ Principales seed, citation-first expansion, selective treatment, Golden Precedent Set, failure corpus, coverage discipline, and explicit non-goals.
 
+## Research library
+
+- [`research/README.md`](./research/README.md) — repository-owned bibliography and architecture mapping for RLM, DocETL, LOTUS, KELLER, LegalSearchLM, legal-element retrieval, CaseGNN, CaseLink, RAPTOR, and LegalGraphRAG. The accompanying manifest/downloader keeps the scientific references reproducible without making live-paper downloads part of routine CI.
+
 ## Current MVP definition
 
 JurisNexo is a multi-tenant experimental legal research product initially validated under QuisqueyaTech.
