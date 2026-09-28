@@ -309,11 +309,11 @@ def publish_summary(
             "durable document receipt count does not match aggregate"
         )
 
-    expected_sources = {
-        str(item["source_pdf_sha256"])
+    expected_documents = {
+        str(item["object_key"]): str(item["source_pdf_sha256"])
         for item in summary["document_ranking"]
     }
-    observed_sources: set[str] = set()
+    observed_documents: set[str] = set()
     for receipt in receipts:
         if str(receipt.get("inventory_sha256")) != inventory_sha:
             raise RuntimeError("document receipt inventory SHA mismatch")
@@ -321,12 +321,18 @@ def publish_summary(
             raise RuntimeError("document receipt policy SHA mismatch")
         if str(receipt.get("code_revision")) != code_revision:
             raise RuntimeError("document receipt code revision mismatch")
-        source_sha = str(receipt.get("source_pdf_sha256") or "")
-        if source_sha in observed_sources:
-            raise RuntimeError("duplicate durable document receipt")
-        observed_sources.add(source_sha)
 
-    if observed_sources != expected_sources:
+        object_key = str(receipt.get("object_key") or "")
+        source_sha = str(receipt.get("source_pdf_sha256") or "")
+        if object_key in observed_documents:
+            raise RuntimeError("duplicate durable document receipt")
+        if expected_documents.get(object_key) != source_sha:
+            raise RuntimeError(
+                "document receipt source identity mismatch"
+            )
+        observed_documents.add(object_key)
+
+    if observed_documents != set(expected_documents):
         raise RuntimeError(
             "durable document receipts do not cover aggregate documents"
         )
