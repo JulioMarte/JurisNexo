@@ -33,6 +33,68 @@ def _module() -> ModuleType:
     return module
 
 
+def _inventory_module() -> ModuleType:
+    path = (
+        REPO_ROOT
+        / "backend"
+        / "scripts"
+        / "scj_principales_corpus_inventory.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "scj_corpus_inventory",
+        path,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_inventory_is_sorted_stable_and_filters_non_pdfs() -> None:
+    module = _inventory_module()
+
+    class Client:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "Contents": [
+                    {
+                        "Key": "jurisdictions/do/scj/principales-sentencias/z.pdf",
+                        "Size": 20,
+                        "ETag": '"etag-z"',
+                    },
+                    {
+                        "Key": "jurisdictions/do/scj/principales-sentencias/readme.txt",
+                        "Size": 1,
+                        "ETag": '"ignore"',
+                    },
+                    {
+                        "Key": "jurisdictions/do/scj/principales-sentencias/a.pdf",
+                        "Size": 10,
+                        "ETag": '"etag-a"',
+                    },
+                ],
+                "IsTruncated": False,
+            }
+
+    store = SimpleNamespace(
+        client=Client(),
+        config=SimpleNamespace(bucket="bucket"),
+    )
+
+    inventory = module.build_inventory(store)
+    documents = inventory["documents"]
+
+    assert inventory["document_count"] == 2
+    assert [item["object_key"] for item in documents] == [
+        "jurisdictions/do/scj/principales-sentencias/a.pdf",
+        "jurisdictions/do/scj/principales-sentencias/z.pdf",
+    ]
+    assert [item["etag"] for item in documents] == ["etag-a", "etag-z"]
+    assert inventory["matrix"]["include"] == documents
+    assert len(inventory["inventory_sha256"]) == 64
+    assert all(len(item["document_id"]) == 16 for item in documents)
+
+
 def test_classifies_low_information_and_missing_native(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
