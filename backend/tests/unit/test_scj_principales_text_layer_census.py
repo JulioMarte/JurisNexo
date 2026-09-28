@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
+
 
 def _module() -> ModuleType:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "scripts"
-        / "scj_principales_text_layer_census.py"
-    )
+    path = REPO_ROOT / "backend" / "scripts" / "scj_principales_text_layer_census.py"
     spec = importlib.util.spec_from_file_location("scj_text_layer_census", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
