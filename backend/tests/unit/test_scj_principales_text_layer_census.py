@@ -12,11 +12,6 @@ import pytest
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_ROOT = Path(os.environ.get("JURISNEXO_REPO_ROOT", DEFAULT_REPO_ROOT))
 
-# The census module imports pypdfium2, which belongs to the optional
-# "normalization" extra that the generic test image intentionally omits. These
-# logic tests never render PDFs, and the dedicated census workflow installs the
-# real dependency. Stub the renderer boundary when absent so classification and
-# aggregation contracts still execute in the generic suite.
 if importlib.util.find_spec("pypdfium2") is None:
     sys.modules["pypdfium2"] = ModuleType("pypdfium2")
 
@@ -30,107 +25,71 @@ def _module() -> ModuleType:
     return module
 
 
-def test_classifies_low_information_and_missing_native(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_classifies_low_information_and_missing_native(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module()
-
-    def empty_ocr(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(text="", mean_confidence=99.0)
-
-    monkeypatch.setattr(module, "run_tesseract_visual_ocr", empty_ocr)
-    assert (
-        module.classify_page(native_text="", image=b"png")["classification"]
-        == "low_information"
-    )
+    monkeypatch.setattr(module, "run_tesseract_visual_ocr", lambda *_a, **_k: SimpleNamespace(text="", mean_confidence=99.0))
+    result = module.classify_page(native_text="", image=b"png")
+    assert result["classification"] == "low_information"
+    assert len(result["native_text_sha256"]) == 64
 
     visible = "palabra " * 100
-
-    def visible_ocr(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(text=visible, mean_confidence=99.0)
-
-    monkeypatch.setattr(module, "run_tesseract_visual_ocr", visible_ocr)
-    assert (
-        module.classify_page(native_text="", image=b"png")["classification"]
-        == "no_native_text"
-    )
+    monkeypatch.setattr(module, "run_tesseract_visual_ocr", lambda *_a, **_k: SimpleNamespace(text=visible, mean_confidence=99.0))
+    assert module.classify_page(native_text="", image=b"png")["classification"] == "no_native_text"
 
 
-def test_resume_checkpoint_reconstructs_completed_pages_and_counts(
-    tmp_path: Path,
-) -> None:
+def test_verified_runs_split_at_failed_pages() -> None:
     module = _module()
-    records = tmp_path / "pages-000.jsonl"
-    records.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "object_key": "a.pdf",
-                        "page_index": 0,
-                        "classification": "aligned",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "object_key": "a.pdf",
-                        "page_index": 1,
-                        "classification": "misaligned",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "object_key": "b.pdf",
-                        "page_index": 0,
-                        "classification": "low_information",
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    completed, counts = module._load_completed(records)
-    assert completed == {("a.pdf", 0), ("a.pdf", 1), ("b.pdf", 0)}
-    assert counts["aligned"] == 1
-    assert counts["misaligned"] == 1
-    assert counts["low_information"] == 1
+    records = [
+        {"page_index": 0, "classification": "aligned"},
+        {"page_index": 1, "classification": "aligned"},
+        {"page_index": 2, "classification": "misaligned"},
+        {"page_index": 3, "classification": "aligned"},
+        {"page_index": 4, "classification": "aligned"},
+        {"page_index": 5, "classification": "aligned"},
+    ]
+    assert module._verified_runs(records) == [
+        {"start_page_index": 0, "end_page_index": 1, "page_count": 2},
+        {"start_page_index": 3, "end_page_index": 5, "page_count": 3},
+    ]
 
 
-def test_aggregate_counts_normalization_need(tmp_path: Path) -> None:
+def test_document_summary_assigns_complete_and_near_complete_tiers() -> None:
     module = _module()
-    shards = tmp_path / "shards"
-    shards.mkdir()
-    (shards / "summary-000.json").write_text(
-        json.dumps(
-            {
-                "page_counts": {
-                    "aligned": 7,
-                    "misaligned": 2,
-                    "no_native_text": 1,
-                    "low_information": 1,
-                },
-                "interrupted": False,
-            }
-        )
-    )
-    (shards / "summary-001.json").write_text(
-        json.dumps(
-            {
-                "page_counts": {
-                    "aligned": 3,
-                    "processing_error": 1,
-                },
-                "interrupted": False,
-            }
-        )
-    )
+    complete = [{"page_index": i, "classification": "aligned"} for i in range(10)]
+    summary = module._document_summary(key="a.pdf", pdf_sha="a" * 64, page_count=10, records=complete)
+    assert summary["verification_tier"] == "verified_complete"
+    assert summary["longest_verified_run_pages"] == 10
+
+    near = [{"page_index": i, "classification": "aligned"} for i in range(999)] + [{"page_index": 999, "classification": "misaligned"}]
+    summary = module._document_summary(key="b.pdf", pdf_sha="b" * 64, page_count=1000, records=near)
+    assert summary["verification_tier"] == "verified_near_complete"
+    assert summary["aligned_share_of_relevant"] == pytest.approx(0.999)
+
+
+def test_aggregate_ranks_documents_and_counts_tiers(tmp_path: Path) -> None:
+    module = _module()
+    root = tmp_path / "documents"
+    for name, ratio, tier, aligned, misaligned, longest in [
+        ("a", 1.0, "verified_complete", 10, 0, 10),
+        ("b", 0.99, "verified_partial", 99, 1, 50),
+    ]:
+        directory = root / name
+        directory.mkdir(parents=True)
+        (directory / "document.json").write_text(json.dumps({
+            "object_key": f"{name}.pdf",
+            "source_pdf_sha256": name * 64,
+            "page_count": aligned + misaligned,
+            "page_counts": {"aligned": aligned, "misaligned": misaligned},
+            "relevant_pages": aligned + misaligned,
+            "aligned_share_of_relevant": ratio,
+            "verification_tier": tier,
+            "verified_runs": [],
+            "longest_verified_run_pages": longest,
+            "interrupted": False,
+        }))
     output = tmp_path / "out"
-    status = module.aggregate(input_root=shards, output=output)
+    assert module.aggregate(input_root=root, output=output) == 0
     report = json.loads((output / "census-summary.json").read_text())
-    assert status == 2
-    assert report["total_pages"] == 15
-    assert report["relevant_pages"] == 13
-    assert report["pages_needing_normalization"] == 3
-    assert report["processing_errors"] == 1
-    assert report["interrupted_shards"] == 0
+    assert report["documents"] == 2
+    assert report["document_ranking"][0]["object_key"] == "a.pdf"
+    assert report["verification_tiers"] == {"verified_complete": 1, "verified_partial": 1}
