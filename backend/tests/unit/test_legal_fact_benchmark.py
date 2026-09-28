@@ -20,8 +20,8 @@ def test_extract_reference_facts_finds_legal_identifiers() -> None:
 
 
 def test_score_counts_missing_and_hallucinated_values() -> None:
-    expected = {field: () for field in FACT_FIELDS}
-    predicted = {field: () for field in FACT_FIELDS}
+    expected: dict[str, tuple[str, ...]] = {field: () for field in FACT_FIELDS}
+    predicted: dict[str, tuple[str, ...]] = {field: () for field in FACT_FIELDS}
     expected["laws"] = ("Ley 834", "Ley 834")
     predicted["laws"] = ("ley 834", "Ley 999")
 
@@ -38,8 +38,8 @@ def test_score_counts_missing_and_hallucinated_values() -> None:
 
 
 def test_empty_expected_does_not_reward_hallucination() -> None:
-    expected = {field: () for field in FACT_FIELDS}
-    predicted = {field: () for field in FACT_FIELDS}
+    expected: dict[str, tuple[str, ...]] = {field: () for field in FACT_FIELDS}
+    predicted: dict[str, tuple[str, ...]] = {field: () for field in FACT_FIELDS}
     predicted["dates"] = ("2099-01-01",)
 
     score = score_legal_facts(expected=expected, predicted=predicted)
