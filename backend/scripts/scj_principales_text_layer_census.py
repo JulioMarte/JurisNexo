@@ -330,7 +330,17 @@ def _document_summary(
     ]
     critical_failures = sum(value < 1.0 for value in critical_recalls)
 
-    complete_scan = processed_pages == source_page_count
+    observed_page_indices = {
+        int(record["page_index"])
+        for record in records
+        if "page_index" in record
+    }
+    expected_page_indices = set(range(source_page_count))
+    complete_scan = (
+        source_page_count > 0
+        and processed_pages == source_page_count
+        and observed_page_indices == expected_page_indices
+    )
     if (
         complete_scan
         and counts["processing_error"] == 0
