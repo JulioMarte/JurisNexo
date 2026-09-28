@@ -67,6 +67,13 @@ def build_inventory(store: Any) -> dict[str, Any]:
             document["object_key"].encode("utf-8")
         ).hexdigest()[:16]
 
+    document_ids = [
+        str(document["document_id"])
+        for document in documents
+    ]
+    if len(set(document_ids)) != len(document_ids):
+        raise RuntimeError("document_id collision in frozen corpus inventory")
+
     canonical = json.dumps(
         documents,
         ensure_ascii=False,
