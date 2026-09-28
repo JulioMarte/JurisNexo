@@ -129,6 +129,14 @@ def test_classifies_low_information_and_missing_native(
     )
     result = module.classify_page(native_text="", image=b"png")
     assert result["classification"] == "no_native_text"
+    assert "ocr_text" not in result
+
+    reusable = module.classify_page(
+        native_text="",
+        image=b"png",
+        include_ocr_text=True,
+    )
+    assert reusable["ocr_text"] == visible
 
 
 def test_source_identity_drift_fails_closed() -> None:
