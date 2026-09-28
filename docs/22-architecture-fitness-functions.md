@@ -61,7 +61,7 @@ A deterministic architecture test is appropriate when all are true:
 Good candidates include:
 
 - forbidden dependency direction;
-- direct database access from agent/runtime code;
+- direct or transitive database/persistence access from agent/runtime code and agent benchmark entrypoints;
 - provider contracts importing concrete provider implementations;
 - architecture tests being removed from required CI;
 - duplicate/conflicting guarantee IDs;
