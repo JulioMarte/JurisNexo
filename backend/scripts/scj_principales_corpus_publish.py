@@ -362,9 +362,13 @@ def publish_document(
         label="policy_sha256",
     )
     document_revision = str(document.get("code_revision") or "")
-    if document_revision and document_revision != code_revision:
+    if document_revision != code_revision:
         raise RuntimeError(
             "document code revision does not match publisher revision"
+        )
+    if policy_sha != _policy_sha256():
+        raise RuntimeError(
+            "document policy SHA does not match publisher policy"
         )
     source_sha = _require_hex(
         str(document["source_pdf_sha256"]),
@@ -423,6 +427,18 @@ def publish_summary(
     )
     if str(summary.get("inventory_sha256")) != inventory_sha:
         raise RuntimeError("aggregate inventory SHA does not match frozen inventory")
+
+    inventory_count = int(inventory["document_count"])
+    if int(summary.get("documents") or 0) != inventory_count:
+        raise RuntimeError("aggregate document count does not match inventory")
+    if int(summary.get("expected_documents") or 0) != inventory_count:
+        raise RuntimeError("aggregate expected document count is invalid")
+    if summary.get("missing_documents"):
+        raise RuntimeError("aggregate still has missing documents")
+    if summary.get("unexpected_documents"):
+        raise RuntimeError("aggregate still has unexpected documents")
+    if summary.get("incomplete_documents"):
+        raise RuntimeError("aggregate still has incomplete documents")
 
     policy_shas = {
         str(item.get("policy_sha256") or "")
