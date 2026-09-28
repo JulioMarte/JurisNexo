@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Exhaustively verify SCJ Principales native text against independent OCR.
 
 The primary execution unit is one immutable PDF. Per-document artifacts retain
 page-level provenance, admitted native text, verification metrics, and verified
 contiguous runs. Legacy shard mode remains for local/backward-compatible use.
 """
+
+from __future__ import annotations
 
 import argparse
 import hashlib
@@ -237,9 +237,11 @@ def _load_completed(
             continue
         try:
             record = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             if line_no != len(lines):
-                raise RuntimeError(f"corrupt checkpoint at line {line_no}")
+                raise RuntimeError(
+                    f"corrupt checkpoint at line {line_no}"
+                ) from exc
             break
         classification = str(record.get("classification") or "")
         if classification:
