@@ -100,6 +100,7 @@ def test_classifies_low_information_and_missing_native(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _module()
+
     def empty_ocr(
         _image: bytes,
         *,
@@ -127,6 +128,7 @@ def test_classifies_low_information_and_missing_native(
     assert result["ocr_page_segmentation_mode"] == 6
 
     visible = "palabra " * 100
+
     def visible_ocr(
         _image: bytes,
         *,
