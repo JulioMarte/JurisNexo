@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Build the immutable document inventory consumed by the corpus census matrix."""
+
+from __future__ import annotations
 
 import argparse
 import hashlib
