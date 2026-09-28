@@ -4,6 +4,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from jurisnexo.model_providers.contracts import JsonObject, JsonValue
 
@@ -65,10 +66,11 @@ def validate_legal_fact_payload(value: Mapping[str, object]) -> dict[str, list[s
         raw = value[field]
         if not isinstance(raw, list):
             raise ValueError(f"legal fact field {field!r} must be an array")
-        if len(raw) > 100:
+        typed_raw = cast(list[object], raw)
+        if len(typed_raw) > 100:
             raise ValueError(f"legal fact field {field!r} exceeds 100 values")
         values: list[str] = []
-        for item in raw:
+        for item in typed_raw:
             if not isinstance(item, str):
                 raise ValueError(f"legal fact field {field!r} contains non-string value")
             cleaned = " ".join(item.split())
