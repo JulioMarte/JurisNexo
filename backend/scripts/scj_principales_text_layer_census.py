@@ -310,7 +310,6 @@ def _document_summary(
         - counts["processing_error"]
     )
     aligned = counts["aligned"]
-    failures = counts["misaligned"] + counts["no_native_text"]
     ratio = aligned / relevant if relevant else 0.0
     verified_share = (
         aligned / source_page_count
@@ -379,7 +378,7 @@ def _document_summary(
     )
 
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "object_key": key,
         "source_pdf_sha256": pdf_sha,
         "source_page_count": source_page_count,
@@ -599,7 +598,7 @@ def aggregate(
     )
 
     report = {
-        "schema_version": 4,
+        "schema_version": 5,
         "inventory_sha256": inventory_sha256,
         "expected_documents": (
             len(expected_keys) if expected_keys else None
