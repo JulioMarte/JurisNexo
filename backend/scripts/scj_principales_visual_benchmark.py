@@ -64,6 +64,9 @@ SEED = int(os.environ.get("SCJ_VISUAL_SEED", "20260926"))
 SELECTION = os.environ.get("SCJ_VISUAL_SELECTION", "deterministic")
 CURATED_MANIFEST = os.environ.get("SCJ_VISUAL_CURATED_MANIFEST", "").strip()
 MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "20"))
+REQUEST_INTERVAL_SECONDS = float(
+    os.environ.get("SCJ_VISUAL_REQUEST_INTERVAL_SECONDS", "0")
+)
 ALIGNMENT_AUDIT_SIZE = int(
     os.environ.get(
         "SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE",
@@ -627,12 +630,16 @@ def _run_one(
     image = (
         prepared_root / str(case["image_path"])
     ).read_bytes()
-    started = time.perf_counter()
     retry_count = 0
+    started: float | None = None
 
     try:
         while True:
             try:
+                if REQUEST_INTERVAL_SECONDS > 0:
+                    time.sleep(REQUEST_INTERVAL_SECONDS)
+                if started is None:
+                    started = time.perf_counter()
                 response = provider.verify_image_text(
                     image=image,
                     media_type="image/png",
@@ -650,6 +657,7 @@ def _run_one(
                 time.sleep(0.5 * (2**retry_count))
                 retry_count += 1
 
+        assert started is not None
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_text = str(
             response.value.get("transcription") or ""
@@ -702,7 +710,11 @@ def _run_one(
         )
         return result
     except Exception as exc:
-        latency_ms = int((time.perf_counter() - started) * 1000)
+        latency_ms = (
+            int((time.perf_counter() - started) * 1000)
+            if started is not None
+            else 0
+        )
         result = ModelPageResult(
             sample_id=sample_id,
             object_key=str(case["object_key"]),
@@ -757,6 +769,19 @@ def _mean_optional(
     return mean(observed) if observed else None
 
 
+def _is_fatal_provider_configuration_error(error: str | None) -> bool:
+    if not error:
+        return False
+    return any(
+        marker in error
+        for marker in (
+            "HTTP 401",
+            "HTTP 403",
+            "HTTP 404",
+        )
+    )
+
+
 def _run_model() -> int:
     manifest = json.loads(
         PREPARED_MANIFEST.read_text(encoding="utf-8")
@@ -775,19 +800,40 @@ def _run_model() -> int:
 
     results: list[ModelPageResult] = []
     wall_started = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [
-            executor.submit(
-                _run_one,
-                provider=provider,
-                prepared_root=prepared_root,
-                case=case,
-                result_root=result_root,
-            )
-            for case in cases
-        ]
-        for future in as_completed(futures):
-            results.append(future.result())
+
+    # Probe the exact model/request contract with one frozen page before
+    # fanning out. Authentication/model-routing failures are global
+    # configuration errors; repeating the same 401/403/404 for every page
+    # wastes time and obscures the real cause.
+    first_result = _run_one(
+        provider=provider,
+        prepared_root=prepared_root,
+        case=cases[0],
+        result_root=result_root,
+    )
+    results.append(first_result)
+    if _is_fatal_provider_configuration_error(first_result.error):
+        raise RuntimeError(
+            "provider preflight failed with a fatal configuration error: "
+            f"{first_result.error}"
+        )
+
+    remaining_cases = cases[1:]
+    if remaining_cases:
+        remaining_workers = min(workers, len(remaining_cases))
+        with ThreadPoolExecutor(max_workers=remaining_workers) as executor:
+            futures = [
+                executor.submit(
+                    _run_one,
+                    provider=provider,
+                    prepared_root=prepared_root,
+                    case=case,
+                    result_root=result_root,
+                )
+                for case in remaining_cases
+            ]
+            for future in as_completed(futures):
+                results.append(future.result())
     wall_ms = int((time.perf_counter() - wall_started) * 1000)
     results.sort(key=lambda result: result.sample_id)
 
@@ -807,6 +853,7 @@ def _run_model() -> int:
         "model": MODEL,
         "reasoning_effort": REASONING,
         "provider_order": list(PROVIDER_ORDER),
+        "request_interval_seconds": REQUEST_INTERVAL_SECONDS,
         "prompt": PROMPT,
         "token_limit": None,
         "cases": len(results),
