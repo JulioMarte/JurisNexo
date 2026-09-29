@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 
 def _repository_root() -> Path:
     configured = os.getenv("JURISNEXO_REPO_ROOT")
@@ -27,8 +29,8 @@ def _load() -> ModuleType:
     return module
 
 
-def test_repository_root_honors_ci_mount(monkeypatch: object) -> None:
-    monkeypatch.setenv("JURISNEXO_REPO_ROOT", "/repo")  # type: ignore[attr-defined]
+def test_repository_root_honors_ci_mount(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JURISNEXO_REPO_ROOT", "/repo")
     assert _repository_root() == Path("/repo")
 
 
