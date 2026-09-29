@@ -49,6 +49,7 @@ jobs:
       - run: |
           python -m py_compile \
             backend/scripts/scj_single_pdf_parallel_quality.py \
+            backend/scripts/scj_single_pdf_quality_publish.py \
             backend/scripts/scj_ocr_jev_triage.py \
             backend/scripts/scj_ocr_visual_recheck.py
           ruff check \
@@ -58,10 +59,12 @@ jobs:
             backend/src/jurisnexo/normalization/visual_reference_ocr.py \
             backend/tests/unit/test_scj_ocr_jev_triage.py \
             backend/tests/unit/test_scj_single_pdf_parallel_quality.py \
+            backend/tests/unit/test_scj_single_pdf_quality_publish.py \
             backend/tests/unit/test_visual_reference_ocr.py
           pytest -q \
             backend/tests/unit/test_scj_ocr_jev_triage.py \
             backend/tests/unit/test_scj_single_pdf_parallel_quality.py \
+            backend/tests/unit/test_scj_single_pdf_quality_publish.py \
             backend/tests/unit/test_visual_reference_alignment.py \
             backend/tests/unit/test_visual_reference_ocr.py
 
@@ -150,12 +153,18 @@ jobs:
   aggregate:
     needs: [prepare, verify-page-shards]
     runs-on: ubuntu-24.04
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - run: python -m pip install -e ./backend "pypdfium2==5.13.0"
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0"
       - uses: actions/download-artifact@v4
         with:
           name: scj-single-pdf-source-${{ github.run_id }}
@@ -170,6 +179,15 @@ jobs:
             --source-json "$RUNNER_TEMP/source/source.json" \
             --input-root "$RUNNER_TEMP/shards" \
             --output "$RUNNER_TEMP/aggregate"
+      - name: Persist deterministic evidence
+        run: |
+          python backend/scripts/scj_single_pdf_quality_publish.py \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-dir "$RUNNER_TEMP/aggregate" \
+            --stage deterministic \
+            --code-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
       - name: Publish deterministic summary
         run: cat "$RUNNER_TEMP/aggregate/summary.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -184,21 +202,39 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - run: python -m pip install -e ./backend
+      - run: python -m pip install -e ./backend "boto3==1.43.93"
       - uses: actions/download-artifact@v4
         with:
           name: scj-single-pdf-quality-${{ github.run_id }}
           path: ${{ runner.temp }}/quality
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source
       - run: |
           python backend/scripts/scj_ocr_jev_triage.py \
             --input "$RUNNER_TEMP/quality/jev-review.jsonl" \
             --output "$RUNNER_TEMP/jev" \
             --max-cost-usd '${{ inputs.jev_max_cost_usd }}'
+      - name: Persist JEV evidence
+        run: |
+          python backend/scripts/scj_single_pdf_quality_publish.py \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-dir "$RUNNER_TEMP/jev" \
+            --stage jev \
+            --code-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
       - name: Publish JEV summary
         run: cat "$RUNNER_TEMP/jev/summary.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -214,6 +250,11 @@ jobs:
     timeout-minutes: 360
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -231,7 +272,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
-          python -m pip install -e ./backend \
+          python -m pip install -e ./backend "boto3==1.43.93" \
             "pypdfium2==5.13.0" "pillow==12.3.0"
       - run: |
           python backend/scripts/scj_ocr_visual_recheck.py \
@@ -239,6 +280,15 @@ jobs:
             --input "$RUNNER_TEMP/jev/deepseek-review.jsonl" \
             --output "$RUNNER_TEMP/deepseek" \
             --max-cost-usd '${{ inputs.deepseek_max_cost_usd }}'
+      - name: Persist DeepSeek evidence
+        run: |
+          python backend/scripts/scj_single_pdf_quality_publish.py \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-dir "$RUNNER_TEMP/deepseek" \
+            --stage deepseek \
+            --code-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
       - name: Publish DeepSeek summary
         run: cat "$RUNNER_TEMP/deepseek/summary.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
