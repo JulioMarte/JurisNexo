@@ -10,6 +10,7 @@ on:
       - "backend/tests/unit/test_jev_structure_pilot.py"
       - "backend/tests/unit/test_refine_jev_decision_candidates.py"
       - "backend/tests/unit/test_analyze_jev_failure_flywheel.py"
+      - "backend/tests/unit/test_govern_jev_flywheel.py"
       - ".github/workflows/scj-principales-jev-calibration.yml"
   workflow_dispatch:
 
@@ -55,10 +56,10 @@ jobs:
         run: python benchmark/normalization/evaluate_jev_principales.py
       - name: Validate structural-navigation and flywheel
         run: |
-          python -m py_compile benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/evaluate_jev_structure_ablations.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py benchmark/normalization/analyze_jev_failure_flywheel.py
-          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/evaluate_jev_structure_ablations.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py benchmark/normalization/analyze_jev_failure_flywheel.py
-          ruff check backend/src/jurisnexo/normalization/jev_structure.py backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py backend/tests/unit/test_analyze_jev_failure_flywheel.py
-          pytest -q backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py backend/tests/unit/test_analyze_jev_failure_flywheel.py
+          python -m py_compile benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/evaluate_jev_structure_ablations.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py benchmark/normalization/analyze_jev_failure_flywheel.py benchmark/normalization/govern_jev_flywheel.py
+          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/evaluate_jev_structure_ablations.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py benchmark/normalization/analyze_jev_failure_flywheel.py benchmark/normalization/govern_jev_flywheel.py
+          ruff check backend/src/jurisnexo/normalization/jev_structure.py backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py backend/tests/unit/test_analyze_jev_failure_flywheel.py backend/tests/unit/test_govern_jev_flywheel.py
+          pytest -q backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py backend/tests/unit/test_analyze_jev_failure_flywheel.py backend/tests/unit/test_govern_jev_flywheel.py
       - name: Run JEV structural-navigation pilot with exact audit trace
         env:
           JEV_STRUCTURE_DOCUMENTS: "3"
@@ -88,17 +89,17 @@ jobs:
           JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
           JEV_AUDIT_OUTPUT: ${{ runner.temp }}/jev-calibration/boundary-audit.json
         run: python benchmark/normalization/build_jev_boundary_audit.py
-      - name: Expand exception evidence and run diverse JEV second pass
+      - name: Expand all reviewable exception evidence and run diverse JEV second pass
         env:
           JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
           JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
           JEV_EXCEPTION_OUTPUT: ${{ runner.temp }}/jev-calibration/exception-second-pass.json
-          JEV_EXCEPTION_MAX_CASES: "40"
+          JEV_EXCEPTION_MAX_CASES: "109"
           JEV_EXCEPTION_BATCH_SIZE: "6"
           JEV_EXCEPTION_MAX_COST_USD: "0.03"
           JEV_EXCEPTION_EXCERPT_CHARS: "2600"
         run: python benchmark/normalization/jev_exception_second_pass.py
-      - name: Mine leakage-resistant deterministic improvement hypotheses
+      - name: Mine deterministic improvement hypotheses
         env:
           JEV_EXCEPTION_OUTPUT: ${{ runner.temp }}/jev-calibration/exception-second-pass.json
           JEV_FLYWHEEL_OUTPUT: ${{ runner.temp }}/jev-calibration/failure-flywheel.json
@@ -107,6 +108,12 @@ jobs:
           JEV_FLYWHEEL_MIN_CLUSTER_DOCUMENTS: "2"
           JEV_FLYWHEEL_MIN_CLUSTER_FAMILIES: "2"
         run: python benchmark/normalization/analyze_jev_failure_flywheel.py
+      - name: Enforce cross-era generalization governance
+        env:
+          JEV_FLYWHEEL_OUTPUT: ${{ runner.temp }}/jev-calibration/failure-flywheel.json
+          JEV_GOVERNED_FLYWHEEL_OUTPUT: ${{ runner.temp }}/jev-calibration/failure-flywheel-governed.json
+          JEV_FLYWHEEL_MIN_GENERALIZATION_GROUPS: "2"
+        run: python benchmark/normalization/govern_jev_flywheel.py
       - name: Preserve JEV calibration evidence
         if: always()
         uses: actions/upload-artifact@v4
