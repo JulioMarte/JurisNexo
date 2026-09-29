@@ -248,3 +248,17 @@ The first paid stage is optional JEV triage. JEV receives only deterministic met
 A second optional stage visually rechecks JEV-selected pages with the configured DeepSeek visual model. The output records requested/returned model, routed provider metadata, reasoning setting, tokens, latency, cost, transcription and pairwise scores against native text and Tesseract. Pairwise consensus is evidence only; it does not become primary-source ground truth automatically.
 
 Both provider-backed stages are `workflow_dispatch` opt-in and have explicit cost caps. Ordinary branch commits must not invoke them.
+
+Targeted results are also durable in the configured S3-compatible store, independently of GitHub Artifact retention. The namespace is:
+
+```text
+benchmarks/scj-principales/single-pdf-quality/v1/
+  <source_pdf_sha256>/
+    <code_revision>/
+      runs/github-<run_id>-attempt-<attempt>/
+        deterministic/
+        jev/
+        deepseek/
+```
+
+Each populated stage contains its derived JSON/JSONL evidence plus an immutable `_MANIFEST.json` with payload hashes. The official source PDF is not duplicated there; `source_pdf_sha256` and the source corpus locator bind every result back to the immutable source. JEV/DeepSeek stages preserve their model/provider/configuration telemetry inside the published evidence.
