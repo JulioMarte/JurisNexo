@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from types import ModuleType
 
 
+def _repository_root() -> Path:
+    configured = os.getenv("JURISNEXO_REPO_ROOT")
+    if configured:
+        root = Path(configured)
+        target = root / "benchmark" / "normalization" / "refine_jev_decision_candidates.py"
+        if target.is_file():
+            return root
+    for parent in Path(__file__).resolve().parents:
+        target = parent / "benchmark" / "normalization" / "refine_jev_decision_candidates.py"
+        if target.is_file():
+            return parent
+    raise AssertionError("could not locate repository root for JEV refinement tests")
+
+
 def _load() -> ModuleType:
-    root = next(
-        parent
-        for parent in Path(__file__).resolve().parents
-        if (parent / "benchmark" / "normalization" / "refine_jev_decision_candidates.py").is_file()
-    )
-    path = root / "benchmark" / "normalization" / "refine_jev_decision_candidates.py"
+    path = _repository_root() / "benchmark" / "normalization" / "refine_jev_decision_candidates.py"
     spec = importlib.util.spec_from_file_location("refine_jev_decision_candidates", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
