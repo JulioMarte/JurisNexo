@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 
 def _repository_root() -> Path:
@@ -29,7 +30,7 @@ def _load() -> ModuleType:
     return module
 
 
-def _candidate(title: str = "Sentencia del 14 de junio de 2006") -> dict:
+def _candidate(title: str = "Sentencia del 14 de junio de 2006") -> dict[str, Any]:
     return {
         "title": title,
         "candidate_pdf_start": 104,
@@ -69,7 +70,9 @@ def test_accepts_triangulated_decision_span() -> None:
 def test_weak_boundary_is_not_promoted() -> None:
     module = _load()
     candidate = _candidate()
-    candidate["start_jev"]["decision_start"] = 0.10
+    start_jev = candidate["start_jev"]
+    assert isinstance(start_jev, dict)
+    start_jev["decision_start"] = 0.10
     score, _, problems = module._score(candidate)
     assert score < module.MIN_SCORE or problems
     assert "weak_start_boundary" in problems
