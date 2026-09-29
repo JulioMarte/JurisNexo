@@ -128,6 +128,32 @@ Do not leak gold answers into prompts/tools. Do not weaken scorers solely to mak
 
 Historical benchmark/checkpoint proof may be preserved as `historical` without forcing current product code to keep the old runtime, provider, prompt, or repository shape. Freeze evidence, not the future.
 
+## CI and live benchmark execution
+
+Do not treat every test as belonging in automatic PR CI.
+
+Classify execution before wiring a test or benchmark into GitHub Actions:
+
+```text
+automatic CI     deterministic, bounded, no paid/live provider dependency
+opt-in smoke     live/provider-backed but intentionally small and bounded
+manual benchmark long-running, corpus-scale, paid/rate-limited, or exploratory
+```
+
+Rules:
+
+- Automatic CI may run on normal PR/push events only when the check is bounded, reproducible, and safe to execute on every change.
+- Live/provider-backed or expensive benchmarks must use an explicit opt-in path, normally `workflow_dispatch`.
+- A tooling/API limitation is not justification for adding an unconditional `push` or `pull_request` trigger to a costly benchmark.
+- When `workflow_dispatch` cannot be invoked for a work-branch-only workflow, the accepted fallback is an exact-branch push trigger plus an explicit commit marker (for example `[visual-10]`) and a job-level guard that skips ordinary commits.
+- Marker-triggered runs must have fixed, bounded smoke defaults, deterministic selection where possible, and must preserve the same frozen inputs across compared models/providers.
+- Provider rate limits, retries, concurrency, cost, latency, token usage, and semantic quality must be recorded separately; provider throttling must not be misreported as model-quality failure.
+- Keep local/offline contract checks ahead of provider calls so invalid harness changes fail before spending credits.
+- Preserve artifacts sufficient to reproduce/adjudicate the run.
+- Full/corpus-scale runs remain deliberate manual experiments even when a small marker-triggered smoke exists.
+
+The current SCJ visual benchmark is the reference implementation: ordinary code changes do not call models; an explicit `[visual-10]` commit on its benchmark branch runs the bounded 10-page smoke, while `workflow_dispatch` remains the configurable manual path.
+
 ## Correctness-sensitive evidence
 
 - Do not make a race or state-transition proof pass by mocking the mechanism under test.
