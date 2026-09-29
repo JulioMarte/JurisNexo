@@ -27,24 +27,50 @@ def build_structure_questions(*, record_ids: tuple[str, ...]) -> dict[str, JsonO
                 "the page excerpt. Use only observable text; do not infer missing pages."
             ),
             "criteria": {
-                "index": "A table of contents, sumario, index, or list of decisions with page references.",
-                "judgment": "Substantive text belonging to a judicial decision or judgment.",
-                "front_matter": "Cover, title page, publication metadata, preface, or other front matter.",
+                "index": (
+                    "A table of contents, sumario, index, or list of decisions "
+                    "with page references."
+                ),
+                "judgment": (
+                    "Substantive text belonging to a judicial decision or judgment."
+                ),
+                "front_matter": (
+                    "Cover, title page, publication metadata, preface, or other "
+                    "front matter."
+                ),
                 "other": "Neither an index, judgment, nor front matter.",
                 "uncertain": "The excerpt is insufficient or ambiguous.",
             },
         }
         questions[f"{record_id}__decision_start"] = {
             "type": "noul",
-            "instructions": f'Does record "{record_id}" contain strong evidence that a judicial decision starts on this page?',
-            "true_when": "A decision heading, court formula, decision number/date, parties, or equivalent opening structure is visible.",
-            "false_when": "The page is continuation text, index/front matter, or lacks a decision-opening signal.",
+            "instructions": (
+                f'Does record "{record_id}" contain strong evidence that a judicial '
+                "decision starts on this page?"
+            ),
+            "true_when": (
+                "A decision heading, court formula, decision number/date, parties, "
+                "or equivalent opening structure is visible."
+            ),
+            "false_when": (
+                "The page is continuation text, index/front matter, or lacks a "
+                "decision-opening signal."
+            ),
         }
         questions[f"{record_id}__decision_end"] = {
             "type": "noul",
-            "instructions": f'Does record "{record_id}" contain strong evidence that a judicial decision ends on this page?',
-            "true_when": "A dispositive ending, signatures, certification, closing formula, or transition to the next decision is visible.",
-            "false_when": "The page is continuation text, index/front matter, or lacks a decision-ending signal.",
+            "instructions": (
+                f'Does record "{record_id}" contain strong evidence that a judicial '
+                "decision ends on this page?"
+            ),
+            "true_when": (
+                "A dispositive ending, signatures, certification, closing formula, "
+                "or transition to the next decision is visible."
+            ),
+            "false_when": (
+                "The page is continuation text, index/front matter, or lacks a "
+                "decision-ending signal."
+            ),
         }
     return questions
 
