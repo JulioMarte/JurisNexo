@@ -32,7 +32,11 @@ def _payload(families: list[str]) -> dict[str, Any]:
         "counts": {"proposal_clusters": 1, "quarantined_clusters": 0},
         "policy": {"automatic_parser_mutation": False},
         "improvement_proposals": [
-            {"cluster": "boundary_threshold_or_context", "source_families": families, "promotion_blockers": []}
+            {
+                "cluster": "boundary_threshold_or_context",
+                "source_families": families,
+                "promotion_blockers": [],
+            }
         ],
         "quarantined_hypotheses": [],
     }
@@ -74,6 +78,7 @@ def test_cross_era_candidate_remains_eligible_for_holdout_not_auto_promotion() -
 
 def test_explicit_upstream_families_can_supply_independence() -> None:
     module = _load()
-    result = module.govern(_payload(["scj-bulletin", "tc-resolution"] ))
+    result = module.govern(_payload(["scj-bulletin", "tc-resolution"]))
     assert len(result["improvement_proposals"]) == 1
-    assert result["policy"]["fidelity_variants_count_as_independent_generalization"] is False
+    policy = result["policy"]
+    assert policy["fidelity_variants_count_as_independent_generalization"] is False
