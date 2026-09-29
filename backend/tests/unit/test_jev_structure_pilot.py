@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from types import ModuleType
 
 
 def _repository_root() -> Path:
+    configured = os.getenv("JURISNEXO_REPO_ROOT")
+    if configured:
+        root = Path(configured)
+        if (root / "benchmark" / "normalization" / "jev_structure_pilot.py").is_file():
+            return root
     for parent in Path(__file__).resolve().parents:
         if (parent / "benchmark" / "normalization" / "jev_structure_pilot.py").is_file():
             return parent
