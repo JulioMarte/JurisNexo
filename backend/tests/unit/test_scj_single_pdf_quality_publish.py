@@ -22,6 +22,10 @@ def _module() -> ModuleType:
     return module
 
 
+class _NotFoundError(RuntimeError):
+    not_found = True
+
+
 class _Client:
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, dict[str, str]]] = {}
@@ -29,9 +33,7 @@ class _Client:
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
         del Bucket
         if Key not in self.objects:
-            exc = RuntimeError("not found")
-            setattr(exc, "not_found", True)
-            raise exc
+            raise _NotFoundError("not found")
         _, metadata = self.objects[Key]
         return {"Metadata": metadata}
 
