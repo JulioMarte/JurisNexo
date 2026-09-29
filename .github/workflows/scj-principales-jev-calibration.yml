@@ -3,11 +3,11 @@ name: SCJ Principales JEV calibration
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-    branches:
-      - development
+    branches: [development]
     paths:
       - "benchmark/normalization/evaluate_jev_principales.py"
       - "benchmark/normalization/jev_structure_pilot.py"
+      - "benchmark/normalization/refine_jev_decision_candidates.py"
       - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/normalization/decision_batching.py"
       - "backend/src/jurisnexo/normalization/jev_batch_evaluator.py"
@@ -15,6 +15,7 @@ on:
       - "backend/src/jurisnexo/normalization/jev_quality.py"
       - "backend/src/jurisnexo/normalization/jev_structure.py"
       - "backend/tests/unit/test_jev_structure_pilot.py"
+      - "backend/tests/unit/test_refine_jev_decision_candidates.py"
       - ".github/workflows/scj-principales-jev-calibration.yml"
   workflow_dispatch:
 
@@ -47,31 +48,26 @@ jobs:
       JEV_PRINCIPALES_MIN_NEGATIVE_CASES: "25"
     steps:
       - uses: actions/checkout@v6
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-
       - name: Install promotion-sized JEV benchmark runtime
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "ruff==0.15.7" "pytest==9.0.2"
-
       - name: Run source-separated JEV calibration and holdout
         env:
           JEV_PRINCIPALES_BENCHMARK_OUTPUT: ${{ runner.temp }}/jev-calibration/results.json
-        run: |
-          python benchmark/normalization/evaluate_jev_principales.py
-
-      - name: Validate structural-navigation pilot
+        run: python benchmark/normalization/evaluate_jev_principales.py
+      - name: Validate structural-navigation and refinement
         run: |
           python -m py_compile benchmark/normalization/jev_structure_pilot.py
+          python -m py_compile benchmark/normalization/refine_jev_decision_candidates.py
           python -m py_compile backend/src/jurisnexo/normalization/jev_structure.py
-          ruff check benchmark/normalization/jev_structure_pilot.py
+          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py
           ruff check backend/src/jurisnexo/normalization/jev_structure.py
-          ruff check backend/tests/unit/test_jev_structure_pilot.py
-          pytest -q backend/tests/unit/test_jev_structure_pilot.py
-
+          ruff check backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
+          pytest -q backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
       - name: Run JEV structural-navigation pilot
         env:
           JEV_STRUCTURE_DOCUMENTS: "3"
@@ -80,9 +76,15 @@ jobs:
           JEV_STRUCTURE_BATCH_SIZE: "10"
           JEV_STRUCTURE_MAX_COST_USD: "0.05"
           JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
-        run: |
-          python benchmark/normalization/jev_structure_pilot.py
-
+        run: python benchmark/normalization/jev_structure_pilot.py
+      - name: Refine and freeze evidence-backed pilot decisions
+        env:
+          JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
+          JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
+          JEV_REFINED_TARGET_PAGES: "30"
+          JEV_REFINED_MAX_SPAN_PAGES: "40"
+          JEV_REFINED_MIN_SCORE: "0.72"
+        run: python benchmark/normalization/refine_jev_decision_candidates.py
       - name: Preserve JEV calibration evidence
         if: always()
         uses: actions/upload-artifact@v4
