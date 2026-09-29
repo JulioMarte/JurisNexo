@@ -45,7 +45,7 @@ jobs:
           python-version: "3.13"
       - run: |
           python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
-            "pypdfium2==5.13.0" "pypdf==6.9.0" "pillow==12.3.0"
+            "pypdfium2==5.13.0" "pypdf>=6,<7" "pillow==12.3.0"
       - run: |
           python -m py_compile \
             backend/scripts/scj_single_pdf_parallel_quality.py \
@@ -129,7 +129,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
           python -m pip install -e ./backend \
-            "pypdfium2==5.13.0" "pypdf==6.9.0" "pillow==12.3.0"
+            "pypdfium2==5.13.0" "pypdf>=6,<7" "pillow==12.3.0"
       - run: |
           mkdir -p "$RUNNER_TEMP/shard"
           python backend/scripts/scj_single_pdf_parallel_quality.py shard \
