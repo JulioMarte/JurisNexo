@@ -7,11 +7,14 @@ on:
       - development
     paths:
       - "benchmark/normalization/evaluate_jev_principales.py"
+      - "benchmark/normalization/jev_structure_pilot.py"
       - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/normalization/decision_batching.py"
       - "backend/src/jurisnexo/normalization/jev_batch_evaluator.py"
       - "backend/src/jurisnexo/normalization/jev_claims.py"
       - "backend/src/jurisnexo/normalization/jev_quality.py"
+      - "backend/src/jurisnexo/normalization/jev_structure.py"
+      - "backend/tests/unit/test_jev_structure_pilot.py"
       - ".github/workflows/scj-principales-jev-calibration.yml"
   workflow_dispatch:
 
@@ -44,27 +47,71 @@ jobs:
       JEV_PRINCIPALES_MIN_NEGATIVE_CASES: "25"
     steps:
       - uses: actions/checkout@v6
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-
       - name: Install promotion-sized JEV benchmark runtime
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0"
-
       - name: Run source-separated JEV calibration and holdout
         env:
           JEV_PRINCIPALES_BENCHMARK_OUTPUT: ${{ runner.temp }}/jev-calibration/results.json
-        run: |
-          python benchmark/normalization/evaluate_jev_principales.py
-
+        run: python benchmark/normalization/evaluate_jev_principales.py
       - name: Preserve JEV calibration evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scj-principales-jev-calibration-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/jev-calibration/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  structure-pilot:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'jev-calibration')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      JURISNEXO_OPENROUTER_JEV_MODEL: "~typesafe/jev-latest"
+      JEV_STRUCTURE_DOCUMENTS: "3"
+      JEV_STRUCTURE_MAX_CANDIDATE_PAGES: "40"
+      JEV_STRUCTURE_EXCERPT_CHARS: "2600"
+      JEV_STRUCTURE_BATCH_SIZE: "10"
+      JEV_STRUCTURE_MAX_COST_USD: "0.05"
+      JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-structure/pilot.json
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install structure-pilot runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend "boto3==1.43.93"
+      - name: Contract checks
+        run: |
+          python -m py_compile \
+            benchmark/normalization/jev_structure_pilot.py \
+            backend/src/jurisnexo/normalization/jev_structure.py
+          ruff check \
+            benchmark/normalization/jev_structure_pilot.py \
+            backend/src/jurisnexo/normalization/jev_structure.py \
+            backend/tests/unit/test_jev_structure_pilot.py
+          pytest -q backend/tests/unit/test_jev_structure_pilot.py
+      - name: Run JEV structural-navigation pilot
+        run: python benchmark/normalization/jev_structure_pilot.py
+      - name: Preserve JEV structure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scj-principales-jev-structure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jev-structure/**
           if-no-files-found: warn
           retention-days: 90
