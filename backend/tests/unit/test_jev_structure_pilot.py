@@ -27,6 +27,11 @@ def _load() -> ModuleType:
     return module
 
 
+def test_repository_root_honors_ci_mount(monkeypatch: object) -> None:
+    monkeypatch.setenv("JURISNEXO_REPO_ROOT", "/repo")  # type: ignore[attr-defined]
+    assert _repository_root() == Path("/repo")
+
+
 def test_index_entries_extract_editorial_page_reference() -> None:
     module = _load()
     text = "SUMARIO\nRecurso de casación de Acme, S. A. ........ 183\nOtra decisión      191\n"
