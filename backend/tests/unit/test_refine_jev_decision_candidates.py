@@ -29,7 +29,15 @@ def _load() -> ModuleType:
 
 
 def _candidate(title: str = "Sentencia del 14 de junio de 2006") -> dict[str, Any]:
-    return {"title": title, "candidate_pdf_start": 104, "candidate_pdf_end": 109, "start_jev": {"judgment": 0.99, "decision_start": 0.93}, "end_jev": {"judgment": 0.92, "decision_end": 0.88}, "start_fidelity": "aligned", "end_fidelity": "aligned"}
+    return {
+        "title": title,
+        "candidate_pdf_start": 104,
+        "candidate_pdf_end": 109,
+        "start_jev": {"judgment": 0.99, "decision_start": 0.93},
+        "end_jev": {"judgment": 0.92, "decision_end": 0.88},
+        "start_fidelity": "aligned",
+        "end_fidelity": "aligned",
+    }
 
 
 def test_editorial_heading_is_negative_evidence_not_hard_truth() -> None:
