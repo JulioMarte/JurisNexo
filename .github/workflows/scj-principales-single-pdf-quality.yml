@@ -1,0 +1,299 @@
+name: SCJ single-PDF parallel OCR quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      object_key:
+        description: Exact S3 object key for one Principales PDF
+        required: true
+        type: string
+      run_jev:
+        description: Run paid JEV shadow triage on deterministic review candidates
+        required: true
+        default: false
+        type: boolean
+      run_deepseek:
+        description: Run paid DeepSeek visual recheck after JEV recommendations
+        required: true
+        default: false
+        type: boolean
+      jev_max_cost_usd:
+        description: Hard JEV cost cap
+        required: true
+        default: "0.05"
+        type: string
+      deepseek_max_cost_usd:
+        description: Hard DeepSeek visual cost cap
+        required: true
+        default: "0.25"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-single-pdf-parallel-ocr-${{ inputs.object_key }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
+            "pypdfium2==5.13.0" "pypdf>=6,<7" "pillow==12.3.0"
+      - run: |
+          python -m py_compile \
+            backend/scripts/scj_single_pdf_parallel_quality.py \
+            backend/scripts/scj_single_pdf_quality_publish.py \
+            backend/scripts/scj_ocr_jev_triage.py \
+            backend/scripts/scj_ocr_visual_recheck.py
+          ruff check \
+            backend/scripts/scj_single_pdf_parallel_quality.py \
+            backend/scripts/scj_single_pdf_quality_publish.py \
+            backend/scripts/scj_ocr_jev_triage.py \
+            backend/scripts/scj_ocr_visual_recheck.py \
+            backend/src/jurisnexo/normalization/visual_reference_ocr.py \
+            backend/tests/unit/test_scj_ocr_jev_triage.py \
+            backend/tests/unit/test_scj_single_pdf_parallel_quality.py \
+            backend/tests/unit/test_scj_single_pdf_quality_publish.py \
+            backend/tests/unit/test_visual_reference_ocr.py
+          pytest -q \
+            backend/tests/unit/test_scj_ocr_jev_triage.py \
+            backend/tests/unit/test_scj_single_pdf_parallel_quality.py \
+            backend/tests/unit/test_scj_single_pdf_quality_publish.py \
+            backend/tests/unit/test_visual_reference_alignment.py \
+            backend/tests/unit/test_visual_reference_ocr.py
+
+  prepare:
+    needs: contract
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.freeze.outputs.matrix }}
+      page_count: ${{ steps.freeze.outputs.page_count }}
+      source_sha256: ${{ steps.freeze.outputs.source_sha256 }}
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend "boto3==1.43.93" \
+            "pypdfium2==5.13.0"
+      - id: freeze
+        run: |
+          mkdir -p "$RUNNER_TEMP/source"
+          python backend/scripts/scj_single_pdf_parallel_quality.py prepare \
+            --object-key '${{ inputs.object_key }}' \
+            --shard-count 20 \
+            --output "$RUNNER_TEMP/source"
+          echo "matrix=$(cat "$RUNNER_TEMP/source/matrix.json")" >> "$GITHUB_OUTPUT"
+          python - "$RUNNER_TEMP/source/source.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+          source = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(f"page_count={source['page_count']}")
+          print(f"source_sha256={source['source_pdf_sha256']}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-single-pdf-source-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/source/source.pdf
+            ${{ runner.temp }}/source/source.json
+          retention-days: 1
+
+  verify-page-shards:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+          python -m pip install -e ./backend \
+            "pypdfium2==5.13.0" "pypdf>=6,<7" "pillow==12.3.0"
+      - run: |
+          mkdir -p "$RUNNER_TEMP/shard"
+          python backend/scripts/scj_single_pdf_parallel_quality.py shard \
+            --source-pdf "$RUNNER_TEMP/source/source.pdf" \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --shard-index '${{ matrix.shard_index }}' \
+            --shard-count '${{ matrix.shard_count }}' \
+            --output "$RUNNER_TEMP/shard"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-single-pdf-shard-${{ matrix.shard_index }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/shard/**
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    needs: [prepare, verify-page-shards]
+    runs-on: ubuntu-24.04
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scj-single-pdf-shard-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/shards
+          merge-multiple: false
+      - run: |
+          python backend/scripts/scj_single_pdf_parallel_quality.py aggregate \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-root "$RUNNER_TEMP/shards" \
+            --output "$RUNNER_TEMP/aggregate"
+      - name: Persist deterministic evidence
+        run: |
+          python backend/scripts/scj_single_pdf_quality_publish.py \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-dir "$RUNNER_TEMP/aggregate" \
+            --stage deterministic \
+            --code-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
+      - name: Publish deterministic summary
+        run: cat "$RUNNER_TEMP/aggregate/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-single-pdf-quality-${{ github.run_id }}
+          path: ${{ runner.temp }}/aggregate/**
+          retention-days: 90
+
+  jev-triage:
+    if: ${{ inputs.run_jev }}
+    needs: aggregate
+    runs-on: ubuntu-24.04
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend "boto3==1.43.93"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-quality-${{ github.run_id }}
+          path: ${{ runner.temp }}/quality
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source
+      - run: |
+          python backend/scripts/scj_ocr_jev_triage.py \
+            --input "$RUNNER_TEMP/quality/jev-review.jsonl" \
+            --output "$RUNNER_TEMP/jev" \
+            --max-cost-usd '${{ inputs.jev_max_cost_usd }}'
+      - name: Persist JEV evidence
+        run: |
+          python backend/scripts/scj_single_pdf_quality_publish.py \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-dir "$RUNNER_TEMP/jev" \
+            --stage jev \
+            --code-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
+      - name: Publish JEV summary
+        run: cat "$RUNNER_TEMP/jev/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-single-pdf-jev-${{ github.run_id }}
+          path: ${{ runner.temp }}/jev/**
+          retention-days: 90
+
+  deepseek-visual-recheck:
+    if: ${{ inputs.run_jev && inputs.run_deepseek }}
+    needs: [jev-triage, prepare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/source
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-single-pdf-jev-${{ github.run_id }}
+          path: ${{ runner.temp }}/jev
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+          python -m pip install -e ./backend "boto3==1.43.93" \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - run: |
+          python backend/scripts/scj_ocr_visual_recheck.py \
+            --source-pdf "$RUNNER_TEMP/source/source.pdf" \
+            --input "$RUNNER_TEMP/jev/deepseek-review.jsonl" \
+            --output "$RUNNER_TEMP/deepseek" \
+            --max-cost-usd '${{ inputs.deepseek_max_cost_usd }}'
+      - name: Persist DeepSeek evidence
+        run: |
+          python backend/scripts/scj_single_pdf_quality_publish.py \
+            --source-json "$RUNNER_TEMP/source/source.json" \
+            --input-dir "$RUNNER_TEMP/deepseek" \
+            --stage deepseek \
+            --code-revision "${{ github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}"
+      - name: Publish DeepSeek summary
+        run: cat "$RUNNER_TEMP/deepseek/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-single-pdf-deepseek-${{ github.run_id }}
+          path: ${{ runner.temp }}/deepseek/**
+          retention-days: 90

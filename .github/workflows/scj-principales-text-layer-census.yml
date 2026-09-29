@@ -1,7 +1,8 @@
-name: SCJ Principales text-layer census
+name: SCJ Principales corpus verification census
 
-# Expensive in runner time but uses no paid LLM. It runs only by explicit
-# workflow dispatch or the dedicated label, never on ordinary pushes/PR syncs.
+# CPU-heavy but uses no paid LLM. One matrix job owns exactly one PDF so slow
+# documents cannot create shard stragglers. GitHub Free allows 20 concurrent
+# standard hosted-runner jobs; raise this explicit cap only when the plan changes.
 on:
   workflow_dispatch:
   pull_request:
@@ -11,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: scj-principales-text-layer-census
+  group: scj-principales-corpus-verification-census
   cancel-in-progress: true
 
 jobs:
@@ -23,21 +24,34 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      # The contract tests import the census module itself, so its Python
-      # runtime dependencies must exist here too. Tesseract is not required:
-      # unit tests mock OCR and never invoke the external binary.
-      - run: python -m pip install -e ./backend pytest==9.1.1 "pypdfium2==5.13.0" "pillow==12.3.0"
-      - run: python -m py_compile backend/scripts/scj_principales_text_layer_census.py
-      - run: pytest -q backend/tests/unit/test_scj_principales_text_layer_census.py backend/tests/unit/test_visual_reference_alignment.py backend/tests/unit/test_visual_reference_ocr.py
+      - run: |
+          python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - run: |
+          python -m py_compile \
+            backend/scripts/scj_principales_corpus_inventory.py \
+            backend/scripts/scj_principales_corpus_publish.py \
+            backend/scripts/scj_principales_text_layer_census.py
+          ruff check \
+            backend/scripts/scj_principales_corpus_inventory.py \
+            backend/scripts/scj_principales_corpus_publish.py \
+            backend/scripts/scj_principales_text_layer_census.py \
+            backend/src/jurisnexo/normalization/visual_reference_ocr.py \
+            backend/tests/unit/test_scj_principales_corpus_publish.py \
+            backend/tests/unit/test_scj_principales_text_layer_census.py \
+            backend/tests/unit/test_visual_reference_ocr.py
+          pytest -q \
+            backend/tests/unit/test_scj_principales_corpus_publish.py \
+            backend/tests/unit/test_scj_principales_text_layer_census.py \
+            backend/tests/unit/test_visual_reference_alignment.py \
+            backend/tests/unit/test_visual_reference_ocr.py
 
-  census:
+  inventory:
     needs: contract
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+      inventory_sha256: ${{ steps.inventory.outputs.inventory_sha256 }}
     env:
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
       JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
@@ -49,43 +63,189 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
-      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Census shard
-        run: python backend/scripts/scj_principales_text_layer_census.py --shard-index ${{ matrix.shard }} --shard-count 12 --output "${RUNNER_TEMP}/census"
+      - run: python -m pip install -e ./backend "boto3==1.43.93"
+      - id: inventory
+        run: |
+          mkdir -p "$RUNNER_TEMP/inventory"
+          python backend/scripts/scj_principales_corpus_inventory.py \
+            --output "$RUNNER_TEMP/inventory/inventory.json" \
+            > "$RUNNER_TEMP/inventory/matrix.json"
+          echo "matrix=$(cat "$RUNNER_TEMP/inventory/matrix.json")" >> "$GITHUB_OUTPUT"
+          inventory_sha256="$(
+            python -c 'import json,sys; print(json.load(open(sys.argv[1]))["inventory_sha256"])' \
+              "$RUNNER_TEMP/inventory/inventory.json"
+          )"
+          echo "inventory_sha256=$inventory_sha256" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: scj-text-layer-census-shard-${{ matrix.shard }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/census/**
+          name: scj-corpus-verification-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}/inventory/inventory.json
           retention-days: 90
 
-  aggregate:
-    # Aggregate only when every census shard completed successfully. This
-    # avoids a misleading secondary failure when contract/census produced no
-    # artifacts. Individual shard failures remain visible as the root cause.
-    if: ${{ needs.census.result == 'success' }}
-    needs: census
+  verify-document:
+    needs: inventory
     runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      SCJ_OBJECT_KEY: ${{ matrix.object_key }}
+      SCJ_EXPECTED_SIZE: ${{ matrix.size_bytes }}
+      SCJ_EXPECTED_ETAG: ${{ matrix.etag }}
+      SCJ_DOCUMENT_ID: ${{ matrix.document_id }}
+      SCJ_INVENTORY_SHA256: ${{ needs.inventory.outputs.inventory_sha256 }}
+      SCJ_CODE_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend "boto3==1.43.93"
+      - id: restore
+        name: Restore completed immutable document if available
+        run: |
+          mkdir -p "$RUNNER_TEMP/document"
+          python backend/scripts/scj_principales_corpus_publish.py restore \
+            --output-dir "$RUNNER_TEMP/document" \
+            --inventory-sha256 "$SCJ_INVENTORY_SHA256" \
+            --document-id "$SCJ_DOCUMENT_ID" \
+            --code-revision "$SCJ_CODE_REVISION" \
+            --object-key "$SCJ_OBJECT_KEY"
+          if test -f "$RUNNER_TEMP/document/publish.json"; then
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.restore.outputs.restored != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+      - if: steps.restore.outputs.restored != 'true'
+        run: |
+          python -m pip install \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - if: steps.restore.outputs.restored != 'true'
+        name: Verify complete immutable PDF
+        run: |
+          python backend/scripts/scj_principales_text_layer_census.py \
+            --object-key "$SCJ_OBJECT_KEY" \
+            --expected-size "$SCJ_EXPECTED_SIZE" \
+            --expected-etag "$SCJ_EXPECTED_ETAG" \
+            --output "$RUNNER_TEMP/document"
+      - if: steps.restore.outputs.restored != 'true'
+        name: Publish durable document evidence
+        run: |
+          mkdir -p "$RUNNER_TEMP/publish"
+          python backend/scripts/scj_principales_corpus_publish.py document \
+            --input-dir "$RUNNER_TEMP/document" \
+            --inventory-sha256 "$SCJ_INVENTORY_SHA256" \
+            --document-id "$SCJ_DOCUMENT_ID" \
+            --code-revision "$SCJ_CODE_REVISION" \
+            --archive "$RUNNER_TEMP/publish/document.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-corpus-document-${{ matrix.document_id }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/document/document.json
+            ${{ runner.temp }}/document/pages.jsonl
+            ${{ runner.temp }}/document/publish.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    if: ${{ always() && needs.verify-document.result != 'skipped' }}
+    needs: [inventory, verify-document]
+    runs-on: ubuntu-24.04
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      SCJ_CODE_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend \
+            "boto3==1.43.93" "pypdfium2==5.13.0"
       - uses: actions/download-artifact@v4
         with:
-          pattern: scj-text-layer-census-shard-*-${{ github.run_id }}
-          path: ${{ runner.temp }}/shards
-          merge-multiple: false
-      - name: Aggregate census
-        run: python backend/scripts/scj_principales_text_layer_census.py --aggregate --input-root "${RUNNER_TEMP}/shards" --output "${RUNNER_TEMP}/aggregate"
-      - name: Publish summary
-        run: cat "${RUNNER_TEMP}/aggregate/census-summary.json" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+          name: scj-corpus-verification-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}/inventory
+      - uses: actions/download-artifact@v4
         with:
-          name: scj-text-layer-census-summary-${{ github.run_id }}
+          pattern: scj-corpus-document-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/documents
+          merge-multiple: false
+      - name: Aggregate and rank verified documents
+        run: |
+          python backend/scripts/scj_principales_text_layer_census.py \
+            --aggregate \
+            --input-root "$RUNNER_TEMP/documents" \
+            --inventory "$RUNNER_TEMP/inventory/inventory.json" \
+            --output "$RUNNER_TEMP/aggregate"
+      - name: Publish durable completed corpus marker
+        run: |
+          python backend/scripts/scj_principales_corpus_publish.py summary \
+            --summary "$RUNNER_TEMP/aggregate/census-summary.json" \
+            --inventory "$RUNNER_TEMP/inventory/inventory.json" \
+            --documents-root "$RUNNER_TEMP/documents" \
+            --code-revision "$SCJ_CODE_REVISION"
+      - name: Publish compact summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "aggregate" / "census-summary.json"
+          if not path.exists():
+              raise SystemExit(0)
+          report = json.loads(path.read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("# SCJ Principales verification census\n\n")
+              out.write(
+                  f"Documents: {report['documents']}/{report['expected_documents']}  \n"
+                  f"Total pages: {report['total_pages']}  \n"
+                  f"Aligned relevant share: "
+                  f"{report['aligned_share_of_relevant']:.4%}\n\n"
+              )
+              if report["missing_documents"]:
+                  out.write(
+                      f"Missing documents: {len(report['missing_documents'])}  \n\n"
+                  )
+              out.write(
+                  "| rank | tier | aligned | longest verified | "
+                  "longest problem | document |\n"
+                  "|---:|---|---:|---:|---:|---|\n"
+              )
+              for rank, doc in enumerate(report["document_ranking"], 1):
+                  out.write(
+                      f"| {rank} | {doc['verification_tier']} | "
+                      f"{doc['aligned_share_of_relevant']:.4%} | "
+                      f"{doc['longest_verified_run_pages']} | "
+                      f"{doc['longest_problem_run_pages']} | "
+                      f"`{Path(doc['object_key']).name}` |\n"
+                  )
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-corpus-verification-summary-${{ github.run_id }}
           path: ${{ runner.temp }}/aggregate/**
-          if-no-files-found: error
-          retention-days: 365
+          if-no-files-found: warn
+          retention-days: 90
