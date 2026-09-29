@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import cast
 from urllib.error import HTTPError, URLError
@@ -13,6 +14,8 @@ from jurisnexo.model_providers.decisions import (
     DecisionUsage,
 )
 
+_TRANSIENT_HTTP_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
 
 @dataclass(slots=True)
 class OpenRouterDecisionProvider:
@@ -20,6 +23,8 @@ class OpenRouterDecisionProvider:
     model: str
     base_url: str = "https://openrouter.ai/api/alpha"
     timeout_seconds: float = 120.0
+    max_attempts: int = 4
+    retry_base_seconds: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
@@ -28,6 +33,10 @@ class OpenRouterDecisionProvider:
             raise ValueError("OpenRouter decision model is required")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least one")
+        if self.retry_base_seconds < 0:
+            raise ValueError("retry_base_seconds must not be negative")
 
     @property
     def provider_name(self) -> str:
@@ -69,18 +78,7 @@ class OpenRouterDecisionProvider:
             },
             method="POST",
         )
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                raw = response.read()
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:2000]
-            raise ModelProviderError(
-                f"OpenRouter decisions HTTP {exc.code}: {detail}"
-            ) from exc
-        except URLError as exc:
-            raise ModelProviderError(
-                f"OpenRouter decisions transport error: {exc.reason}"
-            ) from exc
+        raw = self._request_with_retry(request)
 
         try:
             return parse_openrouter_decision_response(
@@ -92,6 +90,29 @@ class OpenRouterDecisionProvider:
             raise ModelProviderError(
                 "OpenRouter decisions returned an invalid response"
             ) from exc
+
+    def _request_with_retry(self, request: Request) -> bytes:
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    return response.read()
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")[:2000]
+                if exc.code not in _TRANSIENT_HTTP_CODES or attempt == self.max_attempts:
+                    raise ModelProviderError(
+                        f"OpenRouter decisions HTTP {exc.code}: {detail}"
+                    ) from exc
+            except (URLError, ConnectionError, TimeoutError) as exc:
+                if attempt == self.max_attempts:
+                    reason = getattr(exc, "reason", exc)
+                    raise ModelProviderError(
+                        f"OpenRouter decisions transport error after "
+                        f"{self.max_attempts} attempts: {reason}"
+                    ) from exc
+
+            time.sleep(self.retry_base_seconds * (2 ** (attempt - 1)))
+
+        raise AssertionError("retry loop exhausted without returning or raising")
 
 
 def _int_or_none(value: object) -> int | None:
@@ -126,7 +147,6 @@ def _json_object(raw: bytes) -> dict[str, object]:
     if not isinstance(loaded, dict):
         raise TypeError("response is not an object")
     return cast(dict[str, object], loaded)
-
 
 
 def parse_openrouter_decision_response(
