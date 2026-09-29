@@ -207,3 +207,44 @@ What independent oracle proves the new claim?
 ```
 
 If the existing census is sufficient, reuse it. New expensive processing must have a measured reason.
+
+## Targeted single-PDF parallel recheck lane
+
+The completed corpus census is the default source of page-level OCR/native-text evidence. Do not rerun it merely to obtain the same observations.
+
+For targeted investigation of one problematic or high-value PDF, the repository now also provides:
+
+- `.github/workflows/scj-principales-single-pdf-quality.yml`;
+- `backend/scripts/scj_single_pdf_parallel_quality.py`;
+- `backend/scripts/scj_ocr_jev_triage.py`;
+- `backend/scripts/scj_ocr_visual_recheck.py`.
+
+This lane freezes one exact source PDF once, then fans its pages across 20 isolated GitHub jobs. Page ownership is deterministic and disjoint (`page_index % shard_count`), every shard verifies the same source SHA-256, and aggregation fails closed on duplicate, missing, unexpected or wrong-source pages.
+
+The OCR observation now retains confidence-distribution evidence in addition to mean confidence:
+
+- word count;
+- mean confidence;
+- median confidence;
+- p10 confidence;
+- ratio of OCR words below the low-confidence threshold.
+
+These tail metrics are **routing evidence**, not a replacement gold definition. The existing native-vs-rendered-OCR alignment policy remains the authority for `aligned` admission.
+
+The targeted lane also records whether the PDF page exposes embedded image objects. Image presence alone does not prove OCR failure and does not automatically reject an otherwise aligned page. It becomes an escalation signal when combined with missing native text, disagreement, or other uncertainty.
+
+Deterministic output routes are intentionally conservative:
+
+```text
+accept_candidate
+sentinel
+jev_review
+visual_review
+blocked
+```
+
+The first paid stage is optional JEV triage. JEV receives only deterministic metrics and bounded native/OCR disagreement excerpts. It runs in `shadow` mode: probabilities and recommendations are persisted, but JEV cannot overwrite source text or silently promote evidence.
+
+A second optional stage visually rechecks JEV-selected pages with the configured DeepSeek visual model. The output records requested/returned model, routed provider metadata, reasoning setting, tokens, latency, cost, transcription and pairwise scores against native text and Tesseract. Pairwise consensus is evidence only; it does not become primary-source ground truth automatically.
+
+Both provider-backed stages are `workflow_dispatch` opt-in and have explicit cost caps. Ordinary branch commits must not invoke them.
