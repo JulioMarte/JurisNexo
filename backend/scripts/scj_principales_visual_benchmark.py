@@ -64,6 +64,9 @@ SEED = int(os.environ.get("SCJ_VISUAL_SEED", "20260926"))
 SELECTION = os.environ.get("SCJ_VISUAL_SELECTION", "deterministic")
 CURATED_MANIFEST = os.environ.get("SCJ_VISUAL_CURATED_MANIFEST", "").strip()
 MAX_CONCURRENCY = int(os.environ.get("SCJ_VISUAL_MAX_CONCURRENCY", "20"))
+REQUEST_INTERVAL_SECONDS = float(
+    os.environ.get("SCJ_VISUAL_REQUEST_INTERVAL_SECONDS", "0")
+)
 ALIGNMENT_AUDIT_SIZE = int(
     os.environ.get(
         "SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE",
@@ -633,6 +636,8 @@ def _run_one(
     try:
         while True:
             try:
+                if REQUEST_INTERVAL_SECONDS > 0:
+                    time.sleep(REQUEST_INTERVAL_SECONDS)
                 response = provider.verify_image_text(
                     image=image,
                     media_type="image/png",
@@ -807,6 +812,7 @@ def _run_model() -> int:
         "model": MODEL,
         "reasoning_effort": REASONING,
         "provider_order": list(PROVIDER_ORDER),
+        "request_interval_seconds": REQUEST_INTERVAL_SECONDS,
         "prompt": PROMPT,
         "token_limit": None,
         "cases": len(results),
