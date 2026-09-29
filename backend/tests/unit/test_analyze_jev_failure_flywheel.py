@@ -4,6 +4,9 @@ import importlib.util
 import os
 from pathlib import Path
 from types import ModuleType
+from typing import Any
+
+JsonObject = dict[str, Any]
 
 
 def _repo_root() -> Path:
@@ -39,8 +42,8 @@ def _case(
     problem: str,
     probability: float = 0.9,
     family: str | None = None,
-) -> dict:
-    item = {
+) -> JsonObject:
+    item: JsonObject = {
         "exception_id": f"exception-{number:04d}",
         "document_id": f"doc-{number}",
         "object_key": f"source-{2000 + number}.pdf",
@@ -77,13 +80,13 @@ def _case(
 
 def test_requires_independent_source_families_and_never_auto_mutates() -> None:
     module = _load()
-    payload = {
+    payload: JsonObject = {
         "exceptions": [
             _case(1, problem="editorial_title_signal", family="era-a"),
             _case(2, problem="editorial_title_signal", family="era-b"),
         ]
     }
-    result = module.analyze(payload)
+    result: JsonObject = module.analyze(payload)
     assert result["counts"]["proposal_clusters"] == 1
     proposal = result["improvement_proposals"][0]
     assert proposal["promotion_blockers"] == []
@@ -98,7 +101,7 @@ def test_requires_independent_source_families_and_never_auto_mutates() -> None:
 
 def test_same_family_cluster_is_quarantined_not_promoted() -> None:
     module = _load()
-    result = module.analyze(
+    result: JsonObject = module.analyze(
         {
             "exceptions": [
                 _case(1, problem="editorial_title_signal", family="same"),
@@ -116,7 +119,9 @@ def test_ignores_low_confidence_or_contradicted_model_opinions() -> None:
     module = _load()
     low = _case(1, problem="weak_start_boundary", probability=0.55, family="a")
     contradicted = _case(2, problem="weak_start_boundary", family="b")
-    contradicted["second_pass"]["span_verdict"] = "contradicted"
-    result = module.analyze({"exceptions": [low, contradicted]})
+    second_pass = contradicted["second_pass"]
+    assert isinstance(second_pass, dict)
+    second_pass["span_verdict"] = "contradicted"
+    result: JsonObject = module.analyze({"exceptions": [low, contradicted]})
     assert result["counts"]["high_confidence_disagreements"] == 0
     assert result["improvement_proposals"] == []
