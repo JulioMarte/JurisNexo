@@ -8,14 +8,11 @@ on:
       - "benchmark/normalization/evaluate_jev_principales.py"
       - "benchmark/normalization/jev_structure_pilot.py"
       - "benchmark/normalization/refine_jev_decision_candidates.py"
+      - "benchmark/normalization/evaluate_jev_structure_ablations.py"
       - "benchmark/normalization/build_jev_boundary_audit.py"
       - "benchmark/normalization/jev_exception_second_pass.py"
       - "benchmark/normalization/scj_page_selection.py"
-      - "backend/src/jurisnexo/normalization/decision_batching.py"
-      - "backend/src/jurisnexo/normalization/jev_batch_evaluator.py"
-      - "backend/src/jurisnexo/normalization/jev_claims.py"
-      - "backend/src/jurisnexo/normalization/jev_quality.py"
-      - "backend/src/jurisnexo/normalization/jev_structure.py"
+      - "backend/src/jurisnexo/normalization/**"
       - "backend/tests/unit/test_jev_structure_pilot.py"
       - "backend/tests/unit/test_refine_jev_decision_candidates.py"
       - ".github/workflows/scj-principales-jev-calibration.yml"
@@ -63,14 +60,9 @@ jobs:
         run: python benchmark/normalization/evaluate_jev_principales.py
       - name: Validate structural-navigation and refinement
         run: |
-          python -m py_compile benchmark/normalization/jev_structure_pilot.py
-          python -m py_compile benchmark/normalization/refine_jev_decision_candidates.py
-          python -m py_compile benchmark/normalization/build_jev_boundary_audit.py
-          python -m py_compile benchmark/normalization/jev_exception_second_pass.py
-          python -m py_compile backend/src/jurisnexo/normalization/jev_structure.py
-          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py
-          ruff check backend/src/jurisnexo/normalization/jev_structure.py
-          ruff check backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
+          python -m py_compile benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/evaluate_jev_structure_ablations.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py
+          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/evaluate_jev_structure_ablations.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py
+          ruff check backend/src/jurisnexo/normalization/jev_structure.py backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
           pytest -q backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
       - name: Run JEV structural-navigation pilot with exact audit trace
         env:
@@ -81,13 +73,19 @@ jobs:
           JEV_STRUCTURE_MAX_COST_USD: "0.05"
           JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
         run: python benchmark/normalization/jev_structure_pilot.py
-      - name: Refine and freeze evidence-backed pilot decisions
+      - name: Measure dependence on format-specific heuristics
+        env:
+          JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
+          JEV_ABLATION_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-ablations.json
+        run: python benchmark/normalization/evaluate_jev_structure_ablations.py
+      - name: Refine with evidence tiers instead of format hard-rejects
         env:
           JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
           JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
           JEV_REFINED_TARGET_PAGES: "30"
           JEV_REFINED_MAX_SPAN_PAGES: "40"
           JEV_REFINED_MIN_SCORE: "0.72"
+          JEV_REFINED_REVIEW_SCORE: "0.45"
         run: python benchmark/normalization/refine_jev_decision_candidates.py
       - name: Build third-party boundary audit packet
         env:
