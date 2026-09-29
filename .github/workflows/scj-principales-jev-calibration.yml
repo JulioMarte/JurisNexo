@@ -95,14 +95,15 @@ jobs:
           JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
           JEV_AUDIT_OUTPUT: ${{ runner.temp }}/jev-calibration/boundary-audit.json
         run: python benchmark/normalization/build_jev_boundary_audit.py
-      - name: Run narrow JEV second pass over first-pass exceptions
+      - name: Expand exception evidence and run diverse JEV second pass
         env:
           JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
           JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
           JEV_EXCEPTION_OUTPUT: ${{ runner.temp }}/jev-calibration/exception-second-pass.json
-          JEV_EXCEPTION_MAX_CASES: "30"
+          JEV_EXCEPTION_MAX_CASES: "40"
           JEV_EXCEPTION_BATCH_SIZE: "6"
           JEV_EXCEPTION_MAX_COST_USD: "0.03"
+          JEV_EXCEPTION_EXCERPT_CHARS: "2600"
         run: python benchmark/normalization/jev_exception_second_pass.py
       - name: Preserve JEV calibration evidence
         if: always()
