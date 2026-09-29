@@ -23,29 +23,25 @@ Preferred pattern:
 
 GitHub only permits `workflow_dispatch` through the normal dispatch endpoint when the workflow is available from the repository's default-branch workflow surface. Tooling/connectors may also omit the dispatch mutation entirely.
 
-When an experiment workflow is being developed on a work branch and cannot be dispatched directly, use this narrowly scoped fallback:
+When an experiment workflow is being developed on a work branch and cannot be dispatched directly, use a dedicated trigger ref/branch:
 
 ```yaml
 on:
   push:
-    branches: ["exact/benchmark-branch"]
+    branches: ["benchmark-smoke/visual-10"]
   workflow_dispatch:
-
-jobs:
-  smoke:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[explicit-smoke-marker]')
 ```
 
-The push path must:
+The trigger-ref path must:
 
-- name one exact experiment branch, never a broad branch glob;
-- require an unmistakable commit marker such as `[visual-10]`;
+- match only a dedicated execution ref such as `benchmark-smoke/visual-10`, never the ordinary work branch;
+- be created or moved explicitly to the exact commit that should be tested;
 - use fixed bounded smoke inputs rather than full-scale defaults;
 - use deterministic selection where applicable;
-- skip provider calls on ordinary commits;
+- create no workflow run at all for ordinary work-branch commits;
 - never be copied to `development`, `main`, or ordinary feature branches as an unconditional trigger.
 
-The current reference is `.github/workflows/scj-principales-visual-smoke.yml`: `[visual-10]` deliberately triggers a bounded 10-page comparison, while ordinary commits on the branch do not spend model-provider credits.
+The current reference is `.github/workflows/scj-principales-visual-smoke.yml`: creating or moving `benchmark-smoke/visual-10` to a target commit deliberately triggers a bounded 10-page comparison. Ordinary commits on `benchmark/space-bunny-alpha` do not trigger that workflow.
 
 ## Provider-backed benchmark requirements
 
