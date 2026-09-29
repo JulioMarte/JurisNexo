@@ -29,14 +29,24 @@ def _load() -> ModuleType:
     return module
 
 
-def test_repository_root_honors_ci_mount(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JURISNEXO_REPO_ROOT", "/repo")
-    assert _repository_root() == Path("/repo")
+def test_repository_root_honors_ci_mount(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pilot = tmp_path / "benchmark" / "normalization" / "jev_structure_pilot.py"
+    pilot.parent.mkdir(parents=True)
+    pilot.write_text("# test fixture\n", encoding="utf-8")
+    monkeypatch.setenv("JURISNEXO_REPO_ROOT", str(tmp_path))
+    assert _repository_root() == tmp_path
 
 
 def test_index_entries_extract_editorial_page_reference() -> None:
     module = _load()
-    text = "SUMARIO\nRecurso de casación de Acme, S. A. ........ 183\nOtra decisión      191\n"
+    text = (
+        "SUMARIO\n"
+        "Recurso de casación de Acme, S. A. ........ 183\n"
+        "Otra decisión      191\n"
+    )
     assert module._index_entries(text, source_page=7) == [
         {
             "raw": "Recurso de casación de Acme, S. A. ........ 183",
