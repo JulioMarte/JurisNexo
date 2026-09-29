@@ -121,11 +121,19 @@ def _render(page: Any) -> bytes:
         bitmap.close()
 
 
-def _embedded_image_count(pdf_bytes: bytes, page_index: int) -> int | None:
+def _open_image_reader(pdf_bytes: bytes) -> Any | None:
     try:
         from pypdf import PdfReader
 
-        reader = PdfReader(io.BytesIO(pdf_bytes), strict=False)
+        return PdfReader(io.BytesIO(pdf_bytes), strict=False)
+    except Exception:
+        return None
+
+
+def _embedded_image_count(reader: Any | None, page_index: int) -> int | None:
+    if reader is None:
+        return None
+    try:
         return len(reader.pages[page_index].images)
     except Exception:
         return None
@@ -282,6 +290,7 @@ def run_shard(
     if actual_sha != expected_sha:
         raise RuntimeError("source PDF checksum mismatch after fan-out")
 
+    image_reader = _open_image_reader(pdf_bytes)
     document = pdfium.PdfDocument(pdf_bytes)
     try:
         if len(document) != expected_pages:
@@ -299,7 +308,7 @@ def run_shard(
                 image=image,
                 page_index=page_index,
                 source_sha=actual_sha,
-                embedded_image_count=_embedded_image_count(pdf_bytes, page_index),
+                embedded_image_count=_embedded_image_count(image_reader, page_index),
             )
             record["shard_index"] = shard_index
             record["shard_count"] = shard_count
