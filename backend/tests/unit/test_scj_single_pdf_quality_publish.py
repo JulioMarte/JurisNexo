@@ -5,7 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 
@@ -50,20 +50,37 @@ class _Client:
         self.objects[Key] = (bytes(Body), dict(Metadata))
 
 
-def _store() -> SimpleNamespace:
-    client = _Client()
-    return SimpleNamespace(
-        client=client,
-        config=SimpleNamespace(bucket="bucket"),
-        is_not_found=lambda exc: bool(getattr(exc, "not_found", False)),
-        put=lambda **kwargs: client.put_object(
-            Bucket="bucket",
-            Key=kwargs["key"],
-            Body=kwargs["content"],
-            ContentType=kwargs["content_type"],
-            Metadata=kwargs["metadata"],
-        ),
-    )
+class _Config:
+    bucket = "bucket"
+
+
+class _Store:
+    def __init__(self) -> None:
+        self.client = _Client()
+        self.config = _Config()
+
+    def is_not_found(self, exc: Exception) -> bool:
+        return isinstance(exc, _NotFoundError)
+
+    def put(
+        self,
+        *,
+        key: str,
+        content: bytes,
+        content_type: str,
+        metadata: dict[str, str],
+    ) -> None:
+        self.client.put_object(
+            Bucket=self.config.bucket,
+            Key=key,
+            Body=content,
+            ContentType=content_type,
+            Metadata=metadata,
+        )
+
+
+def _store() -> _Store:
+    return _Store()
 
 
 def test_publish_stage_is_immutable_and_records_page_evidence(tmp_path: Path) -> None:
