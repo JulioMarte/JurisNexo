@@ -616,6 +616,15 @@ def _is_transient_provider_error(exc: ModelProviderError) -> bool:
     )
 
 
+def _is_model_unavailable_error(exc: ModelProviderError) -> bool:
+    message = str(exc).lower()
+    return "http 404" in message and (
+        "model" in message
+        or "unavailable" in message
+        or "slug" in message
+    )
+
+
 def _run_one(
     *,
     provider: OpenRouterVisualModelProvider,
@@ -792,7 +801,11 @@ def _run_model() -> int:
             for case in cases
         ]
         for future in as_completed(futures):
-            results.append(future.result())
+            result = future.result()
+            results.append(result)
+            if result.error and "HTTP 404" in result.error:
+                for pending in futures:
+                    pending.cancel()
     wall_ms = int((time.perf_counter() - wall_started) * 1000)
     results.sort(key=lambda result: result.sample_id)
 
