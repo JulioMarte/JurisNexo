@@ -1,7 +1,9 @@
 name: SCJ Principales visual benchmark
 
-# Paid/long-running experiment. Keep it manual; ordinary PR synchronization must
-# never spend provider credits. Permanent results live under docs/benchmarks/.
+# Paid/long-running experiment. Ordinary PR synchronization must never spend
+# provider credits. The dedicated benchmark-smoke/visual-10 ref runs the bounded
+# API/tool-driven smoke; workflow_dispatch remains the configurable manual path.
+# Permanent results live under docs/benchmarks/.
 on:
   push:
     branches: ["benchmark-smoke/visual-10"]
