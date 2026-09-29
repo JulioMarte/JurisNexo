@@ -6,6 +6,7 @@ import pytest
 
 from jurisnexo.normalization.visual_reference_ocr import (
     parse_tesseract_tsv,
+    parse_tesseract_tsv_observation,
     tesseract_version,
 )
 
@@ -26,6 +27,25 @@ def test_parse_tesseract_tsv_reconstructs_lines_and_confidence() -> None:
     assert confidence == 92.0
 
 
+def test_parse_tesseract_tsv_retains_tail_quality_metrics() -> None:
+    tsv = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\t"
+        "left\ttop\twidth\theight\tconf\ttext\n"
+        "5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t99\tA\n"
+        "5\t1\t1\t1\t1\t2\t10\t0\t10\t10\t98\tB\n"
+        "5\t1\t1\t1\t1\t3\t20\t0\t10\t10\t97\tC\n"
+        "5\t1\t1\t1\t1\t4\t30\t0\t10\t10\t20\tSCJ-SS-22-1191\n"
+    )
+
+    observation = parse_tesseract_tsv_observation(tsv)
+
+    assert observation.word_count == 4
+    assert observation.mean_confidence == pytest.approx(78.5)
+    assert observation.median_confidence == pytest.approx(97.5)
+    assert observation.p10_confidence == pytest.approx(43.1)
+    assert observation.low_confidence_word_ratio == pytest.approx(0.25)
+
+
 def test_parse_tesseract_tsv_handles_missing_confidence() -> None:
     tsv = (
         "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\t"
@@ -33,10 +53,14 @@ def test_parse_tesseract_tsv_handles_missing_confidence() -> None:
         "5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t-1\tTexto\n"
     )
 
-    text, confidence = parse_tesseract_tsv(tsv)
+    observation = parse_tesseract_tsv_observation(tsv)
 
-    assert text == "Texto"
-    assert confidence is None
+    assert observation.text == "Texto"
+    assert observation.mean_confidence is None
+    assert observation.median_confidence is None
+    assert observation.p10_confidence is None
+    assert observation.low_confidence_word_ratio is None
+    assert observation.word_count == 1
 
 
 def test_tesseract_version_is_cached_per_process(
