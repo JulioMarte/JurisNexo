@@ -56,9 +56,11 @@ jobs:
             backend/scripts/scj_ocr_jev_triage.py \
             backend/scripts/scj_ocr_visual_recheck.py \
             backend/src/jurisnexo/normalization/visual_reference_ocr.py \
+            backend/tests/unit/test_scj_ocr_jev_triage.py \
             backend/tests/unit/test_scj_single_pdf_parallel_quality.py \
             backend/tests/unit/test_visual_reference_ocr.py
           pytest -q \
+            backend/tests/unit/test_scj_ocr_jev_triage.py \
             backend/tests/unit/test_scj_single_pdf_parallel_quality.py \
             backend/tests/unit/test_visual_reference_alignment.py \
             backend/tests/unit/test_visual_reference_ocr.py
