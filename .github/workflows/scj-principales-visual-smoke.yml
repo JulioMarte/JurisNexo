@@ -108,7 +108,7 @@ jobs:
         include:
           - {judge: deepseek-official, model: deepseek/deepseek-v4.1-flash, provider: DeepSeek, reasoning: high, free_throttle: false}
           - {judge: ling-3-flash-vl, model: inclusionai/ling-3.0-flash-vl, provider: "", reasoning: high, free_throttle: false}
-          - {judge: space-bunny-alpha-free, model: stealth/space-bunny-alpha:free, provider: "", reasoning: high, free_throttle: true}
+          - {judge: space-bunny-alpha, model: stealth/space-bunny-alpha, provider: "", reasoning: high, free_throttle: true}
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_OPENROUTER_VISUAL_MODEL: ${{ matrix.model }}
