@@ -5,8 +5,15 @@ from pathlib import Path
 from types import ModuleType
 
 
+def _repository_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "benchmark" / "normalization" / "jev_structure_pilot.py").is_file():
+            return parent
+    raise AssertionError("could not locate repository root from test path")
+
+
 def _load() -> ModuleType:
-    path = Path(__file__).parents[2] / "benchmark" / "normalization" / "jev_structure_pilot.py"
+    path = _repository_root() / "benchmark" / "normalization" / "jev_structure_pilot.py"
     spec = importlib.util.spec_from_file_location("jev_structure_pilot", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
