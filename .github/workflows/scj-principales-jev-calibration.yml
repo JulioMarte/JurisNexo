@@ -9,6 +9,7 @@ on:
       - "benchmark/normalization/jev_structure_pilot.py"
       - "benchmark/normalization/refine_jev_decision_candidates.py"
       - "benchmark/normalization/build_jev_boundary_audit.py"
+      - "benchmark/normalization/jev_exception_second_pass.py"
       - "benchmark/normalization/scj_page_selection.py"
       - "backend/src/jurisnexo/normalization/decision_batching.py"
       - "backend/src/jurisnexo/normalization/jev_batch_evaluator.py"
@@ -65,8 +66,9 @@ jobs:
           python -m py_compile benchmark/normalization/jev_structure_pilot.py
           python -m py_compile benchmark/normalization/refine_jev_decision_candidates.py
           python -m py_compile benchmark/normalization/build_jev_boundary_audit.py
+          python -m py_compile benchmark/normalization/jev_exception_second_pass.py
           python -m py_compile backend/src/jurisnexo/normalization/jev_structure.py
-          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/build_jev_boundary_audit.py
+          ruff check benchmark/normalization/jev_structure_pilot.py benchmark/normalization/refine_jev_decision_candidates.py benchmark/normalization/build_jev_boundary_audit.py benchmark/normalization/jev_exception_second_pass.py
           ruff check backend/src/jurisnexo/normalization/jev_structure.py
           ruff check backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
           pytest -q backend/tests/unit/test_jev_structure_pilot.py backend/tests/unit/test_refine_jev_decision_candidates.py
@@ -93,6 +95,15 @@ jobs:
           JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
           JEV_AUDIT_OUTPUT: ${{ runner.temp }}/jev-calibration/boundary-audit.json
         run: python benchmark/normalization/build_jev_boundary_audit.py
+      - name: Run narrow JEV second pass over first-pass exceptions
+        env:
+          JEV_STRUCTURE_OUTPUT: ${{ runner.temp }}/jev-calibration/structure-pilot.json
+          JEV_REFINED_OUTPUT: ${{ runner.temp }}/jev-calibration/refined-decisions.json
+          JEV_EXCEPTION_OUTPUT: ${{ runner.temp }}/jev-calibration/exception-second-pass.json
+          JEV_EXCEPTION_MAX_CASES: "30"
+          JEV_EXCEPTION_BATCH_SIZE: "6"
+          JEV_EXCEPTION_MAX_COST_USD: "0.03"
+        run: python benchmark/normalization/jev_exception_second_pass.py
       - name: Preserve JEV calibration evidence
         if: always()
         uses: actions/upload-artifact@v4
