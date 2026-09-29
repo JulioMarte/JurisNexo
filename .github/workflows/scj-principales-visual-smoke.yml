@@ -4,7 +4,7 @@ name: SCJ Principales visual benchmark
 # never spend provider credits. Permanent results live under docs/benchmarks/.
 on:
   push:
-    branches: ["benchmark/space-bunny-alpha"]
+    branches: ["benchmark-smoke/visual-10"]
   workflow_dispatch:
     inputs:
       sample_size:
@@ -50,7 +50,6 @@ concurrency:
 
 jobs:
   offline-contract:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[visual-10]')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
