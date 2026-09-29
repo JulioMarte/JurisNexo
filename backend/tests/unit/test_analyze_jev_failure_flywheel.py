@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from types import ModuleType
 
 
+def _repo_root() -> Path:
+    configured = os.environ.get("JURISNEXO_REPO_ROOT")
+    if configured:
+        root = Path(configured)
+        if (root / "benchmark" / "normalization").is_dir():
+            return root
+
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "benchmark" / "normalization").is_dir():
+            return parent
+    raise RuntimeError("unable to locate JurisNexo repository root")
+
+
 def _load() -> ModuleType:
-    path = Path(__file__).parents[3] / "benchmark" / "normalization" / "analyze_jev_failure_flywheel.py"
+    path = (
+        _repo_root()
+        / "benchmark"
+        / "normalization"
+        / "analyze_jev_failure_flywheel.py"
+    )
     spec = importlib.util.spec_from_file_location("analyze_jev_failure_flywheel", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -14,14 +33,42 @@ def _load() -> ModuleType:
     return module
 
 
-def _case(number: int, *, problem: str, probability: float = 0.9, family: str | None = None) -> dict:
+def _case(
+    number: int,
+    *,
+    problem: str,
+    probability: float = 0.9,
+    family: str | None = None,
+) -> dict:
     item = {
-        "exception_id": f"exception-{number:04d}", "document_id": f"doc-{number}", "object_key": f"source-{2000 + number}.pdf",
-        "title": "Sentencia", "candidate_pdf_start": 10, "candidate_pdf_end": 12, "first_pass_score": 0.4,
-        "first_pass_problems": [problem], "first_pass_positive_evidence": ["verified_start_text", "verified_end_text"],
+        "exception_id": f"exception-{number:04d}",
+        "document_id": f"doc-{number}",
+        "object_key": f"source-{2000 + number}.pdf",
+        "title": "Sentencia",
+        "candidate_pdf_start": 10,
+        "candidate_pdf_end": 12,
+        "first_pass_score": 0.4,
+        "first_pass_problems": [problem],
+        "first_pass_positive_evidence": [
+            "verified_start_text",
+            "verified_end_text",
+        ],
         "expanded_evidence_sha256": f"sha-{number}",
-        "expanded_evidence": {"start": {"fidelity": "aligned", "excerpt": "Vistos. Considerando los hechos."}, "end": {"fidelity": "aligned", "excerpt": "Por tales motivos, falla."}},
-        "second_pass": {"span_verdict": "supported", "span_verdict_probability": probability, "failure_mode": "none"},
+        "expanded_evidence": {
+            "start": {
+                "fidelity": "aligned",
+                "excerpt": "Vistos. Considerando los hechos.",
+            },
+            "end": {
+                "fidelity": "aligned",
+                "excerpt": "Por tales motivos, falla.",
+            },
+        },
+        "second_pass": {
+            "span_verdict": "supported",
+            "span_verdict_probability": probability,
+            "failure_mode": "none",
+        },
     }
     if family:
         item["source_family"] = family
@@ -30,7 +77,12 @@ def _case(number: int, *, problem: str, probability: float = 0.9, family: str | 
 
 def test_requires_independent_source_families_and_never_auto_mutates() -> None:
     module = _load()
-    payload = {"exceptions": [_case(1, problem="editorial_title_signal", family="era-a"), _case(2, problem="editorial_title_signal", family="era-b")]}
+    payload = {
+        "exceptions": [
+            _case(1, problem="editorial_title_signal", family="era-a"),
+            _case(2, problem="editorial_title_signal", family="era-b"),
+        ]
+    }
     result = module.analyze(payload)
     assert result["counts"]["proposal_clusters"] == 1
     proposal = result["improvement_proposals"][0]
@@ -46,10 +98,18 @@ def test_requires_independent_source_families_and_never_auto_mutates() -> None:
 
 def test_same_family_cluster_is_quarantined_not_promoted() -> None:
     module = _load()
-    result = module.analyze({"exceptions": [_case(1, problem="editorial_title_signal", family="same"), _case(2, problem="editorial_title_signal", family="same")]})
+    result = module.analyze(
+        {
+            "exceptions": [
+                _case(1, problem="editorial_title_signal", family="same"),
+                _case(2, problem="editorial_title_signal", family="same"),
+            ]
+        }
+    )
     assert result["improvement_proposals"] == []
     assert result["counts"]["quarantined_clusters"] == 1
-    assert "insufficient_source_family_diversity" in result["quarantined_hypotheses"][0]["promotion_blockers"]
+    blockers = result["quarantined_hypotheses"][0]["promotion_blockers"]
+    assert "insufficient_source_family_diversity" in blockers
 
 
 def test_ignores_low_confidence_or_contradicted_model_opinions() -> None:
