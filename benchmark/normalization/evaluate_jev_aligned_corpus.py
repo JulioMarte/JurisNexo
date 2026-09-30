@@ -97,7 +97,10 @@ def _archive_files(payload: bytes) -> dict[str, bytes]:
     return result
 
 
-def _load_aligned_pages(store: Any, prefix: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def _load_aligned_pages(
+    store: Any,
+    prefix: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     pages: list[dict[str, Any]] = []
     counts: Counter[str] = Counter()
     archives = [
@@ -124,7 +127,9 @@ def _load_aligned_pages(store: Any, prefix: str) -> tuple[list[dict[str, Any]], 
             relative = f"reference-text/page-{page_index:05d}.txt"
             raw = files.get(relative)
             if raw is None:
-                raise RuntimeError(f"aligned page omitted reference text: {key}:{page_index}")
+                raise RuntimeError(
+                    f"aligned page omitted reference text: {key}:{page_index}"
+                )
             text = raw.decode("utf-8")
             if hashlib.sha256(text.encode()).hexdigest() != record["native_text_sha256"]:
                 raise RuntimeError("durable aligned reference text SHA mismatch")
@@ -151,8 +156,10 @@ def _document_split(document_ids: list[str]) -> dict[str, str]:
     split: dict[str, str] = {}
     for index, document_id in enumerate(ordered):
         bucket = index % 5
-        split[document_id] = "certification" if bucket == 4 else (
-            "validation" if bucket == 3 else "discovery"
+        split[document_id] = (
+            "certification"
+            if bucket == 4
+            else ("validation" if bucket == 3 else "discovery")
         )
     return split
 
@@ -164,14 +171,20 @@ def _sample(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rng = random.Random(SEED)
     selected: list[dict[str, Any]] = []
     for document_id in sorted(by_document):
-        rows = sorted(by_document[document_id], key=lambda row: int(row["page_index"]))
+        rows = sorted(
+            by_document[document_id],
+            key=lambda row: int(row["page_index"]),
+        )
         if len(rows) > MAX_PAGES_PER_DOCUMENT:
             rows = rng.sample(rows, MAX_PAGES_PER_DOCUMENT)
             rows.sort(key=lambda row: int(row["page_index"]))
         selected.extend(rows)
     if len(selected) > MAX_PAGES:
         selected = rng.sample(selected, MAX_PAGES)
-    return sorted(selected, key=lambda row: (str(row["document_id"]), int(row["page_index"])))
+    return sorted(
+        selected,
+        key=lambda row: (str(row["document_id"]), int(row["page_index"])),
+    )
 
 
 def main() -> int:
@@ -234,7 +247,9 @@ def main() -> int:
     decisions = {item.record_id: item.probabilities for item in evaluation.records}
     total_cost = sum(batch.cost_usd or 0.0 for batch in evaluation.batches)
     if total_cost > MAX_COST_USD:
-        raise RuntimeError(f"aligned JEV benchmark exceeded cost cap: ${total_cost:.6f}")
+        raise RuntimeError(
+            f"aligned JEV benchmark exceeded cost cap: ${total_cost:.6f}"
+        )
 
     traces = []
     split_counts: Counter[str] = Counter()
@@ -250,13 +265,19 @@ def main() -> int:
             {
                 **{key: value for key, value in row.items() if key != "text"},
                 "split": split,
-                "input_text_sha256": _sha(str(row["text"])[:EXCERPT_CHARS].encode()),
+                "input_text_sha256": _sha(
+                    str(row["text"])[:EXCERPT_CHARS].encode()
+                ),
                 "jev": {
                     "acceptable_probability": probabilities.acceptable,
                     "material_error_probability": probabilities.material_error,
                     "uncertain_probability": probabilities.uncertain,
-                    "legal_critical_damage_probability": probabilities.legal_critical_damage,
-                    "needs_visual_review_probability": probabilities.needs_visual_review,
+                    "legal_critical_damage_probability": (
+                        probabilities.legal_critical_damage
+                    ),
+                    "needs_visual_review_probability": (
+                        probabilities.needs_visual_review
+                    ),
                 },
             }
         )
@@ -270,14 +291,18 @@ def main() -> int:
             "success": success,
             "census_page_counts": census_counts,
             "aligned_pages_available": len(pages),
-            "aligned_documents_available": len({row["document_id"] for row in pages}),
+            "aligned_documents_available": len(
+                {row["document_id"] for row in pages}
+            ),
         },
         "sampling": {
             "seed": SEED,
             "max_pages": MAX_PAGES,
             "max_pages_per_document": MAX_PAGES_PER_DOCUMENT,
             "sampled_pages": len(sample),
-            "sampled_documents": len({row["document_id"] for row in sample}),
+            "sampled_documents": len(
+                {row["document_id"] for row in sample}
+            ),
             "split_page_counts": dict(sorted(split_counts.items())),
             "split_unit": "document",
         },
@@ -289,19 +314,37 @@ def main() -> int:
         },
         "telemetry": [
             {
-                "request_id": batch.request_id,
+                "batch_index": batch.batch_index,
+                "response_id": batch.response_id,
+                "provider": batch.provider,
                 "model": batch.model,
+                "model_version": batch.model_version,
                 "input_tokens": batch.input_tokens,
                 "output_tokens": batch.output_tokens,
+                "total_tokens": batch.total_tokens,
                 "cost_usd": batch.cost_usd,
+                "latency_ms": batch.latency_ms,
             }
             for batch in evaluation.batches
         ],
         "traces": traces,
     }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"dataset": result["dataset"], "sampling": result["sampling"], "results": result["results"]}, indent=2, sort_keys=True))
+    OUTPUT.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "dataset": result["dataset"],
+                "sampling": result["sampling"],
+                "results": result["results"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
