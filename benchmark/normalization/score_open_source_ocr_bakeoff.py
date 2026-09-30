@@ -121,9 +121,13 @@ def score_engine(
     metrics = [row["metrics"] for row in successful]
     failure_rate = 1.0 - (len(successful) / len(rows))
     aggregate_critical_recall = (
-        1.0
-        if total_critical_expected == 0
-        else total_critical_matched / total_critical_expected
+        None
+        if not successful
+        else (
+            1.0
+            if total_critical_expected == 0
+            else total_critical_matched / total_critical_expected
+        )
     )
     summary = {
         "schema_version": 1,
@@ -186,6 +190,7 @@ def aggregate(inputs: list[Path], output_path: Path) -> dict[str, Any]:
         engine["clean_stage_gate"] = {
             "passed": (
                 float(engine["failure_rate"]) <= 0.01
+                and engine["aggregate_legal_critical_recall"] is not None
                 and float(engine["aggregate_legal_critical_recall"]) >= 0.995
             ),
             "max_failure_rate": 0.01,
