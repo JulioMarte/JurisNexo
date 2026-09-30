@@ -7,9 +7,10 @@ import resource
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from PIL import Image
 
@@ -55,7 +56,7 @@ def _extract_strings(value: Any) -> list[str]:
             continue
         try:
             payload = candidate() if callable(candidate) else candidate
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             continue
         return _extract_strings(payload)
     return []
@@ -264,7 +265,7 @@ def run(engine_name: str, manifest_path: Path, output_dir: Path, limit: int | No
             text = engine.predict(image_path)
             if not text.strip():
                 error = "empty_output"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - engine failures are benchmark data
             error = f"{type(exc).__name__}: {exc}"
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         prediction = Prediction(
