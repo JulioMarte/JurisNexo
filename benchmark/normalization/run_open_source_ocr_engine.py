@@ -76,6 +76,8 @@ class Engine:
             self._predict = self._init_rapidocr()
         elif name == "doctr":
             self._predict = self._init_doctr()
+        elif name == "surya":
+            self._predict = self._init_surya()
         else:
             raise ValueError(f"unsupported engine: {name}")
 
@@ -195,6 +197,35 @@ class Engine:
 
         return predict
 
+    def _init_surya(self) -> Callable[[Path], str]:
+        import html
+        import re
+
+        import surya
+        from surya.inference import SuryaInferenceManager
+        from surya.recognition import RecognitionPredictor
+
+        self.version = getattr(surya, "__version__", "unknown")
+        manager = SuryaInferenceManager()
+        predictor = RecognitionPredictor(manager)
+
+        def predict(path: Path) -> str:
+            image = Image.open(path).convert("RGB")
+            result = predictor([image])[0]
+            lines: list[str] = []
+            for block in getattr(result, "blocks", []):
+                raw = str(getattr(block, "html", "") or "")
+                if not raw.strip():
+                    continue
+                plain = re.sub(r"<[^>]+>", " ", raw)
+                plain = html.unescape(plain)
+                plain = re.sub(r"[ \\t]+", " ", plain)
+                plain = re.sub(r" *\\n *", "\\n", plain)
+                lines.append(plain.strip())
+            return _join_lines(lines)
+
+        return predict
+
     def predict(self, path: Path) -> str:
         return self._predict(path)
 
@@ -295,7 +326,7 @@ def main() -> int:
     parser.add_argument(
         "--engine",
         required=True,
-        choices=("tesseract", "easyocr", "paddleocr", "rapidocr", "doctr"),
+        choices=("tesseract", "easyocr", "paddleocr", "rapidocr", "doctr", "surya"),
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
