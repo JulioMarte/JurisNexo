@@ -40,7 +40,7 @@ The initial reproducible matrix contains:
 | Engine | Pinned package/runtime | Why included |
 | --- | --- | --- |
 | Tesseract | Ubuntu Tesseract 5 package, `spa+eng` | Current independent OCR baseline |
-| PaddleOCR | `paddleocr==3.7.0`, `paddlepaddle==3.3.1` | PP-OCRv6 generation; modern Latin multilingual OCR with CPU support |
+| PaddleOCR | `paddleocr==3.7.0`, `paddlepaddle==3.2.2` | PP-OCRv6 generation; modern Latin multilingual OCR with CPU support |
 | RapidOCR | `rapidocr==3.9.2` + ONNX Runtime | Lightweight offline Paddle-derived inference path |
 | EasyOCR | `easyocr==1.7.2`, CPU PyTorch | Mature multilingual neural OCR baseline |
 | docTR | `python-doctr==1.1.0`, CPU PyTorch | General document detection + recognition baseline |
@@ -51,8 +51,9 @@ latency, and peak resident memory.
 
 ### Surya caveat
 
-Current Surya OCR 2 is a ~650M-parameter VLM-backed document OCR system. On CPU it
-requires a `llama-server` runtime. Its code is Apache-2.0, while model weights
+Current Surya OCR 2 is a VLM-backed document OCR system. On CPU it requires a
+`llama-server` runtime. The benchmark pins `llama.cpp` release `v0.5.0` rather
+than following its moving default branch. Its code is Apache-2.0, while model weights
 carry Datalab's model license conditions. It is included because its quality may
 justify the additional complexity, but resource use and licensing are part of
 the production decision rather than afterthoughts.
