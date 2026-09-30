@@ -241,6 +241,15 @@ def _manifest_cases(manifest_path: Path, limit: int | None) -> list[dict[str, An
         raise RuntimeError(
             f"requested {limit} pages but manifest contains only {len(cases)}"
         )
+    benchmark_kind = str(payload.get("benchmark_kind") or "")
+    if benchmark_kind == "hard_rescue_ocr_disagreement":
+        for row in selected:
+            if row.get("reference_reliable") is not False:
+                raise RuntimeError("hard/rescue cases must explicitly have no reliable gold")
+            if row.get("reference_authority") != "none_hard_rescue":
+                raise RuntimeError("hard/rescue cases must not claim reference authority")
+        return selected
+
     for row in selected:
         if row.get("reference_reliable") is not True:
             raise RuntimeError("OCR bakeoff requires reliable prepared references")
