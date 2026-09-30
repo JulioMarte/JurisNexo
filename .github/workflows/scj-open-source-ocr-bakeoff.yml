@@ -30,7 +30,30 @@ env:
   OCR_BAKEOFF_PAGE_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.page_limit || '12' }}
 
 jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Validate benchmark harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend "pillow==12.3.0" "pytest==9.1.1" "ruff==0.16.7"
+          python -m py_compile \
+            benchmark/normalization/run_open_source_ocr_engine.py \
+            benchmark/normalization/score_open_source_ocr_bakeoff.py \
+            benchmark/normalization/test_open_source_ocr_bakeoff.py
+          ruff check \
+            benchmark/normalization/run_open_source_ocr_engine.py \
+            benchmark/normalization/score_open_source_ocr_bakeoff.py \
+            benchmark/normalization/test_open_source_ocr_bakeoff.py
+          PYTHONPATH=backend/src pytest -q benchmark/normalization/test_open_source_ocr_bakeoff.py
+
   prepare:
+    needs: contract
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
