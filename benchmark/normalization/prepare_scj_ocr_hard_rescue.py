@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import pypdfium2 as pdfium
-
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 
 EVIDENCE_PREFIX = "benchmarks/scj-principales/corpus-verification/v1/"
