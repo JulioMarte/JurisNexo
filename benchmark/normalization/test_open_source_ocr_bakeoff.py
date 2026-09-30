@@ -7,8 +7,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from run_open_source_ocr_engine import _extract_strings, _join_lines  # noqa: E402
-from score_open_source_ocr_bakeoff import aggregate, score_engine  # noqa: E402
+from run_open_source_ocr_engine import _extract_strings, _join_lines
+from score_open_source_ocr_bakeoff import aggregate, score_engine
 
 
 def test_extract_strings_prefers_recognition_texts_without_metadata_noise() -> None:
