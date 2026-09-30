@@ -258,8 +258,20 @@ def _manifest_cases(manifest_path: Path, limit: int | None) -> list[dict[str, An
     return selected
 
 
-def run(engine_name: str, manifest_path: Path, output_dir: Path, limit: int | None) -> int:
+def run(
+    engine_name: str,
+    manifest_path: Path,
+    output_dir: Path,
+    limit: int | None,
+    shard_index: int = 0,
+    shard_count: int = 1,
+) -> int:
     cases = _manifest_cases(manifest_path, limit)
+    if shard_count < 1 or shard_index < 0 or shard_index >= shard_count:
+        raise ValueError("invalid shard index/count")
+    cases = [case for index, case in enumerate(cases) if index % shard_count == shard_index]
+    if not cases:
+        raise RuntimeError("selected OCR shard has no cases")
     engine = Engine(engine_name)
     root = manifest_path.parent
     predictions: list[Prediction] = []
@@ -341,10 +353,19 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         raise ValueError("--limit must be positive")
-    return run(args.engine, args.manifest, args.output, args.limit)
+    return run(
+        args.engine,
+        args.manifest,
+        args.output,
+        args.limit,
+        args.shard_index,
+        args.shard_count,
+    )
 
 
 if __name__ == "__main__":
