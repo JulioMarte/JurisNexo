@@ -99,7 +99,7 @@ jobs:
       - name: Install PaddleOCR
         if: matrix.engine == 'paddleocr'
         run: |
-          python -m pip install "paddlepaddle==3.3.1" "paddleocr==3.7.0"
+          python -m pip install "paddlepaddle==3.2.2" "paddleocr==3.7.0"
       - name: Install RapidOCR
         if: matrix.engine == 'rapidocr'
         run: |
