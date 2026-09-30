@@ -119,7 +119,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
+          git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
           cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama.cpp/build"             -G Ninja -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
           cmake --build "$RUNNER_TEMP/llama.cpp/build" --target llama-server -j2
           sudo install "$RUNNER_TEMP/llama.cpp/build/bin/llama-server" /usr/local/bin/llama-server
@@ -200,9 +200,9 @@ jobs:
               ),
           )
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
-              out.write("## SCJ open-source OCR clean/control bakeoff\\n\\n")
-              out.write("| Engine | Version | Failure | WER | CER | Legal-critical recall | ms/page | Gate |\\n")
-              out.write("|---|---|---:|---:|---:|---:|---:|---|\\n")
+              out.write("## SCJ open-source OCR clean/control bakeoff\n\n")
+              out.write("| Engine | Version | Failure | WER | CER | Legal-critical recall | ms/page | Gate |\n")
+              out.write("|---|---|---:|---:|---:|---:|---:|---|\n")
               for row in rows:
                   def f(value):
                       return "n/a" if value is None else f"{value:.4f}"
@@ -212,13 +212,13 @@ jobs:
                       f"| {f(row['mean_character_error_rate'])} "
                       f"| {row['aggregate_legal_critical_recall']:.4f} "
                       f"| {f(row['mean_elapsed_ms'])} "
-                      f"| {'PASS' if row['clean_stage_gate']['passed'] else 'FAIL'} |\\n"
+                      f"| {'PASS' if row['clean_stage_gate']['passed'] else 'FAIL'} |\n"
                   )
               out.write(
-                  "\\n**Promotion is intentionally blocked here.** The clean set was "
+                  "\n**Promotion is intentionally blocked here.** The clean set was "
                   "selected using Tesseract/native-text agreement, so a separate "
                   "engine-independent hard/rescue benchmark is required before choosing "
-                  "the production base OCR.\\n"
+                  "the production base OCR.\n"
               )
           PY
       - uses: actions/upload-artifact@v4
