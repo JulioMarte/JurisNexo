@@ -7,6 +7,7 @@ on:
     paths:
       - "benchmark/normalization/run_open_source_ocr_engine.py"
       - "benchmark/normalization/score_open_source_ocr_bakeoff.py"
+      - "benchmark/normalization/test_open_source_ocr_bakeoff.py"
       - "backend/scripts/scj_principales_visual_benchmark.py"
       - ".github/workflows/scj-open-source-ocr-bakeoff.yml"
   workflow_dispatch:
@@ -51,7 +52,19 @@ jobs:
             tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
           python -m pip install --upgrade pip
           python -m pip install -e ./backend \
-            "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+            "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0" \
+            "pytest==9.0.2" "ruff==0.15.7"
+      - name: Validate OCR benchmark harness before expensive work
+        run: |
+          python -m py_compile \
+            benchmark/normalization/run_open_source_ocr_engine.py \
+            benchmark/normalization/score_open_source_ocr_bakeoff.py \
+            benchmark/normalization/test_open_source_ocr_bakeoff.py
+          ruff check \
+            benchmark/normalization/run_open_source_ocr_engine.py \
+            benchmark/normalization/score_open_source_ocr_bakeoff.py \
+            benchmark/normalization/test_open_source_ocr_bakeoff.py
+          pytest -q benchmark/normalization/test_open_source_ocr_bakeoff.py
       - name: Prepare identical rendered pages and frozen references
         env:
           SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/prepared
