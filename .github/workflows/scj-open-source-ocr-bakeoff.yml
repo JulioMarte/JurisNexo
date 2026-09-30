@@ -210,7 +210,7 @@ jobs:
                       f"| {row['engine']} | {row.get('engine_version') or 'unknown'} "
                       f"| {row['failure_rate']:.2%} | {f(row['mean_word_error_rate'])} "
                       f"| {f(row['mean_character_error_rate'])} "
-                      f"| {row['aggregate_legal_critical_recall']:.4f} "
+                      f"| {f(row['aggregate_legal_critical_recall'])} "
                       f"| {f(row['mean_elapsed_ms'])} "
                       f"| {'PASS' if row['clean_stage_gate']['passed'] else 'FAIL'} |\n"
                   )
