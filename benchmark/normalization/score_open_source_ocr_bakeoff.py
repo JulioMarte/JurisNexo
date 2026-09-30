@@ -11,7 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 
-from jurisnexo.normalization.gold import score_text_fidelity  # noqa: E402
+from jurisnexo.normalization.gold import score_text_fidelity
 
 
 def _load_manifest(path: Path) -> dict[str, dict[str, Any]]:
