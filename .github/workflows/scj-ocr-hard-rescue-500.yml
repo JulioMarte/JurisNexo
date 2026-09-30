@@ -36,8 +36,11 @@ jobs:
           python-version: "3.13"
       - run: |
           python -m pip install -e ./backend "pillow==12.3.0" "pypdfium2==5.13.0" "pytest==9.1.1" "ruff==0.16.7"
-          python -m py_compile             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py
-          ruff check             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py
+          python -m py_compile             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py \
+            benchmark/normalization/test_scj_ocr_hard_rescue.py
+          ruff check             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py \
+            benchmark/normalization/test_scj_ocr_hard_rescue.py
+          PYTHONPATH=backend/src pytest -q benchmark/normalization/test_scj_ocr_hard_rescue.py
 
   prepare:
     needs: contract
