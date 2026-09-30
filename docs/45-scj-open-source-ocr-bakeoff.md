@@ -84,6 +84,48 @@ References:
 - https://github.com/mittagessen/kraken
 - https://github.com/Calamari-OCR/calamari
 
+### Kraken 7.1
+
+Kraken is actively maintained and its 7.1 release added multilingual PP-OCRv6-derived
+recognition models optimized for historical handwritten and machine-printed material.
+That makes it a serious **historical-corpus** candidate, but not yet an apples-to-apples
+base engine for this first modern SCJ page bakeoff: Kraken is line/segmentation oriented
+and requires an explicit recognition model choice. We should test it in the hard/rescue
+phase if the failed-page strata contain enough degraded/historical typography to justify
+that specialized path.
+
+Reference:
+
+- https://github.com/mittagessen/kraken/releases
+
+### MMOCR
+
+MMOCR remains a broad research toolbox with many detector/recognizer combinations rather
+than one canonical production OCR configuration. Its current public installation path
+still carries the OpenMMLab stack (PyTorch + MMEngine + MMCV + MMDetection) and its model
+choice is itself an experiment. Adding one arbitrary MMOCR detector/recognizer pair would
+not mean that "MMOCR" had been fairly tested. It is therefore catalogued but not placed
+in the first CPU matrix. If the six primary engines fail to separate clearly, select a
+specific MMOCR pair and benchmark that exact model/configuration as a named candidate.
+
+Reference:
+
+- https://github.com/open-mmlab/mmocr
+
+### Open-weight page VLM OCR systems
+
+Projects such as olmOCR and PaddleOCR-VL are relevant to document conversion, but their
+normal local inference path is GPU-oriented and materially different from the standard
+4-CPU/16-GB GitHub runner contract. They belong in a separate **open-weight VLM OCR**
+league, not in the default CPU-base-OCR election. Surya is the exception we deliberately
+probe because it exposes a documented llama.cpp CPU path; the smoke run will determine
+whether that path is operationally realistic here.
+
+Reference:
+
+- https://github.com/allenai/olmocr
+- https://github.com/PaddlePaddle/PaddleOCR
+
 ### OCRopus and stale/unmaintained OCR projects
 
 Do not add a project merely to make the engine count larger. A candidate must
