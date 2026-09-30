@@ -26,7 +26,12 @@ def test_join_lines_drops_blank_lines_without_rewriting_text() -> None:
     )
 
 
-def _write_case(tmp_path: Path, *, candidate: str, error: str | None = None) -> tuple[Path, Path, Path]:
+def _write_case(
+    tmp_path: Path,
+    *,
+    candidate: str,
+    error: str | None = None,
+) -> tuple[Path, Path, Path]:
     case_dir = tmp_path / "cases" / "case-0000"
     case_dir.mkdir(parents=True)
     reference = "Sentencia SCJ-SS-22-0514 del 15 de enero de 2026. RD$ 1,500.00."
