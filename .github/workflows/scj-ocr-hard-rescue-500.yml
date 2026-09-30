@@ -1,6 +1,9 @@
 name: SCJ OCR hard-rescue 500
 
 on:
+  pull_request:
+    types: [labeled]
+    branches: [development]
   workflow_dispatch:
     inputs:
       page_limit:
@@ -23,6 +26,7 @@ env:
 
 jobs:
   contract:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ocr-hard-500'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
