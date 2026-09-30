@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import resource
+import subprocess
+import sys
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from PIL import Image
+
+
+@dataclass(frozen=True, slots=True)
+class Prediction:
+    sample_id: str
+    text: str
+    elapsed_ms: int
+    error: str | None
+
+
+def _join_lines(lines: list[str]) -> str:
+    return "\n".join(line.strip() for line in lines if line and line.strip()).strip()
+
+
+def _extract_strings(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        for key in ("rec_texts", "texts", "text_lines", "lines", "blocks"):
+            candidate = value.get(key)
+            if candidate:
+                return _extract_strings(candidate)
+        for key in ("text", "value", "html"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return [candidate]
+        result: list[str] = []
+        for child in value.values():
+            result.extend(_extract_strings(child))
+        return result
+    if isinstance(value, (list, tuple)):
+        result: list[str] = []
+        for child in value:
+            result.extend(_extract_strings(child))
+        return result
+    for attr in ("json", "model_dump"):
+        candidate = getattr(value, attr, None)
+        if candidate is None:
+            continue
+        try:
+            payload = candidate() if callable(candidate) else candidate
+        except Exception:
+            continue
+        return _extract_strings(payload)
+    return []
+
+
+class Engine:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.version = "unknown"
+        self._predict: Callable[[Path], str]
+        if name == "tesseract":
+            self._predict = self._init_tesseract()
+        elif name == "easyocr":
+            self._predict = self._init_easyocr()
+        elif name == "paddleocr":
+            self._predict = self._init_paddleocr()
+        elif name == "rapidocr":
+            self._predict = self._init_rapidocr()
+        elif name == "doctr":
+            self._predict = self._init_doctr()
+        else:
+            raise ValueError(f"unsupported engine: {name}")
+
+    def _init_tesseract(self) -> Callable[[Path], str]:
+        version = subprocess.run(
+            ["tesseract", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()[0]
+        self.version = version
+
+        def predict(path: Path) -> str:
+            result = subprocess.run(
+                [
+                    "tesseract",
+                    str(path),
+                    "stdout",
+                    "-l",
+                    os.environ.get("OCR_BAKEOFF_TESSERACT_LANG", "spa+eng"),
+                    "--psm",
+                    os.environ.get("OCR_BAKEOFF_TESSERACT_PSM", "6"),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout.strip()
+
+        return predict
+
+    def _init_easyocr(self) -> Callable[[Path], str]:
+        import easyocr
+
+        self.version = getattr(easyocr, "__version__", "unknown")
+        reader = easyocr.Reader(["es", "en"], gpu=False, verbose=False)
+
+        def predict(path: Path) -> str:
+            rows = reader.readtext(str(path), detail=1, paragraph=False)
+            ordered = sorted(
+                rows,
+                key=lambda row: (
+                    min(point[1] for point in row[0]),
+                    min(point[0] for point in row[0]),
+                ),
+            )
+            return _join_lines([str(row[1]) for row in ordered])
+
+        return predict
+
+    def _init_paddleocr(self) -> Callable[[Path], str]:
+        import paddleocr
+        from paddleocr import PaddleOCR
+
+        self.version = getattr(paddleocr, "__version__", "unknown")
+        ocr = PaddleOCR(
+            lang="es",
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
+
+        def predict(path: Path) -> str:
+            result = list(ocr.predict(str(path)))
+            texts: list[str] = []
+            for item in result:
+                payload = getattr(item, "json", item)
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                if isinstance(payload, dict) and isinstance(payload.get("res"), dict):
+                    payload = payload["res"]
+                texts.extend(_extract_strings(payload))
+            return _join_lines(texts)
+
+        return predict
+
+    def _init_rapidocr(self) -> Callable[[Path], str]:
+        import rapidocr
+        from rapidocr import RapidOCR
+
+        self.version = getattr(rapidocr, "__version__", "unknown")
+        ocr = RapidOCR()
+
+        def predict(path: Path) -> str:
+            result = ocr(str(path))
+            txts = getattr(result, "txts", None)
+            if txts:
+                return _join_lines([str(item) for item in txts])
+            return _join_lines(_extract_strings(result))
+
+        return predict
+
+    def _init_doctr(self) -> Callable[[Path], str]:
+        import doctr
+        from doctr.io import DocumentFile
+        from doctr.models import ocr_predictor
+
+        self.version = getattr(doctr, "__version__", "unknown")
+        predictor = ocr_predictor(pretrained=True)
+
+        def predict(path: Path) -> str:
+            document = DocumentFile.from_images([str(path)])
+            result = predictor(document)
+            exported = result.export()
+            lines: list[str] = []
+            for page in exported.get("pages", []):
+                for block in page.get("blocks", []):
+                    for line in block.get("lines", []):
+                        words = [
+                            str(word.get("value", ""))
+                            for word in line.get("words", [])
+                            if str(word.get("value", "")).strip()
+                        ]
+                        if words:
+                            lines.append(" ".join(words))
+            return _join_lines(lines)
+
+        return predict
+
+    def predict(self, path: Path) -> str:
+        return self._predict(path)
+
+
+def _manifest_cases(manifest_path: Path, limit: int | None) -> list[dict[str, Any]]:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cases = payload.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise RuntimeError("prepared manifest has no cases")
+    selected = cases if limit is None else cases[:limit]
+    if limit is not None and len(selected) != limit:
+        raise RuntimeError(
+            f"requested {limit} pages but manifest contains only {len(cases)}"
+        )
+    for row in selected:
+        if row.get("reference_reliable") is not True:
+            raise RuntimeError("OCR bakeoff requires reliable prepared references")
+        if row.get("reference_authority") != "dual_channel_aligned":
+            raise RuntimeError("OCR bakeoff reference authority is not dual-channel")
+    return selected
+
+
+def run(engine_name: str, manifest_path: Path, output_dir: Path, limit: int | None) -> int:
+    cases = _manifest_cases(manifest_path, limit)
+    engine = Engine(engine_name)
+    root = manifest_path.parent
+    predictions: list[Prediction] = []
+    started_all = time.perf_counter()
+
+    for index, case in enumerate(cases, start=1):
+        image_path = root / str(case["image_path"])
+        started = time.perf_counter()
+        error: str | None = None
+        text = ""
+        try:
+            text = engine.predict(image_path)
+            if not text.strip():
+                error = "empty_output"
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        prediction = Prediction(
+            sample_id=str(case["sample_id"]),
+            text=text,
+            elapsed_ms=elapsed_ms,
+            error=error,
+        )
+        predictions.append(prediction)
+        print(
+            json.dumps(
+                {
+                    "engine": engine_name,
+                    "page": index,
+                    "total": len(cases),
+                    "sample_id": prediction.sample_id,
+                    "elapsed_ms": elapsed_ms,
+                    "error": error,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prediction_path = output_dir / "predictions.jsonl"
+    prediction_path.write_text(
+        "".join(
+            json.dumps(asdict(item), ensure_ascii=False, sort_keys=True) + "\n"
+            for item in predictions
+        ),
+        encoding="utf-8",
+    )
+    failures = sum(item.error is not None for item in predictions)
+    elapsed_seconds = time.perf_counter() - started_all
+    summary = {
+        "schema_version": 1,
+        "engine": engine_name,
+        "engine_version": engine.version,
+        "pages": len(predictions),
+        "successful_pages": len(predictions) - failures,
+        "failed_pages": failures,
+        "wall_seconds": elapsed_seconds,
+        "mean_wall_seconds_per_page": elapsed_seconds / len(predictions),
+        "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        "python": sys.version,
+    }
+    (output_dir / "runtime-summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True))
+    return 0 if failures == 0 else 2
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--engine",
+        required=True,
+        choices=("tesseract", "easyocr", "paddleocr", "rapidocr", "doctr"),
+    )
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--limit", type=int)
+    args = parser.parse_args()
+    if args.limit is not None and args.limit < 1:
+        raise ValueError("--limit must be positive")
+    return run(args.engine, args.manifest, args.output, args.limit)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
