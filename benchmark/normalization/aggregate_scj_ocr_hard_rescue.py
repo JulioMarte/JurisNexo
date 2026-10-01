@@ -8,9 +8,14 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from ocr_spatial_evidence import (
+    Region,
+    classify_disagreement,
+    match_regions,
+    padded_crop,
+    union_bbox,
+)
 from PIL import Image
-
-from ocr_spatial_evidence import Region, classify_disagreement, match_regions, padded_crop, union_bbox
 
 ENGINES = ("paddleocr", "rapidocr", "tesseract")
 
