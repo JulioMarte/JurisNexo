@@ -101,12 +101,13 @@ def match_regions(anchor: list[Region], other: list[Region]) -> dict[int, int]:
 
 
 def classify_disagreement(texts: list[str]) -> str:
-    joined=" ".join(texts)
-    if LEGAL_CRITICAL.search(joined):
-        return "legal_critical"
-    stripped=[re.sub(r"[^\w]+","",t,flags=re.UNICODE).casefold() for t in texts]
+    stripped = [
+        re.sub(r"[^\w]+", "", text, flags=re.UNICODE).casefold() for text in texts
+    ]
     if len(set(stripped)) == 1:
         return "orthographic"
+    if LEGAL_CRITICAL.search(" ".join(texts)):
+        return "legal_critical"
     return "content"
 
 
