@@ -46,12 +46,19 @@ def test_provider_workflows_with_pr_sync_have_explicit_live_gate() -> None:
             or "github.event.label.name" in workflow
         )
         if not has_dispatch_gate:
-            violations.append(f"{path.name}: provider-capable PR workflow lacks workflow_dispatch job gate")
-        if not has_deliberate_label_gate and "if: github.event_name == 'workflow_dispatch'" not in workflow:
-            violations.append(f"{path.name}: provider-capable PR workflow lacks explicit label/manual gate")
+            violations.append(
+                f"{path.name}: provider-capable PR workflow lacks workflow_dispatch job gate"
+            )
+        if (
+            not has_deliberate_label_gate
+            and "if: github.event_name == 'workflow_dispatch'" not in workflow
+        ):
+            violations.append(
+                f"{path.name}: provider-capable PR workflow lacks explicit label/manual gate"
+            )
 
     assert not violations, (
-        "Ordinary PR synchronization must not be sufficient authorization for provider/token spend:\n"
+        "Ordinary PR synchronization must not authorize provider/token spend:\n"
         + "\n".join(violations)
     )
 
