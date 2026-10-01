@@ -201,6 +201,13 @@ def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int
         )
 
     records.sort(key=lambda row: (-row["priority"], row["minimum_pairwise_similarity"], row["sample_id"]))
+    material = [r["sample_id"] for r in records if r["priority"] == 2]
+    minor = sorted((r["sample_id"] for r in records if r["priority"] == 1), key=lambda s: hashlib.sha256(("calibration:minor:"+s).encode()).hexdigest())[:50]
+    consensus = sorted((r["sample_id"] for r in records if r["priority"] == 0), key=lambda s: hashlib.sha256(("calibration:consensus:"+s).encode()).hexdigest())[:20]
+    (output / "calibration-manifest.json").write_text(
+        json.dumps({"schema_version": 1, "material": material, "minor_control": minor, "consensus_control": consensus, "sample_ids": material + minor + consensus}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     (output / "triage.jsonl").write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in records), encoding="utf-8"
     )
