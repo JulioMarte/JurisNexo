@@ -5,7 +5,6 @@ import json
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from pathlib import Path
 from typing import Any
 
 from PIL import Image
