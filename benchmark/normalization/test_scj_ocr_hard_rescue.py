@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
-from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from aggregate_scj_ocr_hard_rescue import _labels
-from ocr_spatial_evidence import (\n    Region,\n    bbox_iou,\n    classify_disagreement,\n    match_regions,\n    regions_from_parallel,\n)
+from ocr_spatial_evidence import (
+    Region,
+    bbox_iou,
+    classify_disagreement,
+    match_regions,
+    regions_from_parallel,
+)
 from prepare_scj_ocr_hard_rescue import _round_robin
 from run_open_source_ocr_engine import _observation_identity, _stable_json_sha256
 
