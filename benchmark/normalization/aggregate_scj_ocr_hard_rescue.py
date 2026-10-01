@@ -102,6 +102,31 @@ def _build_spatial_disagreements(case_dir: Path, image_path: Path, labels: dict[
             "decision_confidence": None,
             "ambiguous": None,
         })
+    for engine, mapping in maps.items():
+        matched = set(mapping.values())
+        for region_index, region in enumerate(by_engine[engine]):
+            if region_index in matched:
+                continue
+            did = f"{sample_id}:d{len(disagreements)+1:04d}"
+            bbox = union_bbox([region])
+            stem = f"disagreement-{len(disagreements)+1:04d}"
+            padded_crop(image, bbox).save(case_dir / f"{stem}-context.png")
+            padded_crop(image, bbox, detail=True).save(case_dir / f"{stem}-detail.png")
+            label = labels[engine]
+            disagreements.append({
+                "disagreement_id": did,
+                "category": classify_disagreement([region.text]),
+                "bbox": list(bbox),
+                "candidates": {label: region.text},
+                "missing_candidates": sorted(set("ABC") - {label}),
+                "context_crop": f"{stem}-context.png",
+                "detail_crop": f"{stem}-detail.png",
+                "visual_transcription": None,
+                "visual_legibility": None,
+                "decision": None,
+                "decision_confidence": None,
+                "ambiguous": None,
+            })
     (case_dir / "disagreements.json").write_text(json.dumps({"schema_version": 2, "sample_id": sample_id, "disagreements": disagreements}, indent=2, ensure_ascii=False, sort_keys=True)+"\\n", encoding="utf-8")
 
 
