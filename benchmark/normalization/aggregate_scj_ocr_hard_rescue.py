@@ -8,6 +8,10 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
+from ocr_spatial_evidence import Region, classify_disagreement, match_regions, padded_crop, union_bbox
+
 ENGINES = ("paddleocr", "rapidocr", "tesseract")
 
 
@@ -34,7 +38,7 @@ def _load_predictions(path: Path, expected_engine: str) -> dict[str, dict[str, A
                 f"engine provenance mismatch: expected {expected_engine}, got {row.get('engine')}"
             )
         observation_id = str(row.get("observation_id") or "")
-        if not observation_id.startswith(f"ocr:{expected_engine}:"):
+        if not observation_id.startswith("ocr-observation:"):
             raise RuntimeError(f"invalid observation_id for {expected_engine}: {observation_id}")
         if observation_id in observation_ids:
             raise RuntimeError(f"duplicate observation_id: {observation_id}")
@@ -49,6 +53,56 @@ def _labels(sample_id: str) -> dict[str, str]:
         key=lambda engine: hashlib.sha256(f"20260930:{sample_id}:{engine}".encode()).hexdigest(),
     )
     return {engine: chr(ord("A") + idx) for idx, engine in enumerate(ranked)}
+
+
+
+def _regions(row: dict[str, Any]) -> list[Region]:
+    out: list[Region] = []
+    for item in row.get("regions") or []:
+        try:
+            out.append(Region(str(item["text"]), tuple(tuple(map(float, p)) for p in item["polygon"]), item.get("confidence")))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _build_spatial_disagreements(case_dir: Path, image_path: Path, labels: dict[str, str], predictions: dict[str, dict[str, dict[str, Any]]], sample_id: str) -> None:
+    by_engine = {engine: _regions(predictions[engine][sample_id]) for engine in ENGINES}
+    anchor_engine = max(ENGINES, key=lambda e: len(by_engine[e]))
+    anchor = by_engine[anchor_engine]
+    maps = {engine: match_regions(anchor, by_engine[engine]) for engine in ENGINES if engine != anchor_engine}
+    image = Image.open(image_path).convert("RGB")
+    disagreements: list[dict[str, Any]] = []
+    for idx, base in enumerate(anchor):
+        chosen = {anchor_engine: base}
+        for engine, mapping in maps.items():
+            if idx in mapping:
+                chosen[engine] = by_engine[engine][mapping[idx]]
+        texts = [r.text for r in chosen.values()]
+        normalized = {" ".join(t.casefold().split()) for t in texts}
+        if len(chosen) == len(ENGINES) and len(normalized) == 1:
+            continue
+        did = f"{sample_id}:d{len(disagreements)+1:04d}"
+        bbox = union_bbox(list(chosen.values()))
+        stem = f"disagreement-{len(disagreements)+1:04d}"
+        padded_crop(image, bbox).save(case_dir / f"{stem}-context.png")
+        padded_crop(image, bbox, detail=True).save(case_dir / f"{stem}-detail.png")
+        candidates = {labels[e]: r.text for e, r in chosen.items()}
+        disagreements.append({
+            "disagreement_id": did,
+            "category": classify_disagreement(texts),
+            "bbox": list(bbox),
+            "candidates": candidates,
+            "missing_candidates": sorted(set("ABC") - set(candidates)),
+            "context_crop": f"{stem}-context.png",
+            "detail_crop": f"{stem}-detail.png",
+            "visual_transcription": None,
+            "visual_legibility": None,
+            "decision": None,
+            "decision_confidence": None,
+            "ambiguous": None,
+        })
+    (case_dir / "disagreements.json").write_text(json.dumps({"schema_version": 2, "sample_id": sample_id, "disagreements": disagreements}, indent=2, ensure_ascii=False, sort_keys=True)+"\\n", encoding="utf-8")
 
 
 def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int:
@@ -118,7 +172,6 @@ def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int
                 json.dumps(
                     {
                         "candidate_id": f"{sample_id}:{label}",
-                        "observation_id": observation["observation_id"],
                         "sample_id": sample_id,
                         "blind_label": label,
                         "source_pdf_sha256": observation["source_pdf_sha256"],
