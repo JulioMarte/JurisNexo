@@ -57,7 +57,8 @@ def test_observation_id_binds_engine_config_and_source_evidence() -> None:
     changed_page = {**case, "page_index": 18}
     third = _observation_identity("rapidocr", "3.9.2", config_id, changed_page)
     assert first == second
-    assert first.startswith("ocr-observation:")\n    assert "rapidocr" not in first
+    assert first.startswith("ocr-observation:")
+    assert "rapidocr" not in first
     assert first != third
 
 
