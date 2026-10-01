@@ -8,9 +8,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from aggregate_scj_ocr_hard_rescue import _labels
+from ocr_spatial_evidence import Region, bbox_iou, classify_disagreement, match_regions
 from prepare_scj_ocr_hard_rescue import _round_robin
 from run_open_source_ocr_engine import _observation_identity, _stable_json_sha256
-from ocr_spatial_evidence import Region, bbox_iou, classify_disagreement, match_regions
 
 
 def test_round_robin_is_balanced_and_deterministic() -> None:
