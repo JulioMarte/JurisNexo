@@ -98,9 +98,9 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 3
       matrix:
-        engine: [tesseract, paddleocr, rapidocr, easyocr, doctr, surya]
+        engine: [tesseract, paddleocr, rapidocr]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -128,26 +128,6 @@ jobs:
         if: matrix.engine == 'rapidocr'
         run: |
           python -m pip install "rapidocr==3.9.2" "onnxruntime>=1.20,<2"
-      - name: Install EasyOCR
-        if: matrix.engine == 'easyocr'
-        run: |
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-          python -m pip install "easyocr==1.7.2"
-      - name: Install docTR
-        if: matrix.engine == 'doctr'
-        run: |
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-          python -m pip install "python-doctr==1.1.0"
-      - name: Install Surya OCR 2 CPU runtime
-        if: matrix.engine == 'surya'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build
-          git clone --depth 1 --branch v0.4.1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
-          cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama.cpp/build"             -G Ninja -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
-          cmake --build "$RUNNER_TEMP/llama.cpp/build" --target llama-server -j2
-          sudo install "$RUNNER_TEMP/llama.cpp/build/bin/llama-server" /usr/local/bin/llama-server
-          python -m pip install "surya-ocr==0.22.1"
       - name: Record exact environment
         run: |
           python --version
