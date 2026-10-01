@@ -12,9 +12,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from ocr_spatial_evidence import (
+    Region,
+    opaque_observation_id,
+    region_to_json,
+    regions_from_parallel,
+)
 from PIL import Image
-
-from ocr_spatial_evidence import Region, opaque_observation_id, region_to_json, regions_from_parallel
 
 
 @dataclass(frozen=True, slots=True)
