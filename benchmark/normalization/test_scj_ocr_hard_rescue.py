@@ -9,6 +9,7 @@ sys.path.insert(0, str(HERE))
 
 from aggregate_scj_ocr_hard_rescue import _labels
 from prepare_scj_ocr_hard_rescue import _round_robin
+from run_open_source_ocr_engine import _observation_identity, _stable_json_sha256
 
 
 def test_round_robin_is_balanced_and_deterministic() -> None:
@@ -41,3 +42,19 @@ def test_shard_partition_covers_each_case_exactly_once() -> None:
     assert all(len(shard) == 100 for shard in shards)
     flattened = [case for shard in shards for case in shard]
     assert sorted(flattened) == cases
+
+
+def test_observation_id_binds_engine_config_and_source_evidence() -> None:
+    case = {
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 17,
+        "image_sha256": "b" * 64,
+    }
+    config_id = _stable_json_sha256({"lang": "es"})
+    first = _observation_identity("rapidocr", "3.9.2", config_id, case)
+    second = _observation_identity("rapidocr", "3.9.2", config_id, case)
+    changed_page = {**case, "page_index": 18}
+    third = _observation_identity("rapidocr", "3.9.2", config_id, changed_page)
+    assert first == second
+    assert first.startswith("ocr:rapidocr:")
+    assert first != third
