@@ -19,12 +19,27 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, _normalize(a), _normalize(b), autojunk=False).ratio()
 
 
-def _load_predictions(path: Path) -> dict[str, dict[str, Any]]:
+def _load_predictions(path: Path, expected_engine: str) -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
+    observation_ids: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            row = json.loads(line)
-            rows[str(row["sample_id"])] = row
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        sample_id = str(row["sample_id"])
+        if sample_id in rows:
+            raise RuntimeError(f"duplicate sample_id for {expected_engine}: {sample_id}")
+        if row.get("engine") != expected_engine:
+            raise RuntimeError(
+                f"engine provenance mismatch: expected {expected_engine}, got {row.get('engine')}"
+            )
+        observation_id = str(row.get("observation_id") or "")
+        if not observation_id.startswith(f"ocr:{expected_engine}:"):
+            raise RuntimeError(f"invalid observation_id for {expected_engine}: {observation_id}")
+        if observation_id in observation_ids:
+            raise RuntimeError(f"duplicate observation_id: {observation_id}")
+        observation_ids.add(observation_id)
+        rows[sample_id] = row
     return rows
 
 
@@ -39,7 +54,9 @@ def _labels(sample_id: str) -> dict[str, str]:
 def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     cases = manifest["cases"]
-    predictions = {engine: _load_predictions(path) for engine, path in inputs.items()}
+    predictions = {
+        engine: _load_predictions(path, engine) for engine, path in inputs.items()
+    }
     output.mkdir(parents=True, exist_ok=True)
     blind_root = output / "blind-cases"
     reveal: dict[str, dict[str, str]] = {}
@@ -48,7 +65,25 @@ def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int
     for case in cases:
         sample_id = str(case["sample_id"])
         labels = _labels(sample_id)
-        reveal[sample_id] = {label: engine for engine, label in labels.items()}
+        missing = [engine for engine in ENGINES if sample_id not in predictions[engine]]
+        if missing:
+            raise RuntimeError(f"missing candidate observations for {sample_id}: {missing}")
+        for engine in ENGINES:
+            observation = predictions[engine][sample_id]
+            for field in ("source_pdf_sha256", "page_index", "image_sha256"):
+                if str(observation[field]) != str(case[field]):
+                    raise RuntimeError(
+                        f"{field} provenance mismatch for {sample_id}/{engine}"
+                    )
+        reveal[sample_id] = {
+            labels[engine]: {
+                "engine": engine,
+                "observation_id": predictions[engine][sample_id]["observation_id"],
+                "engine_version": predictions[engine][sample_id]["engine_version"],
+                "engine_config_id": predictions[engine][sample_id]["engine_config_id"],
+            }
+            for engine in ENGINES
+        }
         texts = {engine: str(predictions[engine][sample_id].get("text") or "") for engine in ENGINES}
         errors = {engine: predictions[engine][sample_id].get("error") for engine in ENGINES}
         similarities = {
@@ -76,7 +111,27 @@ def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int
         case_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(manifest_path.parent / case["image_path"], case_dir / "input-page.png")
         for engine, text in texts.items():
-            (case_dir / f"candidate-{labels[engine]}.txt").write_text(text, encoding="utf-8")
+            label = labels[engine]
+            observation = predictions[engine][sample_id]
+            (case_dir / f"candidate-{label}.txt").write_text(text, encoding="utf-8")
+            (case_dir / f"candidate-{label}.json").write_text(
+                json.dumps(
+                    {
+                        "candidate_id": f"{sample_id}:{label}",
+                        "observation_id": observation["observation_id"],
+                        "sample_id": sample_id,
+                        "blind_label": label,
+                        "source_pdf_sha256": observation["source_pdf_sha256"],
+                        "page_index": observation["page_index"],
+                        "image_sha256": observation["image_sha256"],
+                        "text_file": f"candidate-{label}.txt",
+                        "engine_identity_blinded": True,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ) + "\n",
+                encoding="utf-8",
+            )
         (case_dir / "adjudication-template.json").write_text(
             json.dumps({
                 "sample_id": sample_id,
