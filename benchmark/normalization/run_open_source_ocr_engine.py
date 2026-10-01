@@ -160,7 +160,7 @@ class Engine:
                 if isinstance(payload, dict) and isinstance(payload.get("res"), dict): payload = payload["res"]
                 texts.extend(_extract_strings(payload))
                 if isinstance(payload, dict):
-                    regions.extend(regions_from_parallel(payload.get("rec_texts"), payload.get("rec_polys") or payload.get("dt_polys"), payload.get("rec_scores")))
+                    boxes = payload.get("rec_polys")\n                    if boxes is None: boxes = payload.get("dt_polys")\n                    regions.extend(regions_from_parallel(payload.get("rec_texts"), boxes, payload.get("rec_scores")))
             return _join_lines(texts), regions
 
         return predict
