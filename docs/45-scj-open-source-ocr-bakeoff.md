@@ -270,3 +270,82 @@ identities.
 
 The previously stored Tesseract observations remain evidence. A new winning OCR
 observation should be stored beside them, not overwrite them.
+
+
+## Portable hard/rescue harness: local and GitHub Actions
+
+The 500-page hard/rescue experiment is intentionally **not** a GitHub-Actions-only
+implementation. GitHub Actions is an orchestration layer over the same Python
+contracts that can be executed on a local machine.
+
+Canonical entry points:
+
+```text
+benchmark/normalization/prepare_scj_ocr_hard_rescue.py
+benchmark/normalization/run_open_source_ocr_engine.py
+benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py
+benchmark/normalization/aggregate_scj_ocr_hard_rescue.py
+benchmark/normalization/run_scj_ocr_hard_rescue_local.sh
+.github/workflows/scj-ocr-hard-rescue-500.yml
+```
+
+The local wrapper supports `prepare`, `ocr`, `aggregate`, and `all`.
+Preparation needs the same `JURISNEXO_S3_*` credentials as CI because the
+canonical census evidence lives in object storage. The OCR and aggregate phases
+can then run entirely from the frozen local work directory.
+
+A local machine must provide the three candidate runtimes:
+
+- Tesseract 5 with Spanish and English language data;
+- RapidOCR 3.9.2 + ONNX Runtime;
+- PaddleOCR 3.7.0 + PaddlePaddle 3.2.2.
+
+The default local wrapper runs shards sequentially. That is deliberate: laptops
+vary widely in CPU/RAM and blindly launching the GitHub 15-job topology locally
+can cause memory pressure or thermal throttling. Parallel local orchestration may
+be added only with an explicit resource limit.
+
+Example after installing dependencies and exporting S3 credentials:
+
+```bash
+OCR_HARD_PAGE_LIMIT=60 benchmark/normalization/run_scj_ocr_hard_rescue_local.sh all
+OCR_HARD_PAGE_LIMIT=500 benchmark/normalization/run_scj_ocr_hard_rescue_local.sh all
+```
+
+Use 60 pages as a local installation/thermal smoke before spending time on 500.
+
+### Evidence identity contract
+
+Every candidate observation is self-identifying. `predictions.jsonl` records:
+
+```text
+observation_id
+sample_id
+engine
+engine_version
+engine_config_id
+source_pdf_sha256
+page_index
+image_sha256
+text
+elapsed_ms
+error
+```
+
+`observation_id` is deterministic over engine identity/version/configuration and
+the exact source/render identity. It therefore changes if the engine,
+configuration, source PDF, page, or rendered image changes.
+
+Blind adjudication does not discard that provenance. Each `candidate-A/B/C.json`
+contains the stable `observation_id`, source/page/image identity, and blind
+label, while deliberately withholding the engine name. The separately stored
+`candidate-reveal.json` maps each blind label to engine, version,
+configuration ID, and observation ID after adjudication is frozen.
+
+The aggregator rejects engine-label mismatches and source/page/image provenance
+mismatches. The portable shard merger rejects missing counts, duplicate sample
+IDs, duplicate observation IDs, malformed observation IDs, and mixed-engine
+shards.
+
+This gives local runs and GitHub Actions the same evidence semantics rather than
+two subtly different benchmarks.
