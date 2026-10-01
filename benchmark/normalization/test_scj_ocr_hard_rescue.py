@@ -10,6 +10,7 @@ sys.path.insert(0, str(HERE))
 from aggregate_scj_ocr_hard_rescue import _labels
 from prepare_scj_ocr_hard_rescue import _round_robin
 from run_open_source_ocr_engine import _observation_identity, _stable_json_sha256
+from ocr_spatial_evidence import Region, bbox_iou, classify_disagreement, match_regions
 
 
 def test_round_robin_is_balanced_and_deterministic() -> None:
@@ -56,5 +57,18 @@ def test_observation_id_binds_engine_config_and_source_evidence() -> None:
     changed_page = {**case, "page_index": 18}
     third = _observation_identity("rapidocr", "3.9.2", config_id, changed_page)
     assert first == second
-    assert first.startswith("ocr:rapidocr:")
+    assert first.startswith("ocr-observation:")\n    assert "rapidocr" not in first
     assert first != third
+
+
+def test_spatial_matching_prefers_same_visual_region() -> None:
+    anchor = [Region("Artículo 1382", ((10,10),(110,10),(110,30),(10,30)), .9)]
+    same = Region("Artículo 1383", ((12,11),(112,11),(112,31),(12,31)), .8)
+    far = Region("Artículo 1382", ((400,400),(500,400),(500,420),(400,420)), .99)
+    assert bbox_iou(anchor[0], same) > 0.7
+    assert match_regions(anchor, [far, same]) == {0: 1}
+
+
+def test_legal_identifier_disagreement_is_critical() -> None:
+    assert classify_disagreement(["Artículo 1382", "Artículo 1383"]) == "legal_critical"
+    assert classify_disagreement(["SENTENCIA.", "sentencia"]) == "orthographic"
