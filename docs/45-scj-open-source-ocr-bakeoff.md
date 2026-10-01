@@ -35,28 +35,27 @@ base OCR** role unless the execution contract changes deliberately.
 
 ## Engines in the primary bakeoff
 
-The initial reproducible matrix contains:
+The active reproducible matrix contains:
 
 | Engine | Pinned package/runtime | Why included |
 | --- | --- | --- |
 | Tesseract | Ubuntu Tesseract 5 package, `spa+eng` | Current independent OCR baseline |
 | PaddleOCR | `paddleocr==3.7.0`, `paddlepaddle==3.2.2` | PP-OCRv6 generation; modern Latin multilingual OCR with CPU support |
 | RapidOCR | `rapidocr==3.9.2` + ONNX Runtime | Lightweight offline Paddle-derived inference path |
-| EasyOCR | `easyocr==1.7.2`, CPU PyTorch | Mature multilingual neural OCR baseline |
-| docTR | `python-doctr==1.1.0`, CPU PyTorch | General document detection + recognition baseline |
-| Surya OCR 2 | `surya-ocr==0.22.1` + CPU `llama-server` | Strong modern document OCR, but materially heavier than classical OCR |
 
-Every job records `pip freeze`, runtime version, page failures, wall time, mean
+EasyOCR, docTR, and Surya were evaluated during the exploratory smoke phase and
+are retained as historical evidence, but they are not active candidates in the current
+base-OCR race. Surya is explicitly parked for now rather than optimized further.
+
+Every active job records `pip freeze`, runtime version, page failures, wall time, mean
 latency, and peak resident memory.
 
-### Surya caveat
+### Parked Surya caveat
 
 Current Surya OCR 2 is a VLM-backed document OCR system. On CPU it requires a
-`llama-server` runtime. The benchmark pins `llama.cpp` release `v0.5.0` rather
+`llama-server` runtime. The exploratory workflow used `llama.cpp` release `v0.4.1` rather
 than following its moving default branch. Its code is Apache-2.0, while model weights
-carry Datalab's model license conditions. It is included because its quality may
-justify the additional complexity, but resource use and licensing are part of
-the production decision rather than afterthoughts.
+carry Datalab's model license conditions. It is not included in the active three-engine matrix. Resource use and licensing remain part of any future reconsideration.
 
 Reference:
 
@@ -105,7 +104,7 @@ than one canonical production OCR configuration. Its current public installation
 still carries the OpenMMLab stack (PyTorch + MMEngine + MMCV + MMDetection) and its model
 choice is itself an experiment. Adding one arbitrary MMOCR detector/recognizer pair would
 not mean that "MMOCR" had been fairly tested. It is therefore catalogued but not placed
-in the first CPU matrix. If the six primary engines fail to separate clearly, select a
+in the first CPU matrix. If the three active primary engines fail to separate clearly, select a
 specific MMOCR pair and benchmark that exact model/configuration as a named candidate.
 
 Reference:
