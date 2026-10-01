@@ -47,9 +47,9 @@ def normalize_polygon(value: Any) -> tuple[tuple[float, float], ...] | None:
 
 
 def regions_from_parallel(texts: Any, boxes: Any, scores: Any = None) -> list[Region]:
-    texts = list(texts or [])
-    boxes = list(boxes or [])
-    scores = list(scores or [])
+    texts = [] if texts is None else list(texts)
+    boxes = [] if boxes is None else list(boxes)
+    scores = [] if scores is None else list(scores)
     out: list[Region] = []
     for i, (text, box) in enumerate(zip(texts, boxes, strict=False)):
         if not str(text).strip():
