@@ -43,6 +43,7 @@ jobs:
             benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
             benchmark/normalization/test_scj_ocr_hard_rescue.py
           PYTHONPATH=backend/src pytest -q benchmark/normalization/test_scj_ocr_hard_rescue.py
+          bash -n benchmark/normalization/run_scj_ocr_hard_rescue_local.sh
 
   prepare:
     needs: contract
