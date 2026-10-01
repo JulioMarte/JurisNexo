@@ -30,7 +30,7 @@ def merge(engine: str, inputs: list[Path], output: Path, expected: int) -> int:
         raise RuntimeError(f"{engine}: duplicate observation IDs across shards")
     if any(row.get("engine") != engine for row in rows):
         raise RuntimeError(f"{engine}: engine provenance mismatch in shard output")
-    if any(not oid.startswith(f"ocr:{engine}:") for oid in observation_ids):
+    if any(not oid.startswith("ocr-observation:") for oid in observation_ids):
         raise RuntimeError(f"{engine}: malformed observation ID")
     rows.sort(key=lambda row: str(row["sample_id"]))
     output.parent.mkdir(parents=True, exist_ok=True)
