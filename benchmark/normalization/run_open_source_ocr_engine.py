@@ -188,7 +188,11 @@ class Engine:
             txts = getattr(result, "txts", None)
             boxes = getattr(result, "boxes", None)
             scores = getattr(result, "scores", None)
-            text = _join_lines([str(item) for item in txts]) if txts else _join_lines(_extract_strings(result))
+            text = (
+                _join_lines([str(item) for item in txts])
+                if txts is not None and len(txts) > 0
+                else _join_lines(_extract_strings(result))
+            )
             return text, regions_from_parallel(txts, boxes, scores)
 
         return predict
