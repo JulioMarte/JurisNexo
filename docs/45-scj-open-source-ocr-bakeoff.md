@@ -348,3 +348,34 @@ shards.
 
 This gives local runs and GitHub Actions the same evidence semantics rather than
 two subtly different benchmarks.
+
+
+## Spatial evidence and blind adjudication v2
+
+Hard/rescue observations preserve both plain text and structured visual evidence. For active
+engines the structured evidence records recognized regions, image-space polygons, and
+confidence when the engine exposes it. The plain-text field remains for backward-compatible
+WER/CER and triage.
+
+Material adjudication is region-based rather than page-vote based:
+
+1. associate OCR regions using image geometry, then textual similarity;
+2. treat unmatched regions as omissions/additions rather than forcing a textual match;
+3. generate a context crop and a 3x detail crop around each disagreement;
+4. classify disagreements, with legal identifiers/numbers receiving critical priority;
+5. ask the visual adjudicator to transcribe the crop before comparing candidates;
+6. permit ambiguous/illegible/none decisions instead of manufacturing gold;
+7. reveal engine identity only after decisions are frozen.
+
+Blind artifacts use opaque `ocr-observation:<digest>` identities. Engine names are present
+only in raw engine evidence and the separately retained reveal artifact; a blind candidate
+must not encode its engine in an identifier.
+
+The calibration manifest deliberately includes all material disagreements plus a deterministic
+control sample of up to 50 minor-disagreement pages and 20 exact-consensus pages. This is a
+guard against selection bias: candidate agreement is evidence, not proof that the shared
+reading is correct.
+
+The spatial JSON/crops are evidence for adjudication, not primary-source truth. The rendered
+page remains authoritative. A geometry matcher that cannot confidently associate regions
+must fail toward review, not silently manufacture an alignment.
