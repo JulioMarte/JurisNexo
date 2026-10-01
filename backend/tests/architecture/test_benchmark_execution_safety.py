@@ -69,3 +69,39 @@ def test_open_source_ocr_bakeoff_keeps_contract_auto_but_heavy_pdf_work_explicit
     )
     assert "engine:\n    needs: prepare" in workflow
     assert "aggregate:\n    needs: [prepare, engine]" in workflow
+
+
+HEAVY_PDF_WORKFLOWS = (
+    "normalization-engine-spike.yml",
+    "tc-second-source-normalization-smoke.yml",
+    "historical-bulletin-acquisition.yml",
+    "scj-pilot-profile.yml",
+)
+
+
+def test_known_heavy_pdf_experiments_are_manual_only() -> None:
+    violations: list[str] = []
+    for name in HEAVY_PDF_WORKFLOWS:
+        workflow = _read(WORKFLOWS / name)
+        if "workflow_dispatch:" not in workflow:
+            violations.append(f"{name}: missing workflow_dispatch")
+        if "pull_request:" in workflow or "\n  push:" in workflow or "\n  schedule:" in workflow:
+            violations.append(f"{name}: heavy PDF experiment has an implicit trigger")
+
+    assert not violations, (
+        "Heavy real-document/PDF experiments must remain explicit, not edit-triggered:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_normalization_holdouts_support_manual_dispatch_without_label() -> None:
+    for name in (
+        "scj-principales-ocr-holdout.yml",
+        "scj-principales-pdf-policy-holdout.yml",
+    ):
+        workflow = _read(WORKFLOWS / name)
+        assert (
+            "if: github.event_name == 'workflow_dispatch' || "
+            "contains(github.event.pull_request.labels.*.name, 'normalization-holdout')"
+            in workflow
+        ), f"{name} must allow explicit manual execution as well as the deliberate PR label"
