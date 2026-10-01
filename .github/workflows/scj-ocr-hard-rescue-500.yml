@@ -37,8 +37,10 @@ jobs:
       - run: |
           python -m pip install -e ./backend "pillow==12.3.0" "pypdfium2==5.13.0" "pytest==9.1.1" "ruff==0.16.7"
           python -m py_compile             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py \
+            benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
             benchmark/normalization/test_scj_ocr_hard_rescue.py
           ruff check             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py \
+            benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
             benchmark/normalization/test_scj_ocr_hard_rescue.py
           PYTHONPATH=backend/src pytest -q benchmark/normalization/test_scj_ocr_hard_rescue.py
 
@@ -135,8 +137,13 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/merged"
           for engine in tesseract rapidocr paddleocr; do
-            find "$RUNNER_TEMP/results" -path "*ocr-hard-${engine}-shard-*-${{ github.run_id }}*/predictions.jsonl" -type f -print0               | sort -z | xargs -0 cat > "$RUNNER_TEMP/merged/${engine}.jsonl"
-            test "$(wc -l < "$RUNNER_TEMP/merged/${engine}.jsonl")" -eq "$HARD_PAGE_LIMIT"
+            mapfile -d '' files < <(find "$RUNNER_TEMP/results" -path "*ocr-hard-${engine}-shard-*-${{ github.run_id }}*/predictions.jsonl" -type f -print0 | sort -z)
+            args=()
+            for file in "${files[@]}"; do args+=(--input "$file"); done
+            python benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
+              --engine "$engine" "${args[@]}" \
+              --output "$RUNNER_TEMP/merged/${engine}.jsonl" \
+              --expected "$HARD_PAGE_LIMIT"
           done
       - name: Build blind visual-adjudication package
         run: |
