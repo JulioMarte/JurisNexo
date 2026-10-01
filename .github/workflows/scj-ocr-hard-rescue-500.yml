@@ -43,6 +43,7 @@ jobs:
             benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
             benchmark/normalization/test_scj_ocr_hard_rescue.py
           PYTHONPATH=backend/src pytest -q benchmark/normalization/test_scj_ocr_hard_rescue.py
+          PYTHONPATH=benchmark/normalization python -c "import aggregate_scj_ocr_hard_rescue, ocr_spatial_evidence"
           bash -n benchmark/normalization/run_scj_ocr_hard_rescue_local.sh
 
   prepare:
