@@ -1,13 +1,7 @@
 name: TC second-source normalization smoke
 
 on:
-  pull_request:
-    branches:
-      - development
-    paths:
-      - "backend/src/jurisnexo/acquisition/tc_public.py"
-      - "backend/scripts/tc_second_source_normalization_smoke.py"
-      - ".github/workflows/tc-second-source-normalization-smoke.yml"
+  # Explicit real-document smoke. Do not download/normalize an official PDF on every edit.
   workflow_dispatch:
 
 permissions:
