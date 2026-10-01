@@ -2,7 +2,7 @@ name: SCJ open-source OCR bakeoff
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
     branches: [development]
     paths:
       - "benchmark/normalization/run_open_source_ocr_engine.py"
@@ -53,6 +53,7 @@ jobs:
           PYTHONPATH=backend/src pytest -q benchmark/normalization/test_open_source_ocr_bakeoff.py
 
   prepare:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ocr-bakeoff-live'
     needs: contract
     runs-on: ubuntu-24.04
     timeout-minutes: 90
