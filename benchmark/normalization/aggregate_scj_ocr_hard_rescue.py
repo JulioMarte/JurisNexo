@@ -127,7 +127,7 @@ def _build_spatial_disagreements(case_dir: Path, image_path: Path, labels: dict[
                 "decision_confidence": None,
                 "ambiguous": None,
             })
-    (case_dir / "disagreements.json").write_text(json.dumps({"schema_version": 2, "sample_id": sample_id, "disagreements": disagreements}, indent=2, ensure_ascii=False, sort_keys=True)+"\\n", encoding="utf-8")
+    (case_dir / "disagreements.json").write_text(json.dumps({"schema_version": 2, "sample_id": sample_id, "disagreements": disagreements}, indent=2, ensure_ascii=False, sort_keys=True)+"\n", encoding="utf-8")
 
 
 def aggregate(manifest_path: Path, inputs: dict[str, Path], output: Path) -> int:
