@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import sys
+
+import numpy as np
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from aggregate_scj_ocr_hard_rescue import _labels
-from ocr_spatial_evidence import Region, bbox_iou, classify_disagreement, match_regions
+from ocr_spatial_evidence import (\n    Region,\n    bbox_iou,\n    classify_disagreement,\n    match_regions,\n    regions_from_parallel,\n)
 from prepare_scj_ocr_hard_rescue import _round_robin
 from run_open_source_ocr_engine import _observation_identity, _stable_json_sha256
 
@@ -73,3 +75,18 @@ def test_spatial_matching_prefers_same_visual_region() -> None:
 def test_legal_identifier_disagreement_is_critical() -> None:
     assert classify_disagreement(["Artículo 1382", "Artículo 1383"]) == "legal_critical"
     assert classify_disagreement(["SENTENCIA.", "sentencia"]) == "orthographic"
+
+
+def test_regions_from_parallel_accepts_numpy_arrays() -> None:
+    texts = np.array(["Artículo 1382", "Sentencia 42"])
+    boxes = np.array(
+        [
+            [[10, 10], [110, 10], [110, 30], [10, 30]],
+            [[10, 40], [110, 40], [110, 60], [10, 60]],
+        ],
+        dtype=float,
+    )
+    scores = np.array([0.98, 0.91])
+    regions = regions_from_parallel(texts, boxes, scores)
+    assert [region.text for region in regions] == ["Artículo 1382", "Sentencia 42"]
+    assert [region.confidence for region in regions] == [0.98, 0.91]
