@@ -14,6 +14,8 @@ from typing import Any
 
 from PIL import Image
 
+from ocr_spatial_evidence import Region, opaque_observation_id, region_to_json, regions_from_parallel
+
 
 @dataclass(frozen=True, slots=True)
 class Prediction:
@@ -28,6 +30,7 @@ class Prediction:
     text: str
     elapsed_ms: int
     error: str | None
+    regions: list[dict[str, Any]]
 
 
 def _join_lines(lines: list[str]) -> str:
@@ -73,7 +76,7 @@ class Engine:
     def __init__(self, name: str) -> None:
         self.name = name
         self.version = "unknown"
-        self._predict: Callable[[Path], str]
+        self._predict: Callable[[Path], tuple[str, list[Region]]]
         if name == "tesseract":
             self._predict = self._init_tesseract()
         elif name == "easyocr":
@@ -98,22 +101,21 @@ class Engine:
         ).stdout.splitlines()[0]
         self.version = version
 
-        def predict(path: Path) -> str:
-            result = subprocess.run(
-                [
-                    "tesseract",
-                    str(path),
-                    "stdout",
-                    "-l",
-                    os.environ.get("OCR_BAKEOFF_TESSERACT_LANG", "spa+eng"),
-                    "--psm",
-                    os.environ.get("OCR_BAKEOFF_TESSERACT_PSM", "6"),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            return result.stdout.strip()
+        def predict(path: Path) -> tuple[str, list[Region]]:
+            args = ["tesseract", str(path), "stdout", "-l", os.environ.get("OCR_BAKEOFF_TESSERACT_LANG", "spa+eng"), "--psm", os.environ.get("OCR_BAKEOFF_TESSERACT_PSM", "6")]
+            text = subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+            tsv = subprocess.run(args + ["tsv"], check=True, capture_output=True, text=True).stdout
+            rows = []
+            for line in tsv.splitlines()[1:]:
+                cols = line.split("\\t", 11)
+                if len(cols) != 12 or not cols[11].strip():
+                    continue
+                try:
+                    x,y,w,h,conf = int(cols[6]),int(cols[7]),int(cols[8]),int(cols[9]),float(cols[10])
+                except ValueError:
+                    continue
+                rows.append(Region(cols[11].strip(), ((x,y),(x+w,y),(x+w,y+h),(x,y+h)), conf/100 if conf >= 0 else None))
+            return text, rows
 
         return predict
 
@@ -148,17 +150,18 @@ class Engine:
             use_textline_orientation=False,
         )
 
-        def predict(path: Path) -> str:
+        def predict(path: Path) -> tuple[str, list[Region]]:
             result = list(ocr.predict(str(path)))
             texts: list[str] = []
+            regions: list[Region] = []
             for item in result:
                 payload = getattr(item, "json", item)
-                if isinstance(payload, str):
-                    payload = json.loads(payload)
-                if isinstance(payload, dict) and isinstance(payload.get("res"), dict):
-                    payload = payload["res"]
+                if isinstance(payload, str): payload = json.loads(payload)
+                if isinstance(payload, dict) and isinstance(payload.get("res"), dict): payload = payload["res"]
                 texts.extend(_extract_strings(payload))
-            return _join_lines(texts)
+                if isinstance(payload, dict):
+                    regions.extend(regions_from_parallel(payload.get("rec_texts"), payload.get("rec_polys") or payload.get("dt_polys"), payload.get("rec_scores")))
+            return _join_lines(texts), regions
 
         return predict
 
@@ -169,12 +172,13 @@ class Engine:
         self.version = getattr(rapidocr, "__version__", "unknown")
         ocr = RapidOCR()
 
-        def predict(path: Path) -> str:
+        def predict(path: Path) -> tuple[str, list[Region]]:
             result = ocr(str(path))
             txts = getattr(result, "txts", None)
-            if txts:
-                return _join_lines([str(item) for item in txts])
-            return _join_lines(_extract_strings(result))
+            boxes = getattr(result, "boxes", None)
+            scores = getattr(result, "scores", None)
+            text = _join_lines([str(item) for item in txts]) if txts else _join_lines(_extract_strings(result))
+            return text, regions_from_parallel(txts, boxes, scores)
 
         return predict
 
@@ -234,8 +238,11 @@ class Engine:
 
         return predict
 
-    def predict(self, path: Path) -> str:
-        return self._predict(path)
+    def predict(self, path: Path) -> tuple[str, list[Region]]:
+        value = self._predict(path)
+        if isinstance(value, tuple):
+            return value
+        return value, []
 
 
 def _engine_config(engine_name: str) -> dict[str, Any]:
@@ -281,7 +288,7 @@ def _observation_identity(
             "image_sha256": str(case["image_sha256"]),
         }
     )
-    return f"ocr:{engine_name}:{digest[:24]}"
+    return opaque_observation_id({"digest": digest})
 
 
 def _manifest_cases(manifest_path: Path, limit: int | None) -> list[dict[str, Any]]:
@@ -337,8 +344,9 @@ def run(
         started = time.perf_counter()
         error: str | None = None
         text = ""
+        regions: list[Region] = []
         try:
-            text = engine.predict(image_path)
+            text, regions = engine.predict(image_path)
             if not text.strip():
                 error = "empty_output"
         except Exception as exc:  # noqa: BLE001 - engine failures are benchmark data
@@ -358,6 +366,7 @@ def run(
             text=text,
             elapsed_ms=elapsed_ms,
             error=error,
+            regions=[region_to_json(region) for region in regions],
         )
         predictions.append(prediction)
         print(
@@ -388,7 +397,7 @@ def run(
     failures = sum(item.error is not None for item in predictions)
     elapsed_seconds = time.perf_counter() - started_all
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "engine": engine_name,
         "engine_version": engine.version,
         "engine_config": engine_config,
