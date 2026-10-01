@@ -17,7 +17,14 @@ from PIL import Image
 
 @dataclass(frozen=True, slots=True)
 class Prediction:
+    observation_id: str
     sample_id: str
+    engine: str
+    engine_version: str
+    engine_config_id: str
+    source_pdf_sha256: str
+    page_index: int
+    image_sha256: str
     text: str
     elapsed_ms: int
     error: str | None
@@ -231,6 +238,52 @@ class Engine:
         return self._predict(path)
 
 
+def _engine_config(engine_name: str) -> dict[str, Any]:
+    if engine_name == "tesseract":
+        return {
+            "lang": os.environ.get("OCR_BAKEOFF_TESSERACT_LANG", "spa+eng"),
+            "psm": os.environ.get("OCR_BAKEOFF_TESSERACT_PSM", "6"),
+        }
+    if engine_name == "paddleocr":
+        return {
+            "lang": "es",
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+        }
+    if engine_name == "rapidocr":
+        return {"defaults": True}
+    return {"defaults": True}
+
+
+def _stable_json_sha256(payload: dict[str, Any]) -> str:
+    import hashlib
+
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _observation_identity(
+    engine_name: str,
+    engine_version: str,
+    engine_config_id: str,
+    case: dict[str, Any],
+) -> str:
+    digest = _stable_json_sha256(
+        {
+            "engine": engine_name,
+            "engine_version": engine_version,
+            "engine_config_id": engine_config_id,
+            "source_pdf_sha256": str(case["source_pdf_sha256"]),
+            "page_index": int(case["page_index"]),
+            "image_sha256": str(case["image_sha256"]),
+        }
+    )
+    return f"ocr:{engine_name}:{digest[:24]}"
+
+
 def _manifest_cases(manifest_path: Path, limit: int | None) -> list[dict[str, Any]]:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     cases = payload.get("cases")
@@ -273,6 +326,8 @@ def run(
     if not cases:
         raise RuntimeError("selected OCR shard has no cases")
     engine = Engine(engine_name)
+    engine_config = _engine_config(engine_name)
+    engine_config_id = _stable_json_sha256(engine_config)
     root = manifest_path.parent
     predictions: list[Prediction] = []
     started_all = time.perf_counter()
@@ -290,7 +345,16 @@ def run(
             error = f"{type(exc).__name__}: {exc}"
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         prediction = Prediction(
+            observation_id=_observation_identity(
+                engine_name, engine.version, engine_config_id, case
+            ),
             sample_id=str(case["sample_id"]),
+            engine=engine_name,
+            engine_version=engine.version,
+            engine_config_id=engine_config_id,
+            source_pdf_sha256=str(case["source_pdf_sha256"]),
+            page_index=int(case["page_index"]),
+            image_sha256=str(case["image_sha256"]),
             text=text,
             elapsed_ms=elapsed_ms,
             error=error,
@@ -327,6 +391,8 @@ def run(
         "schema_version": 1,
         "engine": engine_name,
         "engine_version": engine.version,
+        "engine_config": engine_config,
+        "engine_config_id": engine_config_id,
         "pages": len(predictions),
         "successful_pages": len(predictions) - failures,
         "failed_pages": failures,
