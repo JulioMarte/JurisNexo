@@ -348,18 +348,31 @@ def _openrouter_json(
 
 
 def _content_text(response: dict[str, Any]) -> str:
+    top_level_error = response.get("error")
+    if top_level_error is not None:
+        raise RuntimeError(f"OpenRouter completion failed: {top_level_error}")
+
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         raise RuntimeError("OpenRouter response has no choices")
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise RuntimeError("OpenRouter response choice is invalid")
+    if choice.get("error") is not None or choice.get("finish_reason") == "error":
+        raise RuntimeError(
+            f"OpenRouter completion failed: {choice.get('error') or 'finish_reason=error'}"
+        )
+
+    message = choice.get("message")
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, str):
+        # Empty text is a valid literal OCR result for a page with no visible
+        # text. Provider failures are rejected explicitly above.
         return content.strip()
     if isinstance(content, list):
         parts = [str(item.get("text") or "") for item in content if isinstance(item, dict)]
-        text = "".join(parts).strip()
-        if text:
-            return text
+        return "".join(parts).strip()
     raise RuntimeError("OpenRouter response has no textual completion")
 
 
