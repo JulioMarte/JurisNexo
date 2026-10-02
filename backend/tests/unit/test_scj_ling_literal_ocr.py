@@ -483,8 +483,10 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
             page_value = kwargs["page"]
             assert isinstance(page_value, dict)
             page = cast(dict[str, object], page_value)
+            page_index = page["page_index"]
+            assert isinstance(page_index, int)
             events.append(
-                ("submit", (str(page["document_id"]), int(page["page_index"])))
+                ("submit", (str(page["document_id"]), page_index))
             )
             result = function(**kwargs)
             return FakeFuture(result)
@@ -501,8 +503,10 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         page_value = kwargs["page"]
         assert isinstance(page_value, dict)
         page = cast(dict[str, object], page_value)
+        page_index = page["page_index"]
+        assert isinstance(page_index, int)
         events.append(
-            ("process", (str(page["document_id"]), int(page["page_index"])))
+            ("process", (str(page["document_id"]), page_index))
         )
         return {"restored": 0, "completed": 1, "charged": 0.01}
 
