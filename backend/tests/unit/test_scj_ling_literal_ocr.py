@@ -379,3 +379,192 @@ def test_verify_evidence_rejects_invalid_cost() -> None:
             pass_number=1,
             render_png_sha256="c" * 64,
         )
+
+
+def _scheduler_plan(module: ModuleType) -> dict[str, Any]:
+    documents = [
+        {
+            "document_id": "doc-a",
+            "object_key": "a.pdf",
+            "source_pdf_sha256": "a" * 64,
+            "page_indexes": [0, 1, 2],
+        },
+        {
+            "document_id": "doc-b",
+            "object_key": "b.pdf",
+            "source_pdf_sha256": "b" * 64,
+            "page_indexes": [0, 1],
+        },
+    ]
+    pages = [
+        {
+            "document_id": document_id,
+            "object_key": object_key,
+            "source_pdf_sha256": source_sha,
+            "page_index": page_index,
+            "classification": "misaligned",
+            "ordinal": ordinal,
+        }
+        for ordinal, (document_id, object_key, source_sha, page_index) in enumerate(
+            [
+                ("doc-a", "a.pdf", "a" * 64, 0),
+                ("doc-a", "a.pdf", "a" * 64, 1),
+                ("doc-a", "a.pdf", "a" * 64, 2),
+                ("doc-b", "b.pdf", "b" * 64, 0),
+                ("doc-b", "b.pdf", "b" * 64, 1),
+            ]
+        )
+    ]
+    core: dict[str, Any] = {
+        "schema_version": 1,
+        "model": module.MODEL,
+        "provider": module.PROVIDER,
+        "passes": module.PASSES,
+        "worker_count": module.WORKER_COUNT,
+        "documents": documents,
+        "pages": pages,
+    }
+    return {
+        **core,
+        "plan_sha256": module._sha256(module._canonical(core)),
+        "counts": {
+            "total_documents": 2,
+            "total_pages": 5,
+            "misaligned": 5,
+        },
+    }
+
+
+def test_verify_plan_accepts_document_count_contract() -> None:
+    module = _module()
+    plan = _scheduler_plan(module)
+
+    assert module._verify_plan(plan) == plan["plan_sha256"]
+
+
+def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    plan = _scheduler_plan(module)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_bytes(module._canonical(plan))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    events: list[tuple[str, object]] = []
+
+    class FakeFuture:
+        def __init__(self, result: dict[str, object]) -> None:
+            self._result = result
+
+        def result(self) -> dict[str, object]:
+            return self._result
+
+    class FakePool:
+        def __init__(self, *, max_workers: int, thread_name_prefix: str) -> None:
+            events.append(("pool", (max_workers, thread_name_prefix)))
+
+        def __enter__(self) -> "FakePool":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, function: object, **kwargs: object) -> FakeFuture:
+            page = kwargs["page"]
+            assert isinstance(page, dict)
+            events.append(
+                ("submit", (str(page["document_id"]), int(page["page_index"])))
+            )
+            assert callable(function)
+            result = function(**kwargs)
+            assert isinstance(result, dict)
+            return FakeFuture(result)
+
+    def fake_as_completed(futures: list[FakeFuture]) -> list[FakeFuture]:
+        events.append(("barrier", len(futures)))
+        return futures
+
+    def fake_source(_store: object, document: dict[str, object]) -> bytes:
+        events.append(("source", str(document["document_id"])))
+        return str(document["document_id"]).encode()
+
+    def fake_process(**kwargs: object) -> dict[str, object]:
+        page = kwargs["page"]
+        assert isinstance(page, dict)
+        events.append(
+            ("process", (str(page["document_id"]), int(page["page_index"])))
+        )
+        return {"restored": 0, "completed": 1, "charged": 0.01}
+
+    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
+    monkeypatch.setattr(module, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(module, "as_completed", fake_as_completed)
+    monkeypatch.setattr(module, "_source_pdf", fake_source)
+    monkeypatch.setattr(module, "_process_page", fake_process)
+
+    summary = module.run_worker(
+        plan_path=plan_path,
+        worker_index=0,
+        run_id="123",
+        run_attempt="1",
+        output=tmp_path / "worker",
+        max_pages=4,
+    )
+
+    assert events[0] == ("pool", (20, "ling"))
+    assert [value for kind, value in events if kind == "source"] == [
+        "doc-a",
+        "doc-b",
+    ]
+    assert [value for kind, value in events if kind == "barrier"] == [3, 1]
+    assert [value for kind, value in events if kind == "submit"] == [
+        ("doc-a", 0),
+        ("doc-a", 1),
+        ("doc-a", 2),
+        ("doc-b", 0),
+    ]
+    assert summary["assigned_pages"] == 4
+    assert summary["newly_completed_pages"] == 4
+    assert summary["documents_processed"] == 2
+    assert summary["charged_this_run_usd"] == pytest.approx(0.04)
+
+
+def test_dynamic_scheduler_rejects_accounting_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    plan = _scheduler_plan(module)
+    plan["pages"] = plan["pages"][:1]
+    core = {
+        key: value
+        for key, value in plan.items()
+        if key not in {"plan_sha256", "counts"}
+    }
+    plan["plan_sha256"] = module._sha256(module._canonical(core))
+    plan["counts"] = {
+        "total_documents": 2,
+        "total_pages": 1,
+        "misaligned": 1,
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_bytes(module._canonical(plan))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
+    monkeypatch.setattr(module, "_source_pdf", lambda *_args: b"pdf")
+    monkeypatch.setattr(
+        module,
+        "_process_page",
+        lambda **_kwargs: {"restored": 0, "completed": 0, "charged": 0.0},
+    )
+
+    with pytest.raises(RuntimeError, match="scheduler accounting mismatch"):
+        module.run_worker(
+            plan_path=plan_path,
+            worker_index=0,
+            run_id="123",
+            run_attempt="1",
+            output=tmp_path / "worker",
+        )
