@@ -80,8 +80,26 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _manifest_cases(pending: dict[str, Any]) -> list[dict[str, Any]]:
-    if isinstance(pending.get("cases"), list):
-        return list(pending["cases"])
+    cases = pending.get("cases")
+    if isinstance(cases, list):
+        if not cases or isinstance(cases[0], dict):
+            return list(cases)
+        rows: list[dict[str, Any]] = []
+        for source_sha, page_index, image_sha, sample_id in cases:
+            source_sha = str(source_sha)
+            rows.append(
+                {
+                    "sample_id": str(sample_id),
+                    "object_key": (
+                        "jurisdictions/do/scj/principales-sentencias/"
+                        f"{source_sha[:2]}/{source_sha}.pdf"
+                    ),
+                    "page_index": int(page_index),
+                    "source_pdf_sha256": source_sha,
+                    "image_sha256": str(image_sha),
+                }
+            )
+        return rows
     rows: list[dict[str, Any]] = []
     for document in pending.get("documents", []):
         object_key = str(document["object_key"])
