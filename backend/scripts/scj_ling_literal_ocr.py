@@ -412,7 +412,8 @@ def run_worker(*, plan_path: Path, worker_index: int, run_id: str, run_attempt: 
     charged = 0.0
     restored = 0
     completed = 0
-    pdf_cache: dict[str, bytes] = {}
+    current_document_id: str | None = None
+    current_pdf_bytes: bytes | None = None
     records: list[dict[str, Any]] = []
 
     for page in mine:
@@ -426,11 +427,10 @@ def run_worker(*, plan_path: Path, worker_index: int, run_id: str, run_attempt: 
             records.append(existing2)
             continue
 
-        pdf_bytes = pdf_cache.get(document_id)
-        if pdf_bytes is None:
-            pdf_bytes = _source_pdf(store, docs[document_id])
-            pdf_cache[document_id] = pdf_bytes
-        image = _render_page(pdf_bytes, page_index)
+        if current_document_id != document_id or current_pdf_bytes is None:
+            current_pdf_bytes = _source_pdf(store, docs[document_id])
+            current_document_id = document_id
+        image = _render_page(current_pdf_bytes, page_index)
         image_sha = _sha256(image)
 
         first = _load_json_if_exists(store, key1)
