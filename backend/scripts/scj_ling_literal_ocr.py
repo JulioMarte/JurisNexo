@@ -18,7 +18,6 @@ import os
 import tarfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections import Counter
 from pathlib import Path
@@ -38,7 +37,6 @@ SHARD_COUNT = 20
 RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation"
 
 PASS1_PROMPT = """Transcribe this judicial-document page literally.
 Return only the visible text, in reading order, with no Markdown fence, summary,
@@ -274,27 +272,6 @@ def _openrouter_json(*, method: str, url: str, api_key: str, body: dict[str, Any
     raise last
 
 
-def _generation_metadata(*, generation_id: str, api_key: str) -> dict[str, Any]:
-    query = urllib.parse.urlencode({"id": generation_id})
-    # Metadata can lag the completion very briefly.
-    for attempt in range(1, 6):
-        try:
-            response = _openrouter_json(
-                method="GET",
-                url=f"{OPENROUTER_GENERATION_URL}?{query}",
-                api_key=api_key,
-                attempts=1,
-            )
-            data = response.get("data")
-            if isinstance(data, dict):
-                return data
-        except RuntimeError:
-            if attempt == 5:
-                raise
-        time.sleep(attempt)
-    raise RuntimeError(f"generation metadata unavailable: {generation_id}")
-
-
 def _content_text(response: dict[str, Any]) -> str:
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -327,6 +304,7 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         "temperature": 0,
         "max_tokens": 16384,
         "reasoning": {"effort": "none"},
+        "usage": {"include": True},
         "provider": {
             "only": [PROVIDER_ROUTE],
             "order": [PROVIDER_ROUTE],
@@ -335,18 +313,44 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         },
     }
     started = time.monotonic()
-    response = _openrouter_json(method="POST", url=OPENROUTER_CHAT_URL, api_key=api_key, body=body)
+    response = _openrouter_json(
+        method="POST",
+        url=OPENROUTER_CHAT_URL,
+        api_key=api_key,
+        body=body,
+    )
     elapsed = time.monotonic() - started
     generation_id = str(response.get("id") or "")
     if not generation_id:
         raise RuntimeError("OpenRouter response omitted generation id")
-    generation = _generation_metadata(generation_id=generation_id, api_key=api_key)
-    returned_provider = str(generation.get("provider_name") or response.get("provider") or "")
-    if returned_provider.casefold() != PROVIDER.casefold():
-        raise RuntimeError(f"provider pin violated: expected {PROVIDER}, got {returned_provider or '<missing>'}")
-    returned_model = str(generation.get("model") or response.get("model") or "")
+
+    returned_provider = str(response.get("provider") or "")
+    if PROVIDER_ROUTE not in returned_provider.casefold():
+        raise RuntimeError(
+            f"provider pin violated: expected {PROVIDER}, "
+            f"got {returned_provider or '<missing>'}"
+        )
+    returned_model = str(response.get("model") or "")
     if "ling-3.0-flash-vl" not in returned_model.casefold():
         raise RuntimeError(f"model identity mismatch: {returned_model or '<missing>'}")
+
+    usage_raw = response.get("usage")
+    if not isinstance(usage_raw, dict):
+        raise RuntimeError("OpenRouter response omitted usage accounting")
+    usage = {str(key): value for key, value in usage_raw.items()}
+    raw_cost = usage.get("cost")
+    if isinstance(raw_cost, bool) or not isinstance(raw_cost, (int, float)):
+        raise RuntimeError("OpenRouter response omitted exact usage.cost")
+
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+    details = usage.get("completion_tokens_details")
+    reasoning_tokens = (
+        details.get("reasoning_tokens")
+        if isinstance(details, dict)
+        else None
+    )
     return {
         "transcription": _content_text(response),
         "generation_id": generation_id,
@@ -357,18 +361,15 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         "requested_reasoning_effort": "none",
         "returned_provider": returned_provider,
         "latency_seconds_client": round(elapsed, 6),
-        "total_cost_usd": float(generation.get("total_cost") or generation.get("usage") or 0.0),
-        "tokens_prompt": int(generation.get("tokens_prompt") or 0),
-        "tokens_completion": int(generation.get("tokens_completion") or 0),
-        "native_tokens_prompt": int(generation.get("native_tokens_prompt") or 0),
-        "native_tokens_completion": int(generation.get("native_tokens_completion") or 0),
-        "native_tokens_cached": int(generation.get("native_tokens_cached") or 0),
-        "generation_time_ms": generation.get("generation_time"),
-        "provider_metadata": {
-            "is_byok": generation.get("is_byok"),
-            "data_region": generation.get("data_region"),
-            "upstream_inference_cost": generation.get("upstream_inference_cost"),
-        },
+        "total_cost_usd": float(raw_cost),
+        "tokens_prompt": int(prompt_tokens) if isinstance(prompt_tokens, int) else 0,
+        "tokens_completion": (
+            int(completion_tokens) if isinstance(completion_tokens, int) else 0
+        ),
+        "tokens_total": int(total_tokens) if isinstance(total_tokens, int) else 0,
+        "reasoning_tokens": (
+            int(reasoning_tokens) if isinstance(reasoning_tokens, int) else 0
+        ),
     }
 
 
