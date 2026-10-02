@@ -72,6 +72,10 @@ def _safe_model(value: str) -> str:
     return value.replace("/", "__").replace(":", "_")
 
 
+def _is_expected_provider(value: object) -> bool:
+    return PROVIDER_ROUTE in str(value or "").casefold()
+
+
 def _list_objects(store: Any, prefix: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     token: str | None = None
@@ -334,7 +338,7 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         raise RuntimeError("OpenRouter response omitted generation id")
 
     returned_provider = str(response.get("provider") or "")
-    if PROVIDER_ROUTE not in returned_provider.casefold():
+    if not _is_expected_provider(returned_provider):
         raise RuntimeError(
             f"provider pin violated: expected {PROVIDER}, "
             f"got {returned_provider or '<missing>'}"
@@ -583,7 +587,7 @@ def aggregate(*, plan_path: Path, worker_root: Path, run_id: str, run_attempt: s
             if str(record.get("plan_sha256")) != plan_sha:
                 raise RuntimeError(f"wrong plan identity: {key}")
             returned_provider = str(record.get("returned_provider", ""))
-            if PROVIDER_ROUTE not in returned_provider.casefold():
+            if not _is_expected_provider(returned_provider):
                 raise RuntimeError(f"wrong provider in evidence: {key}")
             cost = float(record.get("total_cost_usd") or 0.0)
             cumulative_cost += cost
