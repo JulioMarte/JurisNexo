@@ -322,6 +322,9 @@ process while keeping the same frozen plan identity, so those completed pages
 are reused by the later full run. A full run uses `max_pages_per_worker=0`.
 Any paid mode requires the explicit `RUN_15900_PAGES` confirmation.
 
-The Ling request disables reasoning (`reasoning.effort=none`) because the task
-is literal transcription, not legal interpretation. This reduces avoidable
-latency/token spend and keeps the output contract focused on visible text.
+The Ling request does not request a reasoning mode because the task is literal
+transcription, not legal interpretation. This avoids making Novita support an
+unnecessary parameter and keeps the output contract focused on visible text.
+Identical OpenRouter retries also enable the 24-hour response cache so an
+ambiguous transport retry can reuse the same inference instead of deliberately
+paying for a second identical call.
