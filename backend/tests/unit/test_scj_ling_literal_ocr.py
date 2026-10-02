@@ -153,6 +153,16 @@ def test_ling_refuses_unmetered_success(monkeypatch: pytest.MonkeyPatch) -> None
         )
 
 
+def test_provider_identity_accepts_only_novita_names() -> None:
+    module = _module()
+
+    assert module._is_expected_provider("Novita")
+    assert module._is_expected_provider("NovitaAI")
+    assert module._is_expected_provider("novita")
+    assert not module._is_expected_provider("DeepInfra")
+    assert not module._is_expected_provider("")
+
+
 def test_output_key_separates_passes_and_model_provider() -> None:
     module = _module()
     one = module._page_key("a" * 64, "doc123", 7, 1)
