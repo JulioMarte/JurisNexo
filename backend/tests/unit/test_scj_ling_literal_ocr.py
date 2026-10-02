@@ -89,7 +89,7 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     body = seen["body"]
     assert isinstance(body, dict)
     assert body["model"] == module.MODEL
-    assert body["reasoning"] == {"effort": "none"}
+    assert "reasoning" not in body
     assert body["usage"] == {"include": True}
     assert body["provider"] == {
         "only": [module.PROVIDER_ROUTE],
@@ -98,6 +98,12 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
         "require_parameters": True,
     }
     assert module.PROVIDER_ROUTE == "novita"
+    assert module._openrouter_headers("secret") == {
+        "Authorization": "Bearer secret",
+        "Content-Type": "application/json",
+        "X-OpenRouter-Cache": "true",
+        "X-OpenRouter-Cache-TTL": "86400",
+    }
     assert result["returned_provider"] == "NovitaAI"
     assert result["total_cost_usd"] == pytest.approx(0.00123)
     assert result["tokens_total"] == 125
