@@ -262,3 +262,69 @@ benchmarks/scj-principales/single-pdf-quality/v1/
 ```
 
 Each populated stage contains its derived JSON/JSONL evidence plus an immutable `_MANIFEST.json` with payload hashes. The official source PDF is not duplicated there; `source_pdf_sha256` and the source corpus locator bind every result back to the immutable source. JEV/DeepSeek stages preserve their model/provider/configuration telemetry inside the published evidence.
+
+
+## Corpus-wide two-pass Ling recovery lane
+
+Pages already admitted by the completed census are not sent to a paid model again.
+The recovery lane selects only `misaligned` and `no_native_text` pages from the
+newest completed durable census generation. Low-information pages remain outside
+the paid set unless a later explicit policy changes that decision.
+
+`.github/workflows/scj-principales-ling-literal-ocr.yml` is manual-only. Before
+any paid inference, it freezes a plan from the durable census and refuses to
+continue if the target is no longer exactly 15,900 pages. The current frozen
+baseline is 15,855 `misaligned` pages plus 45 `no_native_text` pages.
+
+The paid phase uses exactly 20 isolated workers. Within every PDF, ownership is
+deterministic: `page_index % 20`. Each selected page receives two visual passes
+with `inclusionai/ling-3.0-flash-vl`. OpenRouter is pinned to NovitaAI with
+provider fallback disabled. Pass 1 produces a literal transcription from the
+rendered page. Pass 2 receives the same page image plus the first-pass
+transcription and adversarially corrects discrepancies against the image. The
+image remains authoritative; model output never overwrites the official source
+artifact.
+
+Evidence is resumable and immutable:
+
+```text
+benchmarks/scj-principales/ling-literal-ocr/v1/
+  <plan-sha256>/
+    inclusionai__ling-3.0-flash-vl/
+      NovitaAI/
+        pages/
+          <document-id>/
+            <page-index>/
+              pass-1.json
+              pass-2.json
+        runs/
+          github-<run-id>-attempt-<attempt>/
+            summary.json
+        _SUCCESS.json
+```
+
+Every pass records the source PDF SHA-256, rendered PNG SHA-256, page identity,
+requested and returned model, requested and routed provider, OpenRouter
+generation ID, token usage, latency, and exact OpenRouter `usage.cost` returned
+with that same inference response, plus the transcription. Pass 2 additionally records the first-pass object key and
+transcription SHA-256.
+
+Completed pass-2 objects are skipped on retry. A page with only pass 1 resumes
+directly at pass 2. This is the paid-run idempotency boundary: retries must not
+silently pay again for already durable work.
+
+The aggregate fails closed unless every planned page has both passes from the
+pinned provider. Its final report includes both the amount billed by the current
+GitHub run and the cumulative cost of all persisted calls in the completed
+generation. The workflow can run in inventory-only mode with no provider spend. For a paid
+canary, `max_pages_per_worker` limits how many pages each of the 20 workers may
+process while keeping the same frozen plan identity, so those completed pages
+are reused by the later full run. A full run uses `max_pages_per_worker=0`.
+Any paid mode requires the explicit `RUN_15900_PAGES` confirmation.
+
+The Ling request does not request a reasoning mode because the task is literal
+transcription, not legal interpretation. This avoids making Novita support an
+unnecessary parameter and keeps the output contract focused on visible text.
+Identical OpenRouter retries also enable the 24-hour response cache so an
+ambiguous transport retry can reuse the same inference instead of deliberately
+paying for a second identical call.
