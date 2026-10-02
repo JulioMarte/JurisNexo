@@ -326,6 +326,7 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         ],
         "temperature": 0,
         "max_tokens": 16384,
+        "reasoning": {"effort": "none"},
         "provider": {
             "only": [PROVIDER_ROUTE],
             "order": [PROVIDER_ROUTE],
@@ -352,6 +353,8 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         "requested_model": MODEL,
         "returned_model": returned_model,
         "requested_provider": PROVIDER,
+        "requested_provider_route": PROVIDER_ROUTE,
+        "requested_reasoning_effort": "none",
         "returned_provider": returned_provider,
         "latency_seconds_client": round(elapsed, 6),
         "total_cost_usd": float(generation.get("total_cost") or generation.get("usage") or 0.0),
