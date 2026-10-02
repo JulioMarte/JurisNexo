@@ -220,6 +220,7 @@ def test_plan_uses_frozen_inventory_document_id(
     tmp_path: Path,
 ) -> None:
     module = _module()
+    monkeypatch.setattr(module, "EXPECTED_DOCUMENTS", 1)
     object_key = "jurisdictions/do/scj/principales-sentencias/example.pdf"
     inventory = {
         "documents": [
@@ -256,9 +257,32 @@ def test_plan_uses_frozen_inventory_document_id(
 
     plan = module.build_plan(output=tmp_path)
 
-    assert plan["counts"] == {"misaligned": 1, "total_pages": 1}
+    assert plan["counts"] == {"misaligned": 1, "total_documents": 1, "total_pages": 1}
     assert plan["pages"][0]["document_id"] == "0123456789abcdef"
     assert plan["documents"][0]["document_id"] == "0123456789abcdef"
+
+
+def test_plan_rejects_incomplete_scj_decision_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    inventory: dict[str, Any] = {"documents": []}
+    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
+
+    def fake_latest(_store: object) -> tuple[str, dict[str, object]]:
+        return "census/generation", {"status": "complete"}
+
+    def fake_get(_store: object, key: str) -> bytes:
+        if key.endswith("/inventory.json"):
+            return json.dumps(inventory).encode()
+        return b""
+
+    monkeypatch.setattr(module, "_latest_completed_census", fake_latest)
+    monkeypatch.setattr(module, "_get_bytes", fake_get)
+
+    with pytest.raises(RuntimeError, match="must contain 36 documents"):
+        module.build_plan(output=tmp_path)
 
 
 def test_verify_plan_rejects_tampered_page_selection() -> None:
