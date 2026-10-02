@@ -163,7 +163,7 @@ def build_plan(*, output: Path) -> dict[str, Any]:
         frozen = inventory_by_key.get(object_key)
         if frozen is None:
             raise RuntimeError(f"document absent from frozen inventory: {object_key}")
-        document_id = str(document["document_id"])
+        document_id = str(frozen["document_id"])
         source_sha = str(document["source_pdf_sha256"])
         selected: list[int] = []
         lines = _extract_member(archive, "pages.jsonl").decode("utf-8").splitlines()
