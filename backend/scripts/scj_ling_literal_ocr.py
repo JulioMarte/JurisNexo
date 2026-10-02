@@ -20,8 +20,8 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +89,11 @@ def _list_objects(store: Any, prefix: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     token: str | None = None
     while True:
-        kwargs: dict[str, Any] = {"Bucket": store.config.bucket, "Prefix": prefix, "MaxKeys": 1000}
+        kwargs: dict[str, Any] = {
+            "Bucket": store.config.bucket,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
         if token:
             kwargs["ContinuationToken"] = token
         response = store.client.list_objects_v2(**kwargs)
@@ -132,7 +136,10 @@ def _put_immutable(
         if not store.is_not_found(exc):
             raise
     else:
-        existing = {str(k).lower(): str(v) for k, v in dict(response.get("Metadata") or {}).items()}
+        existing = {
+            str(k).lower(): str(v)
+            for k, v in dict(response.get("Metadata") or {}).items()
+        }
         if existing.get("payload-sha256") != payload_sha:
             raise RuntimeError(f"immutable OCR evidence differs at {key}")
         return
@@ -233,7 +240,10 @@ def build_plan(*, output: Path) -> dict[str, Any]:
             f"found {len(document_objects)}"
         )
     if len(documents) != EXPECTED_DOCUMENTS:
-        raise RuntimeError(f"Ling recovery plan must describe all {EXPECTED_DOCUMENTS} documents; found {len(documents)}")
+        raise RuntimeError(
+            f"Ling recovery plan must describe all {EXPECTED_DOCUMENTS} documents; "
+            f"found {len(documents)}"
+        )
 
     pages.sort(key=lambda x: (x["object_key"], x["page_index"]))
     for ordinal, item in enumerate(pages):
@@ -465,7 +475,14 @@ def _verify_plan(plan: dict[str, Any]) -> str:
     if not isinstance(pages, list):
         raise RuntimeError("plan pages must be a list")
     expected_counts = Counter(str(item["classification"]) for item in pages)
-    expected = {"total_pages": len(pages), **dict(sorted(expected_counts.items()))}
+    documents = plan.get("documents")
+    if not isinstance(documents, list):
+        raise RuntimeError("plan documents must be a list")
+    expected = {
+        "total_documents": len(documents),
+        "total_pages": len(pages),
+        **dict(sorted(expected_counts.items())),
+    }
     if plan.get("counts") != expected:
         raise RuntimeError("plan counts do not match plan pages")
     return claimed
@@ -540,32 +557,144 @@ def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
     return payload
 
 
-def _process_page(*, store: Any, plan_sha: str, page: dict[str, Any], pdf_bytes: bytes, api_key: str, run_id: str, run_attempt: str) -> dict[str, Any]:
-    document_id = str(page["document_id"]); page_index = int(page["page_index"])
-    key1 = _page_key(plan_sha, document_id, page_index, 1); key2 = _page_key(plan_sha, document_id, page_index, 2)
-    image = _render_page(pdf_bytes, page_index); image_sha = _sha256(image)
+def _process_page(
+    *,
+    store: Any,
+    plan_sha: str,
+    page: dict[str, Any],
+    pdf_bytes: bytes,
+    api_key: str,
+    run_id: str,
+    run_attempt: str,
+) -> dict[str, Any]:
+    document_id = str(page["document_id"])
+    page_index = int(page["page_index"])
+    key1 = _page_key(plan_sha, document_id, page_index, 1)
+    key2 = _page_key(plan_sha, document_id, page_index, 2)
+    image = _render_page(pdf_bytes, page_index)
+    image_sha = _sha256(image)
+
     first = _load_json_if_exists(store, key1)
     if first is not None:
-        _verify_evidence(first, plan_sha=plan_sha, page=page, pass_number=1, render_png_sha256=image_sha)
+        _verify_evidence(
+            first,
+            plan_sha=plan_sha,
+            page=page,
+            pass_number=1,
+            render_png_sha256=image_sha,
+        )
+
     second = _load_json_if_exists(store, key2)
     if second is not None:
         if first is None:
             raise RuntimeError(f"pass 2 exists without pass 1: {key2}")
-        _verify_evidence(second, plan_sha=plan_sha, page=page, pass_number=2, render_png_sha256=image_sha, prior_key=key1, prior_sha256=str(first["transcription_sha256"]))
+        _verify_evidence(
+            second,
+            plan_sha=plan_sha,
+            page=page,
+            pass_number=2,
+            render_png_sha256=image_sha,
+            prior_key=key1,
+            prior_sha256=str(first["transcription_sha256"]),
+        )
         return {"restored": 1, "completed": 0, "charged": 0.0}
+
     charged = 0.0
     if first is None:
-        observation1 = _call_ling(image_png=image, prompt=PASS1_PROMPT, api_key=api_key)
-        first = {"schema_version": 1, "pass": 1, "plan_sha256": plan_sha, "document_id": document_id, "object_key": page["object_key"], "source_pdf_sha256": page["source_pdf_sha256"], "page_index": page_index, "source_classification": page["classification"], "render_png_sha256": image_sha, "native_text_sha256": page.get("native_text_sha256"), "tesseract_text_sha256": page.get("tesseract_text_sha256"), "github_run_id": run_id, "github_run_attempt": run_attempt, **observation1, "transcription_sha256": _sha256(observation1["transcription"].encode("utf-8"))}
-        _put_immutable(store, key=key1, payload=_canonical(first), content_type="application/json", metadata={"plan-sha256": plan_sha, "source-pdf-sha256": str(page["source_pdf_sha256"]), "render-png-sha256": image_sha, "model": _safe_model(MODEL), "provider": PROVIDER, "pass": "1"})
+        observation1 = _call_ling(
+            image_png=image,
+            prompt=PASS1_PROMPT,
+            api_key=api_key,
+        )
+        first = {
+            "schema_version": 1,
+            "pass": 1,
+            "plan_sha256": plan_sha,
+            "document_id": document_id,
+            "object_key": page["object_key"],
+            "source_pdf_sha256": page["source_pdf_sha256"],
+            "page_index": page_index,
+            "source_classification": page["classification"],
+            "render_png_sha256": image_sha,
+            "native_text_sha256": page.get("native_text_sha256"),
+            "tesseract_text_sha256": page.get("tesseract_text_sha256"),
+            "github_run_id": run_id,
+            "github_run_attempt": run_attempt,
+            **observation1,
+            "transcription_sha256": _sha256(
+                observation1["transcription"].encode("utf-8")
+            ),
+        }
+        _put_immutable(
+            store,
+            key=key1,
+            payload=_canonical(first),
+            content_type="application/json",
+            metadata={
+                "plan-sha256": plan_sha,
+                "source-pdf-sha256": str(page["source_pdf_sha256"]),
+                "render-png-sha256": image_sha,
+                "model": _safe_model(MODEL),
+                "provider": PROVIDER,
+                "pass": "1",
+            },
+        )
         charged += float(first["total_cost_usd"])
-    observation2 = _call_ling(image_png=image, prompt=PASS2_PROMPT.format(prior=str(first["transcription"])), api_key=api_key)
-    second = {"schema_version": 1, "pass": 2, "plan_sha256": plan_sha, "document_id": document_id, "object_key": page["object_key"], "source_pdf_sha256": page["source_pdf_sha256"], "page_index": page_index, "source_classification": page["classification"], "render_png_sha256": image_sha, "prior_pass_key": key1, "prior_transcription_sha256": first["transcription_sha256"], "github_run_id": run_id, "github_run_attempt": run_attempt, **observation2, "transcription_sha256": _sha256(observation2["transcription"].encode("utf-8"))}
-    _put_immutable(store, key=key2, payload=_canonical(second), content_type="application/json", metadata={"plan-sha256": plan_sha, "source-pdf-sha256": str(page["source_pdf_sha256"]), "render-png-sha256": image_sha, "model": _safe_model(MODEL), "provider": PROVIDER, "pass": "2"})
-    return {"restored": 0, "completed": 1, "charged": charged + float(second["total_cost_usd"])}
+
+    observation2 = _call_ling(
+        image_png=image,
+        prompt=PASS2_PROMPT.format(prior=str(first["transcription"])),
+        api_key=api_key,
+    )
+    second = {
+        "schema_version": 1,
+        "pass": 2,
+        "plan_sha256": plan_sha,
+        "document_id": document_id,
+        "object_key": page["object_key"],
+        "source_pdf_sha256": page["source_pdf_sha256"],
+        "page_index": page_index,
+        "source_classification": page["classification"],
+        "render_png_sha256": image_sha,
+        "prior_pass_key": key1,
+        "prior_transcription_sha256": first["transcription_sha256"],
+        "github_run_id": run_id,
+        "github_run_attempt": run_attempt,
+        **observation2,
+        "transcription_sha256": _sha256(
+            observation2["transcription"].encode("utf-8")
+        ),
+    }
+    _put_immutable(
+        store,
+        key=key2,
+        payload=_canonical(second),
+        content_type="application/json",
+        metadata={
+            "plan-sha256": plan_sha,
+            "source-pdf-sha256": str(page["source_pdf_sha256"]),
+            "render-png-sha256": image_sha,
+            "model": _safe_model(MODEL),
+            "provider": PROVIDER,
+            "pass": "2",
+        },
+    )
+    return {
+        "restored": 0,
+        "completed": 1,
+        "charged": charged + float(second["total_cost_usd"]),
+    }
 
 
-def run_worker(*, plan_path: Path, worker_index: int, run_id: str, run_attempt: str, output: Path, max_pages: int = 0) -> dict[str, Any]:
+def run_worker(
+    *,
+    plan_path: Path,
+    worker_index: int,
+    run_id: str,
+    run_attempt: str,
+    output: Path,
+    max_pages: int = 0,
+) -> dict[str, Any]:
     if worker_index != 0:
         raise ValueError("dynamic pool coordinator must use worker_index 0")
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -573,32 +702,103 @@ def run_worker(*, plan_path: Path, worker_index: int, run_id: str, run_attempt: 
         raise RuntimeError("OPENROUTER_API_KEY is required")
     if max_pages < 0:
         raise ValueError("max_pages must be zero or positive")
-    plan = json.loads(plan_path.read_text(encoding="utf-8")); plan_sha = _verify_plan(plan)
-    if plan["model"] != MODEL or plan["provider"] != PROVIDER or int(plan["worker_count"]) != WORKER_COUNT:
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_sha = _verify_plan(plan)
+    if (
+        plan["model"] != MODEL
+        or plan["provider"] != PROVIDER
+        or int(plan["worker_count"]) != WORKER_COUNT
+    ):
         raise RuntimeError("plan/provider/model/worker contract drift")
-    store = build_s3_object_store(); docs = {str(doc["document_id"]): doc for doc in plan["documents"]}
-    pages_by_doc: dict[str, list[dict[str, Any]]] = {}
+
+    store = build_s3_object_store()
+    documents = {
+        str(document["document_id"]): document
+        for document in plan["documents"]
+    }
+    pages_by_document: dict[str, list[dict[str, Any]]] = {}
     for page in plan["pages"]:
-        pages_by_doc.setdefault(str(page["document_id"]), []).append(page)
-    remaining = max_pages; charged = 0.0; restored = 0; completed = 0; assigned = 0; documents_processed = 0
+        pages_by_document.setdefault(str(page["document_id"]), []).append(page)
+
+    remaining = max_pages
+    charged = 0.0
+    restored = 0
+    completed = 0
+    assigned = 0
+    documents_processed = 0
     output.mkdir(parents=True, exist_ok=True)
-    with ThreadPoolExecutor(max_workers=WORKER_COUNT, thread_name_prefix="ling") as pool:
+
+    with ThreadPoolExecutor(
+        max_workers=WORKER_COUNT,
+        thread_name_prefix="ling",
+    ) as pool:
         for document in plan["documents"]:
-            document_id = str(document["document_id"]); doc_pages = list(pages_by_doc.get(document_id, []))
+            document_id = str(document["document_id"])
+            document_pages = list(pages_by_document.get(document_id, []))
             if max_pages:
                 if remaining <= 0:
                     break
-                doc_pages = doc_pages[:remaining]; remaining -= len(doc_pages)
-            if not doc_pages:
+                document_pages = document_pages[:remaining]
+                remaining -= len(document_pages)
+            if not document_pages:
                 continue
-            pdf_bytes = _source_pdf(store, docs[document_id])
-            futures = [pool.submit(_process_page, store=store, plan_sha=plan_sha, page=page, pdf_bytes=pdf_bytes, api_key=api_key, run_id=run_id, run_attempt=run_attempt) for page in doc_pages]
+
+            pdf_bytes = _source_pdf(store, documents[document_id])
+            futures = [
+                pool.submit(
+                    _process_page,
+                    store=store,
+                    plan_sha=plan_sha,
+                    page=page,
+                    pdf_bytes=pdf_bytes,
+                    api_key=api_key,
+                    run_id=run_id,
+                    run_attempt=run_attempt,
+                )
+                for page in document_pages
+            ]
             assigned += len(futures)
+
+            # This barrier is intentional: all selected pages from the current
+            # PDF finish before the next source PDF is opened.
             for future in as_completed(futures):
-                result = future.result(); charged += float(result["charged"]); restored += int(result["restored"]); completed += int(result["completed"])
-                print(json.dumps({"document_id": document_id, "completed": completed, "restored": restored, "charged_this_run_usd": round(charged, 8)}, sort_keys=True), flush=True)
+                result = future.result()
+                charged += float(result["charged"])
+                restored += int(result["restored"])
+                completed += int(result["completed"])
+                print(
+                    json.dumps(
+                        {
+                            "document_id": document_id,
+                            "completed": completed,
+                            "restored": restored,
+                            "charged_this_run_usd": round(charged, 8),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
             documents_processed += 1
-    summary = {"schema_version": 2, "scheduler": "pdf-serial-dynamic-page-pool", "worker_index": 0, "worker_count": WORKER_COUNT, "documents_processed": documents_processed, "assigned_pages": assigned, "newly_completed_pages": completed, "restored_pages": restored, "charged_this_run_usd": round(charged, 10), "model": MODEL, "provider": PROVIDER, "passes": PASSES, "plan_sha256": plan_sha}
+
+    if assigned != completed + restored:
+        raise RuntimeError("dynamic scheduler accounting mismatch")
+
+    summary = {
+        "schema_version": 2,
+        "scheduler": "pdf-serial-dynamic-page-pool",
+        "worker_index": 0,
+        "worker_count": WORKER_COUNT,
+        "documents_processed": documents_processed,
+        "assigned_pages": assigned,
+        "newly_completed_pages": completed,
+        "restored_pages": restored,
+        "charged_this_run_usd": round(charged, 10),
+        "model": MODEL,
+        "provider": PROVIDER,
+        "passes": PASSES,
+        "plan_sha256": plan_sha,
+    }
     (output / "worker-00.json").write_bytes(_canonical(summary))
     return summary
 
@@ -666,7 +866,7 @@ def aggregate(
         worker_summaries.append(json.loads(path.read_text(encoding="utf-8")))
     if len(worker_summaries) != 1:
         raise RuntimeError(
-            f"expected one dynamic-pool summary, "
+            "expected one dynamic-pool summary, "
             f"found {len(worker_summaries)}"
         )
     for item in worker_summaries:
