@@ -607,7 +607,13 @@ def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
     monkeypatch.setattr(module, "build_s3_object_store", fake_store)
     monkeypatch.setattr(module, "ThreadPoolExecutor", FakePool)
     monkeypatch.setattr(module, "as_completed", fake_as_completed)
-    monkeypatch.setattr(module, "_source_pdf", lambda *_args: b"pdf")
+    def fake_source(
+        _store: object,
+        _document: dict[str, object],
+    ) -> bytes:
+        return b"pdf"
+
+    monkeypatch.setattr(module, "_source_pdf", fake_source)
 
     summary = module.run_worker(
         plan_path=plan_path,
