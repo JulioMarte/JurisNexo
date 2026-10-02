@@ -8,6 +8,10 @@ on:
       - "backend/scripts/scj_ling_literal_ocr.py"
       - "backend/tests/unit/test_scj_ling_literal_ocr.py"
       - "docs/44-scj-principales-verified-corpus-census.md"
+  push:
+    branches: [development]
+    paths:
+      - ".github/paid-runs/scj-principales-ling-15900.json"
   workflow_dispatch:
     inputs:
       run_paid:
@@ -37,12 +41,39 @@ jobs:
   contract:
     runs-on: ubuntu-24.04
     steps:
-      - name: Require explicit paid-run confirmation
-        run: |
-          if [ '${{ inputs.run_paid }}' = 'true' ]; then
-            test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
-          fi
       - uses: actions/checkout@v6
+      - name: Require explicit paid-run authorization
+        run: |
+          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
+            if [ '${{ inputs.run_paid }}' = 'true' ]; then
+              test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+            fi
+          elif [ '${{ github.event_name }}' = 'push' ]; then
+            python - <<'PY'
+            import json
+            from pathlib import Path
+
+            request = json.loads(
+                Path(".github/paid-runs/scj-principales-ling-15900.json")
+                .read_text(encoding="utf-8")
+            )
+            expected = {
+                "enabled": True,
+                "model": "inclusionai/ling-3.0-flash-vl",
+                "provider": "NovitaAI",
+                "pages": 15900,
+                "documents": 36,
+                "passes": 2,
+                "workers": 20,
+                "confirm": "RUN_15900_PAGES",
+            }
+            if request != expected:
+                raise SystemExit(
+                    "Paid-run authorization file does not exactly match "
+                    "the approved 15,900-page Ling benchmark contract."
+                )
+            PY
+          fi
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -59,7 +90,7 @@ jobs:
           pytest -q backend/tests/unit/test_scj_ling_literal_ocr.py
 
   plan:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
     needs: contract
     runs-on: ubuntu-24.04
     env:
@@ -101,6 +132,14 @@ jobs:
                   "Frozen census target changed from expected 15,900 pages; "
                   "review before spending."
               )
+          if plan["model"] != "inclusionai/ling-3.0-flash-vl":
+              raise SystemExit(f"Unexpected model: {plan['model']}")
+          if plan["provider"] != "NovitaAI":
+              raise SystemExit(f"Unexpected provider: {plan['provider']}")
+          if plan["passes"] != 2:
+              raise SystemExit(f"Unexpected pass count: {plan['passes']}")
+          if plan["worker_count"] != 20:
+              raise SystemExit(f"Unexpected worker count: {plan['worker_count']}")
           PY
       - name: Publish frozen plan summary
         run: |
@@ -126,7 +165,7 @@ jobs:
           retention-days: 90
 
   ocr:
-    if: ${{ inputs.run_paid }}
+    if: ${{ github.event_name == 'push' || inputs.run_paid }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -150,6 +189,8 @@ jobs:
           python -m pip install -e ./backend "boto3==1.43.93" \
             "pypdfium2==5.13.0" "pillow==12.3.0"
       - name: Run 20-worker dynamic PDF queue
+        env:
+          MAX_PAGES: ${{ github.event_name == 'push' && '0' || inputs.max_pages_per_worker }}
         run: |
           mkdir -p "$RUNNER_TEMP/ling-worker"
           python backend/scripts/scj_ling_literal_ocr.py worker \
@@ -157,7 +198,7 @@ jobs:
             --worker-index '0' \
             --run-id '${{ github.run_id }}' \
             --run-attempt '${{ github.run_attempt }}' \
-            --max-pages '${{ inputs.max_pages_per_worker }}' \
+            --max-pages "$MAX_PAGES" \
             --output "$RUNNER_TEMP/ling-worker"
       - uses: actions/upload-artifact@v4
         with:
@@ -167,7 +208,7 @@ jobs:
           retention-days: 90
 
   aggregate:
-    if: ${{ inputs.run_paid && inputs.max_pages_per_worker == '0' }}
+    if: ${{ github.event_name == 'push' || (inputs.run_paid && inputs.max_pages_per_worker == '0') }}
     needs: [plan, ocr]
     runs-on: ubuntu-24.04
     env:
@@ -211,7 +252,7 @@ jobs:
           retention-days: 90
 
   canary-summary:
-    if: ${{ inputs.run_paid && inputs.max_pages_per_worker != '0' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_paid && inputs.max_pages_per_worker != '0' }}
     needs: [plan, ocr]
     runs-on: ubuntu-24.04
     steps:
