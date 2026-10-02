@@ -87,9 +87,15 @@ jobs:
 
           plan = json.load(open(sys.argv[1], encoding="utf-8"))
           counts = plan["counts"]
+          print(f"Target documents: {counts['total_documents']}")
           print(f"Target pages: {counts['total_pages']}")
           print(f"Misaligned: {counts.get('misaligned', 0)}")
           print(f"No native text: {counts.get('no_native_text', 0)}")
+          if counts["total_documents"] != 36:
+              raise SystemExit(
+                  "Frozen census must cover exactly 36 SCJ Principales decisions; "
+                  f"found {counts['total_documents']}."
+              )
           if counts["total_pages"] != 15900:
               raise SystemExit(
                   "Frozen census target changed from expected 15,900 pages; "
@@ -105,7 +111,8 @@ jobs:
           plan = json.load(open(sys.argv[1], encoding="utf-8"))
           print("## Ling literal OCR frozen plan")
           print()
-          print(f"- Pages: **{plan['counts']['total_pages']}**")
+          print(f"- Decisions/documents: **{plan['counts']['total_documents']} / 36**")
+          print(f"- Pages requiring Ling recovery: **{plan['counts']['total_pages']}**")
           print(f"- Model: **{plan['model']}**")
           print(f"- Provider: **{plan['provider']}**")
           print(f"- Passes: **{plan['passes']}**")
