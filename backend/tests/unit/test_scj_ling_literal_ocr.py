@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import gzip
 import importlib.util
+import io
+import json
 import os
+import tarfile
 from pathlib import Path
 from types import ModuleType
 
@@ -136,3 +140,90 @@ def test_output_key_separates_passes_and_model_provider() -> None:
     assert "/NovitaAI/" in one
     assert one.endswith("/pass-1.json")
     assert two.endswith("/pass-2.json")
+
+
+def _census_archive() -> bytes:
+    document = {
+        "object_key": "jurisdictions/do/scj/principales-sentencias/example.pdf",
+        "source_pdf_sha256": "b" * 64,
+        "source_page_count": 2,
+    }
+    pages = [
+        {
+            "object_key": document["object_key"],
+            "source_pdf_sha256": document["source_pdf_sha256"],
+            "page_index": 0,
+            "classification": "misaligned",
+            "native_text_sha256": "c" * 64,
+            "ocr_text_sha256": "d" * 64,
+        },
+        {
+            "object_key": document["object_key"],
+            "source_pdf_sha256": document["source_pdf_sha256"],
+            "page_index": 1,
+            "classification": "aligned",
+        },
+    ]
+    raw = io.BytesIO()
+    with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
+            for name, payload in {
+                "document.json": json.dumps(document).encode(),
+                "pages.jsonl": (
+                    "".join(json.dumps(page) + "\n" for page in pages).encode()
+                ),
+            }.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+    return raw.getvalue()
+
+
+def test_plan_uses_frozen_inventory_document_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    object_key = "jurisdictions/do/scj/principales-sentencias/example.pdf"
+    inventory = {
+        "documents": [
+            {
+                "object_key": object_key,
+                "document_id": "0123456789abcdef",
+                "size_bytes": 123,
+                "etag": "etag",
+            }
+        ]
+    }
+    archive = _census_archive()
+
+    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
+    monkeypatch.setattr(
+        module,
+        "_latest_completed_census",
+        lambda _store: ("census/generation", {"status": "complete"}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_list_objects",
+        lambda _store, prefix: (
+            [{"Key": "census/generation/documents/example.tar.gz"}]
+            if prefix.endswith("/documents/")
+            else []
+        ),
+    )
+
+    def fake_get(_store: object, key: str) -> bytes:
+        if key.endswith("/inventory.json"):
+            return json.dumps(inventory).encode()
+        if key.endswith(".tar.gz"):
+            return archive
+        raise AssertionError(key)
+
+    monkeypatch.setattr(module, "_get_bytes", fake_get)
+
+    plan = module.build_plan(output=tmp_path)
+
+    assert plan["counts"] == {"misaligned": 1, "total_pages": 1}
+    assert plan["pages"][0]["document_id"] == "0123456789abcdef"
+    assert plan["documents"][0]["document_id"] == "0123456789abcdef"
