@@ -6,9 +6,9 @@ import io
 import json
 import os
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
