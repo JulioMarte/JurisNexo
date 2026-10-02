@@ -32,6 +32,7 @@ CENSUS_PREFIX = "benchmarks/scj-principales/corpus-verification/v1/"
 OUTPUT_PREFIX = "benchmarks/scj-principales/ling-literal-ocr/v1"
 MODEL = "inclusionai/ling-3.0-flash-vl"
 PROVIDER = "NovitaAI"
+PROVIDER_ROUTE = "novita"
 PASSES = 2
 SHARD_COUNT = 20
 RENDER_SCALE = 2.0
@@ -326,8 +327,8 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         "temperature": 0,
         "max_tokens": 16384,
         "provider": {
-            "only": [PROVIDER],
-            "order": [PROVIDER],
+            "only": [PROVIDER_ROUTE],
+            "order": [PROVIDER_ROUTE],
             "allow_fallbacks": False,
             "require_parameters": True,
         },
