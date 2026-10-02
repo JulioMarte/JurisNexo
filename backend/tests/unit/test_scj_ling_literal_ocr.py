@@ -348,6 +348,42 @@ def test_verify_evidence_rejects_wrong_page_or_transcription_hash() -> None:
         )
 
 
+def test_verify_evidence_accepts_byte_different_render_for_same_source_page() -> None:
+    module = _module()
+    page = {
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 7,
+    }
+    record = {
+        "pass": 1,
+        "plan_sha256": "b" * 64,
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 7,
+        "requested_model": module.MODEL,
+        "returned_model": module.MODEL,
+        "requested_provider": module.PROVIDER,
+        "requested_provider_route": module.PROVIDER_ROUTE,
+        "returned_provider": "NovitaAI",
+        "generation_id": "gen-test",
+        "total_cost_usd": 0.001,
+        "transcription": "texto",
+        "transcription_sha256": module._sha256(b"texto"),
+        "render_png_sha256": "c" * 64,
+    }
+
+    module._verify_evidence(
+        record,
+        plan_sha="b" * 64,
+        page=page,
+        pass_number=1,
+        render_png_sha256="d" * 64,
+    )
+
+
 def test_verify_evidence_rejects_invalid_cost() -> None:
     module = _module()
     page = {
