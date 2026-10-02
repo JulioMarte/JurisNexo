@@ -12,7 +12,7 @@ from typing import Any
 from jurisnexo.acquisition.s3_object_store import build_s3_object_store
 
 BASE_PREFIX = "benchmarks/scj-principales/single-pdf-quality/v1"
-ALLOWED_STAGES = frozenset({"deterministic", "jev", "deepseek"})
+ALLOWED_STAGES = frozenset({"deterministic", "jev", "deepseek", "ling-pass-1", "ling-pass-2"})
 
 
 def _sha256(data: bytes) -> str:
