@@ -99,7 +99,8 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
         "allow_fallbacks": False,
         "require_parameters": True,
     }
-    assert module.PROVIDER_ROUTE == "novita"\n    assert result["returned_provider"] == "NovitaAI"
+    assert module.PROVIDER_ROUTE == "novita"
+    assert result["returned_provider"] == "NovitaAI"
     assert result["total_cost_usd"] == pytest.approx(0.00123)
 
 
