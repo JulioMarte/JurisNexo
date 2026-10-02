@@ -23,6 +23,7 @@ import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import pypdfium2 as pdfium
@@ -41,6 +42,7 @@ RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_CACHE_TTL_SECONDS = "86400"
+PDFIUM_RENDER_LOCK = Lock()
 
 PASS1_PROMPT = """Transcribe this judicial-document page literally.
 Return only the visible text, in reading order, with no Markdown fence, summary,
@@ -280,22 +282,26 @@ def build_plan(*, output: Path) -> dict[str, Any]:
 
 
 def _render_page(pdf_bytes: bytes, page_index: int) -> bytes:
-    doc = pdfium.PdfDocument(pdf_bytes)
-    try:
-        page = doc[page_index]
+    # PDFium is not safe for the concurrent page-loading pattern used by the
+    # Ling worker pool. Keep rendering serialized while allowing model calls
+    # and object-store I/O to remain concurrent across worker threads.
+    with PDFIUM_RENDER_LOCK:
+        doc = pdfium.PdfDocument(pdf_bytes)
         try:
-            bitmap = page.render(scale=RENDER_SCALE)
+            page = doc[page_index]
             try:
-                image = bitmap.to_pil()
-                stream = io.BytesIO()
-                image.save(stream, format="PNG")
-                return stream.getvalue()
+                bitmap = page.render(scale=RENDER_SCALE)
+                try:
+                    image = bitmap.to_pil()
+                    stream = io.BytesIO()
+                    image.save(stream, format="PNG")
+                    return stream.getvalue()
+                finally:
+                    bitmap.close()
             finally:
-                bitmap.close()
+                page.close()
         finally:
-            page.close()
-    finally:
-        doc.close()
+            doc.close()
 
 
 def _openrouter_headers(api_key: str) -> dict[str, str]:
@@ -745,40 +751,44 @@ def run_worker(
                 continue
 
             pdf_bytes = _source_pdf(store, documents[document_id])
-            futures = [
-                pool.submit(
-                    _process_page,
-                    store=store,
-                    plan_sha=plan_sha,
-                    page=page,
-                    pdf_bytes=pdf_bytes,
-                    api_key=api_key,
-                    run_id=run_id,
-                    run_attempt=run_attempt,
-                )
-                for page in document_pages
-            ]
-            assigned += len(futures)
+            # Bound the scheduler blast radius to at most WORKER_COUNT queued
+            # pages. A single page failure can therefore leave at most 20
+            # in-flight model calls instead of thousands of already-submitted
+            # futures continuing after the first exception is observed.
+            for offset in range(0, len(document_pages), WORKER_COUNT):
+                batch = document_pages[offset : offset + WORKER_COUNT]
+                futures = [
+                    pool.submit(
+                        _process_page,
+                        store=store,
+                        plan_sha=plan_sha,
+                        page=page,
+                        pdf_bytes=pdf_bytes,
+                        api_key=api_key,
+                        run_id=run_id,
+                        run_attempt=run_attempt,
+                    )
+                    for page in batch
+                ]
+                assigned += len(futures)
 
-            # This barrier is intentional: all selected pages from the current
-            # PDF finish before the next source PDF is opened.
-            for future in as_completed(futures):
-                result = future.result()
-                charged += float(result["charged"])
-                restored += int(result["restored"])
-                completed += int(result["completed"])
-                print(
-                    json.dumps(
-                        {
-                            "document_id": document_id,
-                            "completed": completed,
-                            "restored": restored,
-                            "charged_this_run_usd": round(charged, 8),
-                        },
-                        sort_keys=True,
-                    ),
-                    flush=True,
-                )
+                for future in as_completed(futures):
+                    result = future.result()
+                    charged += float(result["charged"])
+                    restored += int(result["restored"])
+                    completed += int(result["completed"])
+                    print(
+                        json.dumps(
+                            {
+                                "document_id": document_id,
+                                "completed": completed,
+                                "restored": restored,
+                                "charged_this_run_usd": round(charged, 8),
+                            },
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
             documents_processed += 1
 
     if assigned != completed + restored:

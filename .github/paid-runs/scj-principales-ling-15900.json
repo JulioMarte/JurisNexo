@@ -6,5 +6,6 @@
   "documents": 36,
   "passes": 2,
   "workers": 20,
+  "attempt": 2,
   "confirm": "RUN_15900_PAGES"
 }

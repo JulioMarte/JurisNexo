@@ -543,6 +543,91 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
     assert summary["charged_this_run_usd"] == pytest.approx(0.04)
 
 
+def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    plan = _scheduler_plan(module)
+    prototype = dict(plan["pages"][0])
+    plan["pages"] = [
+        {
+            **prototype,
+            "page_index": index,
+            "ordinal": index,
+        }
+        for index in range(25)
+    ]
+    core = {
+        key: value
+        for key, value in plan.items()
+        if key not in {"plan_sha256", "counts"}
+    }
+    plan["plan_sha256"] = module._sha256(module._canonical(core))
+    plan["counts"] = {
+        "total_documents": 2,
+        "total_pages": 25,
+        "misaligned": 25,
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_bytes(module._canonical(plan))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    batch_sizes: list[int] = []
+
+    class FakeFuture:
+        def result(self) -> dict[str, object]:
+            return {"restored": 0, "completed": 1, "charged": 0.0}
+
+    class FakePool:
+        def __init__(self, *, max_workers: int, thread_name_prefix: str) -> None:
+            assert max_workers == 20
+            assert thread_name_prefix == "ling"
+
+        def __enter__(self) -> FakePool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(
+            self,
+            _function: Callable[..., dict[str, object]],
+            **_kwargs: object,
+        ) -> FakeFuture:
+            return FakeFuture()
+
+    def fake_as_completed(futures: list[FakeFuture]) -> list[FakeFuture]:
+        batch_sizes.append(len(futures))
+        return futures
+
+    def fake_store() -> object:
+        return object()
+
+    monkeypatch.setattr(module, "build_s3_object_store", fake_store)
+    monkeypatch.setattr(module, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(module, "as_completed", fake_as_completed)
+    def fake_source(
+        _store: object,
+        _document: dict[str, object],
+    ) -> bytes:
+        return b"pdf"
+
+    monkeypatch.setattr(module, "_source_pdf", fake_source)
+
+    summary = module.run_worker(
+        plan_path=plan_path,
+        worker_index=0,
+        run_id="123",
+        run_attempt="2",
+        output=tmp_path / "worker",
+    )
+
+    assert batch_sizes == [20, 5]
+    assert summary["assigned_pages"] == 25
+    assert summary["newly_completed_pages"] == 25
+
+
 def test_dynamic_scheduler_rejects_accounting_drift(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
