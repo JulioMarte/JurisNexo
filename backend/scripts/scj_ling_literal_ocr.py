@@ -425,6 +425,73 @@ def _load_json_if_exists(store: Any, key: str) -> dict[str, Any] | None:
     return json.loads(_get_bytes(store, key))
 
 
+def _verify_plan(plan: dict[str, Any]) -> str:
+    claimed = str(plan.get("plan_sha256") or "")
+    core = {
+        key: value
+        for key, value in plan.items()
+        if key not in {"plan_sha256", "counts"}
+    }
+    actual = _sha256(_canonical(core))
+    if claimed != actual:
+        raise RuntimeError(
+            f"plan identity mismatch: claimed {claimed or '<missing>'}, got {actual}"
+        )
+    pages = plan.get("pages")
+    if not isinstance(pages, list):
+        raise RuntimeError("plan pages must be a list")
+    expected_counts = Counter(str(item["classification"]) for item in pages)
+    expected = {"total_pages": len(pages), **dict(sorted(expected_counts.items()))}
+    if plan.get("counts") != expected:
+        raise RuntimeError("plan counts do not match plan pages")
+    return claimed
+
+
+def _verify_evidence(
+    record: dict[str, Any],
+    *,
+    plan_sha: str,
+    page: dict[str, Any],
+    pass_number: int,
+    render_png_sha256: str | None = None,
+    prior_key: str | None = None,
+    prior_sha256: str | None = None,
+) -> None:
+    expected = {
+        "plan_sha256": plan_sha,
+        "document_id": str(page["document_id"]),
+        "object_key": str(page["object_key"]),
+        "source_pdf_sha256": str(page["source_pdf_sha256"]),
+        "page_index": int(page["page_index"]),
+        "pass": pass_number,
+        "requested_model": MODEL,
+        "requested_provider": PROVIDER,
+        "requested_provider_route": PROVIDER_ROUTE,
+    }
+    for field, value in expected.items():
+        if record.get(field) != value:
+            raise RuntimeError(
+                f"OCR evidence identity mismatch for {field}: "
+                f"expected {value!r}, got {record.get(field)!r}"
+            )
+    if not _is_expected_provider(record.get("returned_provider")):
+        raise RuntimeError("OCR evidence provider pin violated")
+    if "ling-3.0-flash-vl" not in str(record.get("returned_model") or "").casefold():
+        raise RuntimeError("OCR evidence model identity mismatch")
+    transcription = record.get("transcription")
+    if not isinstance(transcription, str):
+        raise RuntimeError("OCR evidence transcription is missing")
+    if record.get("transcription_sha256") != _sha256(transcription.encode("utf-8")):
+        raise RuntimeError("OCR evidence transcription hash mismatch")
+    if render_png_sha256 is not None and record.get("render_png_sha256") != render_png_sha256:
+        raise RuntimeError("OCR evidence render hash mismatch")
+    if pass_number == 2:
+        if record.get("prior_pass_key") != prior_key:
+            raise RuntimeError("OCR pass-2 prior object identity mismatch")
+        if record.get("prior_transcription_sha256") != prior_sha256:
+            raise RuntimeError("OCR pass-2 prior transcription hash mismatch")
+
+
 def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
     response = store.client.get_object(Bucket=store.config.bucket, Key=document["object_key"])
     body = response["Body"].read()
@@ -454,13 +521,13 @@ def run_worker(
         raise RuntimeError("OPENROUTER_API_KEY is required")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_sha = _verify_plan(plan)
     if (
         plan["model"] != MODEL
         or plan["provider"] != PROVIDER
         or int(plan["shard_count"]) != SHARD_COUNT
     ):
         raise RuntimeError("plan/provider/model contract drift")
-    plan_sha = str(plan["plan_sha256"])
     store = build_s3_object_store()
     docs = {str(doc["document_id"]): doc for doc in plan["documents"]}
     mine = [page for page in plan["pages"] if int(page["worker_index"]) == worker_index]
@@ -483,10 +550,6 @@ def run_worker(
         key1 = _page_key(plan_sha, document_id, page_index, 1)
         key2 = _page_key(plan_sha, document_id, page_index, 2)
         existing2 = _load_json_if_exists(store, key2)
-        if existing2 is not None:
-            restored += 1
-            records.append(existing2)
-            continue
 
         if current_document_id != document_id or current_pdf_bytes is None:
             current_pdf_bytes = _source_pdf(store, docs[document_id])
@@ -495,6 +558,30 @@ def run_worker(
         image_sha = _sha256(image)
 
         first = _load_json_if_exists(store, key1)
+        if first is not None:
+            _verify_evidence(
+                first,
+                plan_sha=plan_sha,
+                page=page,
+                pass_number=1,
+                render_png_sha256=image_sha,
+            )
+        if existing2 is not None:
+            if first is None:
+                raise RuntimeError(f"pass 2 exists without pass 1: {key2}")
+            _verify_evidence(
+                existing2,
+                plan_sha=plan_sha,
+                page=page,
+                pass_number=2,
+                render_png_sha256=image_sha,
+                prior_key=key1,
+                prior_sha256=str(first["transcription_sha256"]),
+            )
+            restored += 1
+            records.append(existing2)
+            continue
+
         if first is None:
             observation1 = _call_ling(image_png=image, prompt=PASS1_PROMPT, api_key=api_key)
             first = {
@@ -606,7 +693,7 @@ def aggregate(
     output: Path,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan_sha = str(plan["plan_sha256"])
+    plan_sha = _verify_plan(plan)
     store = build_s3_object_store()
     expected = {(str(page["document_id"]), int(page["page_index"])) for page in plan["pages"]}
     observed: set[tuple[str, int]] = set()
