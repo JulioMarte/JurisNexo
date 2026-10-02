@@ -1,0 +1,185 @@
+name: SCJ Principales Ling literal OCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_paid_run:
+        description: Type RUN_15900_PAGES to authorize the paid corpus OCR
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-principales-ling-literal-ocr
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require explicit paid-run confirmation
+        run: |
+          test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install contract runtime
+        run: |
+          python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Validate Ling OCR contract
+        run: |
+          python -m py_compile backend/scripts/scj_ling_literal_ocr.py
+          ruff check \
+            backend/scripts/scj_ling_literal_ocr.py \
+            backend/tests/unit/test_scj_ling_literal_ocr.py
+          pytest -q backend/tests/unit/test_scj_ling_literal_ocr.py
+
+  plan:
+    needs: contract
+    runs-on: ubuntu-24.04
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend "boto3==1.43.93" \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Freeze unresolved-page plan from durable census
+        run: |
+          mkdir -p "$RUNNER_TEMP/ling-plan"
+          python backend/scripts/scj_ling_literal_ocr.py plan \
+            --output "$RUNNER_TEMP/ling-plan"
+          python - "$RUNNER_TEMP/ling-plan/plan.json" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1], encoding="utf-8"))
+          counts = plan["counts"]
+          print(f"Target pages: {counts['total_pages']}")
+          print(f"Misaligned: {counts.get('misaligned', 0)}")
+          print(f"No native text: {counts.get('no_native_text', 0)}")
+          if counts["total_pages"] != 15900:
+              raise SystemExit(
+                  "Frozen census target changed from expected 15,900 pages; "
+                  "review before spending."
+              )
+          PY
+      - name: Publish frozen plan summary
+        run: |
+          python - "$RUNNER_TEMP/ling-plan/plan.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("## Ling literal OCR frozen plan")
+          print()
+          print(f"- Pages: **{plan['counts']['total_pages']}**")
+          print(f"- Model: **{plan['model']}**")
+          print(f"- Provider: **{plan['provider']}**")
+          print(f"- Passes: **{plan['passes']}**")
+          print(f"- Workers: **{plan['shard_count']}**")
+          print(f"- Plan SHA-256: {plan['plan_sha256']}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-ling-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-plan/plan.json
+          retention-days: 90
+
+  ocr:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        worker_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-ling-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-plan
+      - run: |
+          python -m pip install -e ./backend "boto3==1.43.93" \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Run two-pass literal OCR shard
+        run: |
+          mkdir -p "$RUNNER_TEMP/ling-worker"
+          python backend/scripts/scj_ling_literal_ocr.py worker \
+            --plan "$RUNNER_TEMP/ling-plan/plan.json" \
+            --worker-index '${{ matrix.worker_index }}' \
+            --run-id '${{ github.run_id }}' \
+            --run-attempt '${{ github.run_attempt }}' \
+            --output "$RUNNER_TEMP/ling-worker"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-ling-worker-${{ matrix.worker_index }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-worker/**
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    needs: [plan, ocr]
+    runs-on: ubuntu-24.04
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-ling-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scj-ling-worker-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-workers
+          merge-multiple: false
+      - run: |
+          python -m pip install -e ./backend "boto3==1.43.93" \
+            "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Reconcile every page and calculate exact cost
+        run: |
+          mkdir -p "$RUNNER_TEMP/ling-summary"
+          python backend/scripts/scj_ling_literal_ocr.py aggregate \
+            --plan "$RUNNER_TEMP/ling-plan/plan.json" \
+            --worker-root "$RUNNER_TEMP/ling-workers" \
+            --run-id '${{ github.run_id }}' \
+            --run-attempt '${{ github.run_attempt }}' \
+            --output "$RUNNER_TEMP/ling-summary"
+      - name: Publish final OCR and cost report
+        run: cat "$RUNNER_TEMP/ling-summary/summary.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-ling-summary-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-summary/**
+          retention-days: 90
