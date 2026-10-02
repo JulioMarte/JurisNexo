@@ -72,7 +72,7 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     body = seen["body"]
     assert isinstance(body, dict)
     assert body["model"] == module.MODEL
-    assert "reasoning" not in body
+    assert body["reasoning"] == {"effort": "none"}
     assert body["usage"] == {"include": True}
     assert body["provider"] == {
         "only": [module.PROVIDER_ROUTE],
@@ -121,6 +121,65 @@ def test_ling_accepts_empty_text_as_valid_literal_ocr(
 
     assert result["transcription"] == ""
     assert result["generation_id"] == "gen-empty"
+
+
+def test_ling_accepts_null_stop_as_valid_empty_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
+            "id": "gen-null-empty",
+            "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {"cost": 0.0001},
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": None},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+
+    result = module._call_ling(
+        image_png=b"image",
+        prompt=module.PASS1_PROMPT,
+        api_key="test-key",
+    )
+
+    assert result["transcription"] == ""
+
+
+def test_ling_rejects_null_completion_without_success_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
+            "id": "gen-null-invalid",
+            "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {"cost": 0.0001},
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"content": None},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+
+    with pytest.raises(RuntimeError, match="no textual completion"):
+        module._call_ling(
+            image_png=b"image",
+            prompt=module.PASS1_PROMPT,
+            api_key="test-key",
+        )
 
 
 def test_ling_rejects_http_200_choice_error(
