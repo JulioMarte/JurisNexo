@@ -465,7 +465,7 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         def __init__(self, *, max_workers: int, thread_name_prefix: str) -> None:
             events.append(("pool", (max_workers, thread_name_prefix)))
 
-        def __enter__(self) -> "FakePool":
+        def __enter__(self) -> FakePool:
             return self
 
         def __exit__(self, *_args: object) -> None:
