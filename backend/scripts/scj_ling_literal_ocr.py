@@ -373,6 +373,17 @@ def _content_text(response: dict[str, Any]) -> str:
     if isinstance(content, list):
         parts = [str(item.get("text") or "") for item in content if isinstance(item, dict)]
         return "".join(parts).strip()
+    if (
+        content is None
+        and choice.get("finish_reason") == "stop"
+        and isinstance(message, dict)
+        and not message.get("tool_calls")
+        and not message.get("refusal")
+    ):
+        # Some OpenAI-compatible providers encode a successful empty answer as
+        # null rather than an empty string. For literal OCR, that represents a
+        # valid page with no visible text.
+        return ""
     raise RuntimeError("OpenRouter response has no textual completion")
 
 
@@ -391,6 +402,7 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         ],
         "temperature": 0,
         "max_tokens": 16384,
+        "reasoning": {"effort": "none"},
         "usage": {"include": True},
         "provider": {
             "only": [PROVIDER_ROUTE],
