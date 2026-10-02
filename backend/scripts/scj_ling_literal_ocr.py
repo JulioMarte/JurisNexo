@@ -394,7 +394,15 @@ def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
     return payload
 
 
-def run_worker(*, plan_path: Path, worker_index: int, run_id: str, run_attempt: str, output: Path) -> dict[str, Any]:
+def run_worker(
+    *,
+    plan_path: Path,
+    worker_index: int,
+    run_id: str,
+    run_attempt: str,
+    output: Path,
+    max_pages: int = 0,
+) -> dict[str, Any]:
     if not 0 <= worker_index < SHARD_COUNT:
         raise ValueError(f"worker_index must be 0..{SHARD_COUNT - 1}")
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -408,6 +416,10 @@ def run_worker(*, plan_path: Path, worker_index: int, run_id: str, run_attempt: 
     store = build_s3_object_store()
     docs = {str(doc["document_id"]): doc for doc in plan["documents"]}
     mine = [page for page in plan["pages"] if int(page["worker_index"]) == worker_index]
+    if max_pages < 0:
+        raise ValueError("max_pages must be zero or positive")
+    if max_pages:
+        mine = mine[:max_pages]
     output.mkdir(parents=True, exist_ok=True)
 
     charged = 0.0
@@ -650,6 +662,7 @@ def main() -> int:
     worker.add_argument("--run-id", required=True)
     worker.add_argument("--run-attempt", required=True)
     worker.add_argument("--output", type=Path, required=True)
+    worker.add_argument("--max-pages", type=int, default=0)
 
     collect = sub.add_parser("aggregate")
     collect.add_argument("--plan", type=Path, required=True)
@@ -668,6 +681,7 @@ def main() -> int:
             run_id=args.run_id,
             run_attempt=args.run_attempt,
             output=args.output,
+            max_pages=args.max_pages,
         )
     else:
         aggregate(
