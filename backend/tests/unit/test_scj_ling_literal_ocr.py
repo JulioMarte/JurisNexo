@@ -25,29 +25,10 @@ def _module() -> ModuleType:
     return module
 
 
-def test_page_ownership_is_pdf_local_and_deterministic() -> None:
+def test_dynamic_scheduler_contract_uses_twenty_workers() -> None:
     module = _module()
-    pages = [{"page_index": index} for index in range(61)]
-    for page in pages:
-        page["worker_index"] = int(page["page_index"]) % module.SHARD_COUNT
-
-    owners = {
-        index: [
-            int(page["page_index"])
-            for page in pages
-            if int(page["worker_index"]) == index
-        ]
-        for index in range(module.SHARD_COUNT)
-    }
-
-    flattened = [page for group in owners.values() for page in group]
-    assert sorted(flattened) == list(range(61))
-    assert len(flattened) == len(set(flattened))
-    assert all(
-        page_index % module.SHARD_COUNT == worker
-        for worker, group in owners.items()
-        for page_index in group
-    )
+    assert module.WORKER_COUNT == 20
+    assert not hasattr(module, "SHARD_COUNT")
 
 
 def test_second_pass_is_adversarial_but_image_authoritative() -> None:
@@ -291,7 +272,7 @@ def test_verify_plan_rejects_tampered_page_selection() -> None:
         "schema_version": 1,
         "model": module.MODEL,
         "provider": module.PROVIDER,
-        "shard_count": module.SHARD_COUNT,
+        "worker_count": module.WORKER_COUNT,
         "pages": [
             {
                 "document_id": "doc",
