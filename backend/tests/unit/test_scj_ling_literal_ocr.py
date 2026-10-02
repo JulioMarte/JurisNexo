@@ -8,6 +8,7 @@ import os
 import tarfile
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -258,3 +259,118 @@ def test_plan_uses_frozen_inventory_document_id(
     assert plan["counts"] == {"misaligned": 1, "total_pages": 1}
     assert plan["pages"][0]["document_id"] == "0123456789abcdef"
     assert plan["documents"][0]["document_id"] == "0123456789abcdef"
+
+
+def test_verify_plan_rejects_tampered_page_selection() -> None:
+    module = _module()
+    core: dict[str, Any] = {
+        "schema_version": 1,
+        "model": module.MODEL,
+        "provider": module.PROVIDER,
+        "shard_count": module.SHARD_COUNT,
+        "pages": [
+            {
+                "document_id": "doc",
+                "object_key": "source.pdf",
+                "source_pdf_sha256": "a" * 64,
+                "page_index": 1,
+                "classification": "misaligned",
+            }
+        ],
+    }
+    page = core["pages"][0]
+    assert isinstance(page, dict)
+    plan = {
+        **core,
+        "plan_sha256": module._sha256(module._canonical(core)),
+        "counts": {"total_pages": 1, "misaligned": 1},
+    }
+    page["page_index"] = 2
+
+    with pytest.raises(RuntimeError, match="plan identity mismatch"):
+        module._verify_plan(plan)
+
+
+def test_verify_evidence_rejects_wrong_page_or_transcription_hash() -> None:
+    module = _module()
+    page = {
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 7,
+    }
+    record = {
+        "pass": 1,
+        "plan_sha256": "b" * 64,
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 8,
+        "requested_model": module.MODEL,
+        "returned_model": module.MODEL,
+        "requested_provider": module.PROVIDER,
+        "requested_provider_route": module.PROVIDER_ROUTE,
+        "returned_provider": "NovitaAI",
+        "generation_id": "gen-test",
+        "total_cost_usd": 0.001,
+        "transcription": "texto",
+        "transcription_sha256": module._sha256(b"texto"),
+        "render_png_sha256": "c" * 64,
+    }
+
+    with pytest.raises(RuntimeError, match="page_index"):
+        module._verify_evidence(
+            record,
+            plan_sha="b" * 64,
+            page=page,
+            pass_number=1,
+            render_png_sha256="c" * 64,
+        )
+
+    record["page_index"] = 7
+    record["transcription_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="transcription hash mismatch"):
+        module._verify_evidence(
+            record,
+            plan_sha="b" * 64,
+            page=page,
+            pass_number=1,
+            render_png_sha256="c" * 64,
+        )
+
+
+def test_verify_evidence_rejects_invalid_cost() -> None:
+    module = _module()
+    page = {
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 7,
+    }
+    record = {
+        "pass": 1,
+        "plan_sha256": "b" * 64,
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 7,
+        "requested_model": module.MODEL,
+        "returned_model": module.MODEL,
+        "requested_provider": module.PROVIDER,
+        "requested_provider_route": module.PROVIDER_ROUTE,
+        "returned_provider": "NovitaAI",
+        "generation_id": "gen-test",
+        "total_cost_usd": -0.01,
+        "transcription": "texto",
+        "transcription_sha256": module._sha256(b"texto"),
+        "render_png_sha256": "c" * 64,
+    }
+
+    with pytest.raises(RuntimeError, match="cost must be finite and non-negative"):
+        module._verify_evidence(
+            record,
+            plan_sha="b" * 64,
+            page=page,
+            pass_number=1,
+            render_png_sha256="c" * 64,
+        )

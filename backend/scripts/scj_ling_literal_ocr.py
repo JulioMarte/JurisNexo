@@ -14,6 +14,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import tarfile
 import time
@@ -378,8 +379,13 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         raise RuntimeError("OpenRouter response omitted usage accounting")
     usage = {str(key): value for key, value in usage_raw.items()}
     raw_cost = usage.get("cost")
-    if isinstance(raw_cost, bool) or not isinstance(raw_cost, (int, float)):
-        raise RuntimeError("OpenRouter response omitted exact usage.cost")
+    if (
+        isinstance(raw_cost, bool)
+        or not isinstance(raw_cost, (int, float))
+        or not math.isfinite(float(raw_cost))
+        or float(raw_cost) < 0
+    ):
+        raise RuntimeError("OpenRouter response omitted valid exact usage.cost")
 
     prompt_tokens = usage.get("prompt_tokens")
     completion_tokens = usage.get("completion_tokens")
@@ -425,6 +431,84 @@ def _load_json_if_exists(store: Any, key: str) -> dict[str, Any] | None:
     return json.loads(_get_bytes(store, key))
 
 
+def _verify_plan(plan: dict[str, Any]) -> str:
+    claimed = str(plan.get("plan_sha256") or "")
+    core = {
+        key: value
+        for key, value in plan.items()
+        if key not in {"plan_sha256", "counts"}
+    }
+    actual = _sha256(_canonical(core))
+    if claimed != actual:
+        raise RuntimeError(
+            f"plan identity mismatch: claimed {claimed or '<missing>'}, got {actual}"
+        )
+    pages = plan.get("pages")
+    if not isinstance(pages, list):
+        raise RuntimeError("plan pages must be a list")
+    expected_counts = Counter(str(item["classification"]) for item in pages)
+    expected = {"total_pages": len(pages), **dict(sorted(expected_counts.items()))}
+    if plan.get("counts") != expected:
+        raise RuntimeError("plan counts do not match plan pages")
+    return claimed
+
+
+def _verify_evidence(
+    record: dict[str, Any],
+    *,
+    plan_sha: str,
+    page: dict[str, Any],
+    pass_number: int,
+    render_png_sha256: str | None = None,
+    prior_key: str | None = None,
+    prior_sha256: str | None = None,
+) -> None:
+    expected = {
+        "plan_sha256": plan_sha,
+        "document_id": str(page["document_id"]),
+        "object_key": str(page["object_key"]),
+        "source_pdf_sha256": str(page["source_pdf_sha256"]),
+        "page_index": int(page["page_index"]),
+        "pass": pass_number,
+        "requested_model": MODEL,
+        "requested_provider": PROVIDER,
+        "requested_provider_route": PROVIDER_ROUTE,
+    }
+    for field, value in expected.items():
+        if record.get(field) != value:
+            raise RuntimeError(
+                f"OCR evidence identity mismatch for {field}: "
+                f"expected {value!r}, got {record.get(field)!r}"
+            )
+    if not _is_expected_provider(record.get("returned_provider")):
+        raise RuntimeError("OCR evidence provider pin violated")
+    if "ling-3.0-flash-vl" not in str(record.get("returned_model") or "").casefold():
+        raise RuntimeError("OCR evidence model identity mismatch")
+    transcription = record.get("transcription")
+    if not isinstance(transcription, str):
+        raise RuntimeError("OCR evidence transcription is missing")
+    if record.get("transcription_sha256") != _sha256(transcription.encode("utf-8")):
+        raise RuntimeError("OCR evidence transcription hash mismatch")
+    if render_png_sha256 is not None and record.get("render_png_sha256") != render_png_sha256:
+        raise RuntimeError("OCR evidence render hash mismatch")
+    generation_id = record.get("generation_id")
+    if not isinstance(generation_id, str) or not generation_id.strip():
+        raise RuntimeError("OCR evidence generation id is missing")
+    raw_cost = record.get("total_cost_usd")
+    if (
+        isinstance(raw_cost, bool)
+        or not isinstance(raw_cost, (int, float))
+        or not math.isfinite(float(raw_cost))
+        or float(raw_cost) < 0
+    ):
+        raise RuntimeError("OCR evidence cost must be finite and non-negative")
+    if pass_number == 2:
+        if record.get("prior_pass_key") != prior_key:
+            raise RuntimeError("OCR pass-2 prior object identity mismatch")
+        if record.get("prior_transcription_sha256") != prior_sha256:
+            raise RuntimeError("OCR pass-2 prior transcription hash mismatch")
+
+
 def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
     response = store.client.get_object(Bucket=store.config.bucket, Key=document["object_key"])
     body = response["Body"].read()
@@ -454,13 +538,13 @@ def run_worker(
         raise RuntimeError("OPENROUTER_API_KEY is required")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_sha = _verify_plan(plan)
     if (
         plan["model"] != MODEL
         or plan["provider"] != PROVIDER
         or int(plan["shard_count"]) != SHARD_COUNT
     ):
         raise RuntimeError("plan/provider/model contract drift")
-    plan_sha = str(plan["plan_sha256"])
     store = build_s3_object_store()
     docs = {str(doc["document_id"]): doc for doc in plan["documents"]}
     mine = [page for page in plan["pages"] if int(page["worker_index"]) == worker_index]
@@ -483,10 +567,6 @@ def run_worker(
         key1 = _page_key(plan_sha, document_id, page_index, 1)
         key2 = _page_key(plan_sha, document_id, page_index, 2)
         existing2 = _load_json_if_exists(store, key2)
-        if existing2 is not None:
-            restored += 1
-            records.append(existing2)
-            continue
 
         if current_document_id != document_id or current_pdf_bytes is None:
             current_pdf_bytes = _source_pdf(store, docs[document_id])
@@ -495,6 +575,30 @@ def run_worker(
         image_sha = _sha256(image)
 
         first = _load_json_if_exists(store, key1)
+        if first is not None:
+            _verify_evidence(
+                first,
+                plan_sha=plan_sha,
+                page=page,
+                pass_number=1,
+                render_png_sha256=image_sha,
+            )
+        if existing2 is not None:
+            if first is None:
+                raise RuntimeError(f"pass 2 exists without pass 1: {key2}")
+            _verify_evidence(
+                existing2,
+                plan_sha=plan_sha,
+                page=page,
+                pass_number=2,
+                render_png_sha256=image_sha,
+                prior_key=key1,
+                prior_sha256=str(first["transcription_sha256"]),
+            )
+            restored += 1
+            records.append(existing2)
+            continue
+
         if first is None:
             observation1 = _call_ling(image_png=image, prompt=PASS1_PROMPT, api_key=api_key)
             first = {
@@ -606,7 +710,7 @@ def aggregate(
     output: Path,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan_sha = str(plan["plan_sha256"])
+    plan_sha = _verify_plan(plan)
     store = build_s3_object_store()
     expected = {(str(page["document_id"]), int(page["page_index"])) for page in plan["pages"]}
     observed: set[tuple[str, int]] = set()
@@ -616,26 +720,42 @@ def aggregate(
     returned_models: Counter[str] = Counter()
     returned_providers: Counter[str] = Counter()
 
+    pages_by_identity = {
+        (str(page["document_id"]), int(page["page_index"])): page
+        for page in plan["pages"]
+    }
     for document_id, page_index in sorted(expected):
-        for pass_number in (1, 2):
-            key = _page_key(plan_sha, document_id, page_index, pass_number)
-            record = _load_json_if_exists(store, key)
-            if record is None:
-                raise RuntimeError(f"missing OCR evidence: {key}")
-            if str(record.get("plan_sha256")) != plan_sha:
-                raise RuntimeError(f"wrong plan identity: {key}")
-            returned_provider = str(record.get("returned_provider", ""))
-            if not _is_expected_provider(returned_provider):
-                raise RuntimeError(f"wrong provider in evidence: {key}")
-            cost = float(record.get("total_cost_usd") or 0.0)
+        page = pages_by_identity[(document_id, page_index)]
+        key1 = _page_key(plan_sha, document_id, page_index, 1)
+        key2 = _page_key(plan_sha, document_id, page_index, 2)
+        first = _load_json_if_exists(store, key1)
+        second = _load_json_if_exists(store, key2)
+        if first is None:
+            raise RuntimeError(f"missing OCR evidence: {key1}")
+        if second is None:
+            raise RuntimeError(f"missing OCR evidence: {key2}")
+        _verify_evidence(first, plan_sha=plan_sha, page=page, pass_number=1)
+        _verify_evidence(
+            second,
+            plan_sha=plan_sha,
+            page=page,
+            pass_number=2,
+            render_png_sha256=str(first["render_png_sha256"]),
+            prior_key=key1,
+            prior_sha256=str(first["transcription_sha256"]),
+        )
+        if second.get("render_png_sha256") != first.get("render_png_sha256"):
+            raise RuntimeError(f"OCR pass render mismatch: {key2}")
+        for pass_number, record in ((1, first), (2, second)):
+            cost = float(record["total_cost_usd"])
             cumulative_cost += cost
             if pass_number == 1:
                 pass1_cost += cost
             else:
                 pass2_cost += cost
                 observed.add((document_id, page_index))
-            returned_models[str(record.get("returned_model") or "")] += 1
-            returned_providers[str(record.get("returned_provider") or "")] += 1
+            returned_models[str(record["returned_model"])] += 1
+            returned_providers[str(record["returned_provider"])] += 1
 
     if observed != expected:
         raise RuntimeError("aggregate coverage does not exactly match frozen plan")
@@ -648,6 +768,25 @@ def aggregate(
             f"expected {SHARD_COUNT} worker summaries, "
             f"found {len(worker_summaries)}"
         )
+    worker_ids = {int(item.get("worker_index", -1)) for item in worker_summaries}
+    if worker_ids != set(range(SHARD_COUNT)):
+        raise RuntimeError("worker summaries do not cover exactly workers 0..19")
+    for item in worker_summaries:
+        if (
+            item.get("plan_sha256") != plan_sha
+            or item.get("model") != MODEL
+            or item.get("provider") != PROVIDER
+            or int(item.get("passes", 0)) != PASSES
+        ):
+            raise RuntimeError("worker summary contract drift")
+        raw_charged = item.get("charged_this_run_usd")
+        if (
+            isinstance(raw_charged, bool)
+            or not isinstance(raw_charged, (int, float))
+            or not math.isfinite(float(raw_charged))
+            or float(raw_charged) < 0
+        ):
+            raise RuntimeError("worker summary cost must be finite and non-negative")
     billed_this_run = sum(float(item["charged_this_run_usd"]) for item in worker_summaries)
 
     summary = {
