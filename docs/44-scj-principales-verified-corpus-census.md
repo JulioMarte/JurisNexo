@@ -316,5 +316,13 @@ silently pay again for already durable work.
 The aggregate fails closed unless every planned page has both passes from the
 pinned provider. Its final report includes both the amount billed by the current
 GitHub run and the cumulative cost of all persisted calls in the completed
-generation. The workflow requires the explicit `RUN_15900_PAGES` confirmation.
+generation. The workflow can run in inventory-only mode with no provider spend. For a paid
+canary, `max_pages_per_worker` limits how many pages each of the 20 workers may
+process while keeping the same frozen plan identity, so those completed pages
+are reused by the later full run. A full run uses `max_pages_per_worker=0`.
+Any paid mode requires the explicit `RUN_15900_PAGES` confirmation.
+
+The Ling request disables reasoning (`reasoning.effort=none`) because the task
+is literal transcription, not legal interpretation. This reduces avoidable
+latency/token spend and keeps the output contract focused on visible text.
 \n
