@@ -8,7 +8,8 @@ import os
 import tarfile
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 
@@ -215,7 +216,10 @@ def test_plan_uses_frozen_inventory_document_id(
     }
     archive = _census_archive()
 
-    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
+    def fake_store() -> object:
+        return object()
+
+    monkeypatch.setattr(module, "build_s3_object_store", fake_store)
     def fake_latest(_store: object) -> tuple[str, dict[str, object]]:
         return "census/generation", {"status": "complete"}
 
@@ -471,15 +475,18 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def submit(self, function: object, **kwargs: object) -> FakeFuture:
-            page = kwargs["page"]
-            assert isinstance(page, dict)
+        def submit(
+            self,
+            function: Callable[..., dict[str, object]],
+            **kwargs: object,
+        ) -> FakeFuture:
+            page_value = kwargs["page"]
+            assert isinstance(page_value, dict)
+            page = cast(dict[str, object], page_value)
             events.append(
                 ("submit", (str(page["document_id"]), int(page["page_index"])))
             )
-            assert callable(function)
             result = function(**kwargs)
-            assert isinstance(result, dict)
             return FakeFuture(result)
 
     def fake_as_completed(futures: list[FakeFuture]) -> list[FakeFuture]:
@@ -491,8 +498,9 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         return str(document["document_id"]).encode()
 
     def fake_process(**kwargs: object) -> dict[str, object]:
-        page = kwargs["page"]
-        assert isinstance(page, dict)
+        page_value = kwargs["page"]
+        assert isinstance(page_value, dict)
+        page = cast(dict[str, object], page_value)
         events.append(
             ("process", (str(page["document_id"]), int(page["page_index"])))
         )
@@ -552,13 +560,21 @@ def test_dynamic_scheduler_rejects_accounting_drift(
     plan_path = tmp_path / "plan.json"
     plan_path.write_bytes(module._canonical(plan))
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
-    monkeypatch.setattr(module, "_source_pdf", lambda *_args: b"pdf")
-    monkeypatch.setattr(
-        module,
-        "_process_page",
-        lambda **_kwargs: {"restored": 0, "completed": 0, "charged": 0.0},
-    )
+    def fake_store_for_drift() -> object:
+        return object()
+
+    def fake_source_for_drift(
+        _store: object,
+        _document: dict[str, object],
+    ) -> bytes:
+        return b"pdf"
+
+    def fake_process_for_drift(**_kwargs: object) -> dict[str, object]:
+        return {"restored": 0, "completed": 0, "charged": 0.0}
+
+    monkeypatch.setattr(module, "build_s3_object_store", fake_store_for_drift)
+    monkeypatch.setattr(module, "_source_pdf", fake_source_for_drift)
+    monkeypatch.setattr(module, "_process_page", fake_process_for_drift)
 
     with pytest.raises(RuntimeError, match="scheduler accounting mismatch"):
         module.run_worker(
