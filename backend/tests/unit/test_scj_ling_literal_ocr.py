@@ -68,20 +68,17 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
         return {
             "id": "gen-test",
             "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 25,
+                "total_tokens": 125,
+                "cost": 0.00123,
+            },
             "choices": [{"message": {"content": "texto literal"}}],
         }
 
-    def fake_generation(**_kwargs: object) -> dict[str, object]:
-        return {
-            "provider_name": module.PROVIDER,
-            "model": module.MODEL,
-            "total_cost": 0.00123,
-            "tokens_prompt": 100,
-            "tokens_completion": 25,
-        }
-
     monkeypatch.setattr(module, "_openrouter_json", fake_request)
-    monkeypatch.setattr(module, "_generation_metadata", fake_generation)
 
     result = module._call_ling(
         image_png=b"not-a-real-png-needed-for-request-contract",
@@ -93,6 +90,7 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     assert isinstance(body, dict)
     assert body["model"] == module.MODEL
     assert body["reasoning"] == {"effort": "none"}
+    assert body["usage"] == {"include": True}
     assert body["provider"] == {
         "only": [module.PROVIDER_ROUTE],
         "order": [module.PROVIDER_ROUTE],
@@ -102,6 +100,7 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     assert module.PROVIDER_ROUTE == "novita"
     assert result["returned_provider"] == "NovitaAI"
     assert result["total_cost_usd"] == pytest.approx(0.00123)
+    assert result["tokens_total"] == 125
 
 
 def test_ling_rejects_provider_drift(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,20 +110,36 @@ def test_ling_rejects_provider_drift(monkeypatch: pytest.MonkeyPatch) -> None:
         return {
             "id": "gen-test",
             "model": module.MODEL,
+            "provider": "DeepInfra",
+            "usage": {"cost": 0.001},
             "choices": [{"message": {"content": "texto"}}],
         }
 
-    def fake_generation(**_kwargs: object) -> dict[str, object]:
+    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+
+    with pytest.raises(RuntimeError, match="provider pin violated"):
+        module._call_ling(
+            image_png=b"image",
+            prompt=module.PASS1_PROMPT,
+            api_key="test-key",
+        )
+
+
+def test_ling_refuses_unmetered_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
         return {
-            "provider_name": "DeepInfra",
+            "id": "gen-test",
             "model": module.MODEL,
-            "total_cost": 0.001,
+            "provider": "NovitaAI",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "choices": [{"message": {"content": "texto"}}],
         }
 
     monkeypatch.setattr(module, "_openrouter_json", fake_request)
-    monkeypatch.setattr(module, "_generation_metadata", fake_generation)
 
-    with pytest.raises(RuntimeError, match="provider pin violated"):
+    with pytest.raises(RuntimeError, match="usage.cost"):
         module._call_ling(
             image_png=b"image",
             prompt=module.PASS1_PROMPT,
