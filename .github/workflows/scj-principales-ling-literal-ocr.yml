@@ -42,38 +42,36 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Require explicit paid-run authorization
+      - name: Require explicit manual paid-run confirmation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_paid }}
+        run: test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+      - name: Validate push paid-run authorization
+        if: ${{ github.event_name == 'push' }}
         run: |
-          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
-            if [ '${{ inputs.run_paid }}' = 'true' ]; then
-              test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
-            fi
-          elif [ '${{ github.event_name }}' = 'push' ]; then
-            python - <<'PY'
-            import json
-            from pathlib import Path
+          python - <<'PY'
+          import json
+          from pathlib import Path
 
-            request = json.loads(
-                Path(".github/paid-runs/scj-principales-ling-15900.json")
-                .read_text(encoding="utf-8")
-            )
-            expected = {
-                "enabled": True,
-                "model": "inclusionai/ling-3.0-flash-vl",
-                "provider": "NovitaAI",
-                "pages": 15900,
-                "documents": 36,
-                "passes": 2,
-                "workers": 20,
-                "confirm": "RUN_15900_PAGES",
-            }
-            if request != expected:
-                raise SystemExit(
-                    "Paid-run authorization file does not exactly match "
-                    "the approved 15,900-page Ling benchmark contract."
-                )
-            PY
-          fi
+          request = json.loads(
+              Path(".github/paid-runs/scj-principales-ling-15900.json")
+              .read_text(encoding="utf-8")
+          )
+          expected = {
+              "enabled": True,
+              "model": "inclusionai/ling-3.0-flash-vl",
+              "provider": "NovitaAI",
+              "pages": 15900,
+              "documents": 36,
+              "passes": 2,
+              "workers": 20,
+              "confirm": "RUN_15900_PAGES",
+          }
+          if request != expected:
+              raise SystemExit(
+                  "Paid-run authorization file does not exactly match "
+                  "the approved 15,900-page Ling benchmark contract."
+              )
+          PY
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
