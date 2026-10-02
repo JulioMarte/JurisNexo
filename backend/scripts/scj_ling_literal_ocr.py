@@ -35,6 +35,7 @@ PROVIDER = "NovitaAI"
 PROVIDER_ROUTE = "novita"
 PASSES = 2
 SHARD_COUNT = 20
+EXPECTED_DOCUMENTS = 36
 RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -172,7 +173,13 @@ def build_plan(*, output: Path) -> dict[str, Any]:
     store = build_s3_object_store()
     census_prefix, success = _latest_completed_census(store)
     inventory = json.loads(_get_bytes(store, f"{census_prefix}/inventory.json"))
-    inventory_by_key = {str(item["object_key"]): item for item in inventory["documents"]}
+    inventory_documents = inventory["documents"]
+    if len(inventory_documents) != EXPECTED_DOCUMENTS:
+        raise RuntimeError(
+            f"frozen census inventory must contain {EXPECTED_DOCUMENTS} documents; "
+            f"found {len(inventory_documents)}"
+        )
+    inventory_by_key = {str(item["object_key"]): item for item in inventory_documents}
 
     pages: list[dict[str, Any]] = []
     documents: list[dict[str, Any]] = []
@@ -220,6 +227,18 @@ def build_plan(*, output: Path) -> dict[str, Any]:
                 }
             )
 
+    if len(document_objects) != EXPECTED_DOCUMENTS:
+        raise RuntimeError(
+            f"completed census must publish {EXPECTED_DOCUMENTS} document archives; "
+            f"found {len(document_objects)}"
+        )
+    if len(documents) != EXPECTED_DOCUMENTS:
+        missing = sorted(set(inventory_by_key) - {str(doc["object_key"]) for doc in documents})
+        raise RuntimeError(
+            f"Ling recovery plan must cover all {EXPECTED_DOCUMENTS} documents; "
+            f"selected {len(documents)}; documents without target pages: {missing}"
+        )
+
     pages.sort(key=lambda x: (x["object_key"], x["page_index"]))
     for ordinal, item in enumerate(pages):
         item["ordinal"] = ordinal
@@ -243,7 +262,11 @@ def build_plan(*, output: Path) -> dict[str, Any]:
     plan = {
         **plan_core,
         "plan_sha256": plan_sha,
-        "counts": {"total_pages": len(pages), **dict(sorted(counts.items()))},
+        "counts": {
+            "total_documents": len(documents),
+            "total_pages": len(pages),
+            **dict(sorted(counts.items())),
+        },
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "plan.json").write_bytes(_canonical(plan))
