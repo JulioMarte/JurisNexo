@@ -37,6 +37,7 @@ SHARD_COUNT = 20
 RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_CACHE_TTL_SECONDS = "86400"
 
 PASS1_PROMPT = """Transcribe this judicial-document page literally.
 Return only the visible text, in reading order, with no Markdown fence, summary,
@@ -245,6 +246,15 @@ def _render_page(pdf_bytes: bytes, page_index: int) -> bytes:
         doc.close()
 
 
+def _openrouter_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-OpenRouter-Cache": "true",
+        "X-OpenRouter-Cache-TTL": OPENROUTER_CACHE_TTL_SECONDS,
+    }
+
+
 def _openrouter_json(*, method: str, url: str, api_key: str, body: dict[str, Any] | None = None, attempts: int = 5) -> dict[str, Any]:
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     last: Exception | None = None
@@ -253,7 +263,7 @@ def _openrouter_json(*, method: str, url: str, api_key: str, body: dict[str, Any
             url,
             data=data,
             method=method,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers=_openrouter_headers(api_key),
         )
         try:
             with urllib.request.urlopen(request, timeout=180) as response:
@@ -303,7 +313,6 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         ],
         "temperature": 0,
         "max_tokens": 16384,
-        "reasoning": {"effort": "none"},
         "usage": {"include": True},
         "provider": {
             "only": [PROVIDER_ROUTE],
