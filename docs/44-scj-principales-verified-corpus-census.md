@@ -305,8 +305,8 @@ benchmarks/scj-principales/ling-literal-ocr/v1/
 
 Every pass records the source PDF SHA-256, rendered PNG SHA-256, page identity,
 requested and returned model, requested and routed provider, OpenRouter
-generation ID, token usage, latency, exact OpenRouter generation cost and the
-transcription. Pass 2 additionally records the first-pass object key and
+generation ID, token usage, latency, and exact OpenRouter `usage.cost` returned
+with that same inference response, plus the transcription. Pass 2 additionally records the first-pass object key and
 transcription SHA-256.
 
 Completed pass-2 objects are skipped on retry. A page with only pass 1 resumes
@@ -325,4 +325,3 @@ Any paid mode requires the explicit `RUN_15900_PAGES` confirmation.
 The Ling request disables reasoning (`reasoning.effort=none`) because the task
 is literal transcription, not legal interpretation. This reduces avoidable
 latency/token spend and keeps the output contract focused on visible text.
-\n
