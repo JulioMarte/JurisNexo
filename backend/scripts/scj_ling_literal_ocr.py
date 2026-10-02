@@ -582,7 +582,8 @@ def aggregate(*, plan_path: Path, worker_root: Path, run_id: str, run_attempt: s
                 raise RuntimeError(f"missing OCR evidence: {key}")
             if str(record.get("plan_sha256")) != plan_sha:
                 raise RuntimeError(f"wrong plan identity: {key}")
-            if str(record.get("returned_provider", "")).casefold() != PROVIDER.casefold():
+            returned_provider = str(record.get("returned_provider", ""))
+            if PROVIDER_ROUTE not in returned_provider.casefold():
                 raise RuntimeError(f"wrong provider in evidence: {key}")
             cost = float(record.get("total_cost_usd") or 0.0)
             cumulative_cost += cost
