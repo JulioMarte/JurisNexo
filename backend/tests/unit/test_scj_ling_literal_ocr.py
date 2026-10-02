@@ -167,17 +167,19 @@ def _census_archive() -> bytes:
         },
     ]
     raw = io.BytesIO()
-    with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed:
-        with tarfile.open(fileobj=compressed, mode="w") as archive:
-            for name, payload in {
+    with (
+        gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed,
+        tarfile.open(fileobj=compressed, mode="w") as archive,
+    ):
+        for name, payload in {
                 "document.json": json.dumps(document).encode(),
                 "pages.jsonl": (
                     "".join(json.dumps(page) + "\n" for page in pages).encode()
                 ),
-            }.items():
-                info = tarfile.TarInfo(name)
-                info.size = len(payload)
-                archive.addfile(info, io.BytesIO(payload))
+        }.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
     return raw.getvalue()
 
 
