@@ -1,0 +1,233 @@
+name: SCJ open-source OCR bakeoff
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches: [development]
+    paths:
+      - "benchmark/normalization/run_open_source_ocr_engine.py"
+      - "benchmark/normalization/score_open_source_ocr_bakeoff.py"
+      - "benchmark/normalization/test_open_source_ocr_bakeoff.py"
+      - "backend/scripts/scj_principales_visual_benchmark.py"
+      - ".github/workflows/scj-open-source-ocr-bakeoff.yml"
+  workflow_dispatch:
+    inputs:
+      page_limit:
+        description: Number of clean/control pages per engine
+        required: true
+        default: "290"
+        type: choice
+        options: ["12", "60", "120", "290"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-open-source-ocr-bakeoff-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  OCR_BAKEOFF_PAGE_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.page_limit || '12' }}
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Validate benchmark harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend "pillow==12.3.0" "pytest==9.1.1" "ruff==0.16.7"
+          python -m py_compile \
+            benchmark/normalization/run_open_source_ocr_engine.py \
+            benchmark/normalization/score_open_source_ocr_bakeoff.py \
+            benchmark/normalization/test_open_source_ocr_bakeoff.py
+          ruff check \
+            benchmark/normalization/run_open_source_ocr_engine.py \
+            benchmark/normalization/score_open_source_ocr_bakeoff.py \
+            benchmark/normalization/test_open_source_ocr_bakeoff.py
+          PYTHONPATH=backend/src pytest -q benchmark/normalization/test_open_source_ocr_bakeoff.py
+
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ocr-bakeoff-live'
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install reference preparation runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+          python -m pip install --upgrade pip
+          python -m pip install -e ./backend \
+            "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Prepare identical rendered pages and frozen references
+        env:
+          SCJ_VISUAL_OUTPUT: ${{ runner.temp }}/prepared
+          SCJ_VISUAL_STAGE: prepare
+          SCJ_VISUAL_SAMPLE_SIZE: ${{ env.OCR_BAKEOFF_PAGE_LIMIT }}
+          SCJ_VISUAL_ALIGNMENT_AUDIT_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.page_limit == '290' && '600' || '120' }}
+          SCJ_VISUAL_MIN_ALIGNMENT_AUDIT_SIZE: "20"
+          SCJ_VISUAL_MAX_CONCURRENCY: "1"
+        run: python backend/scripts/scj_principales_visual_benchmark.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-bakeoff-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared/**
+          if-no-files-found: error
+          retention-days: 2
+
+  engine:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        engine: [tesseract, paddleocr, rapidocr]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ocr-bakeoff-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/prepared
+      - name: Install common runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pillow==12.3.0"
+      - name: Install Tesseract 5
+        if: matrix.engine == 'tesseract'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+      - name: Install PaddleOCR
+        if: matrix.engine == 'paddleocr'
+        run: |
+          python -m pip install "paddlepaddle==3.2.2" "paddleocr==3.7.0"
+      - name: Install RapidOCR
+        if: matrix.engine == 'rapidocr'
+        run: |
+          python -m pip install "rapidocr==3.9.2" "onnxruntime>=1.20,<2"
+      - name: Record exact environment
+        run: |
+          python --version
+          python -m pip freeze > "$RUNNER_TEMP/environment.txt"
+      - name: OCR identical pages
+        id: ocr
+        continue-on-error: true
+        run: |
+          python benchmark/normalization/run_open_source_ocr_engine.py \
+            --engine '${{ matrix.engine }}' \
+            --manifest "$RUNNER_TEMP/prepared/prepared-manifest.json" \
+            --output "$RUNNER_TEMP/engine"
+      - name: Score against frozen clean/control references
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          test -f "$RUNNER_TEMP/engine/predictions.jsonl"
+          test -f "$RUNNER_TEMP/engine/runtime-summary.json"
+          python benchmark/normalization/score_open_source_ocr_bakeoff.py score \
+            --manifest "$RUNNER_TEMP/prepared/prepared-manifest.json" \
+            --predictions "$RUNNER_TEMP/engine/predictions.jsonl" \
+            --runtime "$RUNNER_TEMP/engine/runtime-summary.json" \
+            --output "$RUNNER_TEMP/engine/report.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-bakeoff-${{ matrix.engine }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/engine/**
+            ${{ runner.temp }}/environment.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  aggregate:
+    needs: [prepare, engine]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ocr-bakeoff-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/results
+      - name: Aggregate comparable reports
+        env:
+          PYTHONPATH: backend/src
+        run: |
+          mapfile -t reports < <(find "$RUNNER_TEMP/results" -name report.json -type f | sort)
+          test "${#reports[@]}" -ge 2
+          args=()
+          for report in "${reports[@]}"; do
+            args+=(--input "$report")
+          done
+          python benchmark/normalization/score_open_source_ocr_bakeoff.py aggregate \
+            "${args[@]}" \
+            --output "$RUNNER_TEMP/aggregate/report.json"
+      - name: Publish compact comparison
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "aggregate" / "report.json")
+              .read_text(encoding="utf-8")
+          )
+          rows = sorted(
+              report["engines"],
+              key=lambda x: (
+                  x["mean_word_error_rate"] is None,
+                  x["mean_word_error_rate"] or 999,
+              ),
+          )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("## SCJ open-source OCR clean/control bakeoff\n\n")
+              out.write("| Engine | Version | Failure | WER | CER | Legal-critical recall | ms/page | Gate |\n")
+              out.write("|---|---|---:|---:|---:|---:|---:|---|\n")
+              for row in rows:
+                  def f(value):
+                      return "n/a" if value is None else f"{value:.4f}"
+                  out.write(
+                      f"| {row['engine']} | {row.get('engine_version') or 'unknown'} "
+                      f"| {row['failure_rate']:.2%} | {f(row['mean_word_error_rate'])} "
+                      f"| {f(row['mean_character_error_rate'])} "
+                      f"| {f(row['aggregate_legal_critical_recall'])} "
+                      f"| {f(row['mean_elapsed_ms'])} "
+                      f"| {'PASS' if row['clean_stage_gate']['passed'] else 'FAIL'} |\n"
+                  )
+              out.write(
+                  "\n**Promotion is intentionally blocked here.** The clean set was "
+                  "selected using Tesseract/native-text agreement, so a separate "
+                  "engine-independent hard/rescue benchmark is required before choosing "
+                  "the production base OCR.\n"
+              )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-bakeoff-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aggregate/**
+          retention-days: 90

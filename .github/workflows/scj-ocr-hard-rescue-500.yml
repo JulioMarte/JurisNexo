@@ -1,0 +1,186 @@
+name: SCJ OCR hard-rescue 500
+
+on:
+  pull_request:
+    types: [labeled]
+    branches: [development]
+  workflow_dispatch:
+    inputs:
+      page_limit:
+        description: Hard/misaligned pages to compare
+        required: true
+        default: "500"
+        type: choice
+        options: ["60", "120", "500"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-ocr-hard-rescue-500-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HARD_PAGE_LIMIT: ${{ inputs.page_limit || '500' }}
+  HARD_SHARD_COUNT: "5"
+
+jobs:
+  contract:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ocr-hard-500'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend "numpy==2.4.3" "pillow==12.3.0" "pypdfium2==5.13.0" "pytest==9.1.1" "ruff==0.16.7"
+          python -m py_compile             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/ocr_spatial_evidence.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py \
+            benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
+            benchmark/normalization/test_scj_ocr_hard_rescue.py
+          ruff check             benchmark/normalization/prepare_scj_ocr_hard_rescue.py             benchmark/normalization/ocr_spatial_evidence.py             benchmark/normalization/run_open_source_ocr_engine.py             benchmark/normalization/aggregate_scj_ocr_hard_rescue.py \
+            benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
+            benchmark/normalization/test_scj_ocr_hard_rescue.py
+          PYTHONPATH=backend/src pytest -q benchmark/normalization/test_scj_ocr_hard_rescue.py
+          PYTHONPATH=benchmark/normalization python -c "import aggregate_scj_ocr_hard_rescue, ocr_spatial_evidence"
+          bash -n benchmark/normalization/run_scj_ocr_hard_rescue_local.sh
+
+  prepare:
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - name: Freeze stratified hard set from durable census evidence
+        run: |
+          python benchmark/normalization/prepare_scj_ocr_hard_rescue.py             --output "$RUNNER_TEMP/prepared"             --limit "$HARD_PAGE_LIMIT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-hard-prepared-${{ github.run_id }}
+          path: ${{ runner.temp }}/prepared/**
+          if-no-files-found: error
+          retention-days: 14
+
+  engine:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        engine: [tesseract, rapidocr, paddleocr]
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ocr-hard-prepared-${{ github.run_id }}
+          path: ${{ runner.temp }}/prepared
+      - run: python -m pip install --upgrade pip "pillow==12.3.0"
+      - name: Install Tesseract
+        if: matrix.engine == 'tesseract'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng
+      - name: Install RapidOCR
+        if: matrix.engine == 'rapidocr'
+        run: python -m pip install "rapidocr==3.9.2" "onnxruntime>=1.20,<2"
+      - name: Install PaddleOCR
+        if: matrix.engine == 'paddleocr'
+        run: python -m pip install "paddlepaddle==3.2.2" "paddleocr==3.7.0"
+      - name: Record environment
+        run: python -m pip freeze > "$RUNNER_TEMP/environment.txt"
+      - name: OCR frozen hard-set shard
+        run: |
+          python benchmark/normalization/run_open_source_ocr_engine.py             --engine "${{ matrix.engine }}"             --manifest "$RUNNER_TEMP/prepared/prepared-manifest.json"             --output "$RUNNER_TEMP/engine"             --shard-index "${{ matrix.shard }}"             --shard-count "$HARD_SHARD_COUNT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-hard-${{ matrix.engine }}-shard-${{ matrix.shard }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/engine/**
+            ${{ runner.temp }}/environment.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  aggregate:
+    needs: [prepare, engine]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install aggregate runtime dependencies
+        run: python -m pip install "pillow==12.3.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ocr-hard-prepared-${{ github.run_id }}
+          path: ${{ runner.temp }}/prepared
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ocr-hard-*-shard-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/results
+      - name: Merge shards without scoring against false gold
+        run: |
+          mkdir -p "$RUNNER_TEMP/merged"
+          for engine in tesseract rapidocr paddleocr; do
+            mapfile -d '' files < <(find "$RUNNER_TEMP/results" -path "*ocr-hard-${engine}-shard-*-${{ github.run_id }}*/predictions.jsonl" -type f -print0 | sort -z)
+            args=()
+            for file in "${files[@]}"; do args+=(--input "$file"); done
+            python benchmark/normalization/merge_scj_ocr_hard_rescue_shards.py \
+              --engine "$engine" "${args[@]}" \
+              --output "$RUNNER_TEMP/merged/${engine}.jsonl" \
+              --expected "$HARD_PAGE_LIMIT"
+          done
+      - name: Build blind visual-adjudication package
+        run: |
+          python benchmark/normalization/aggregate_scj_ocr_hard_rescue.py             --manifest "$RUNNER_TEMP/prepared/prepared-manifest.json"             --tesseract "$RUNNER_TEMP/merged/tesseract.jsonl"             --rapidocr "$RUNNER_TEMP/merged/rapidocr.jsonl"             --paddleocr "$RUNNER_TEMP/merged/paddleocr.jsonl"             --output "$RUNNER_TEMP/adjudication"
+      - name: Publish disagreement summary
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          report = json.loads((root / "adjudication/summary.json").read_text())
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("## SCJ OCR hard/rescue benchmark\n\n")
+              out.write(f"Pages: {report['pages']}  \n")
+              out.write(f"Exact three-engine consensus: {report['exact_consensus_pages']}  \n")
+              out.write(f"Minor disagreements: {report['minor_disagreement_pages']}  \n")
+              out.write(f"Material disagreements: {report['material_disagreement_pages']}  \n")
+              out.write(f"Failed engine observations: {report['failed_engine_observations']}  \n\n")
+              out.write("No WER/CER winner is declared: this hard set intentionally has no trusted gold. "
+                        "Material disagreements require blind visual adjudication.\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-hard-blind-adjudication-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/adjudication/blind-cases/**
+            ${{ runner.temp }}/adjudication/blind-manifest.json
+            ${{ runner.temp }}/adjudication/triage.jsonl
+            ${{ runner.temp }}/adjudication/summary.json
+            ${{ runner.temp }}/adjudication/calibration-manifest.json
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-hard-candidate-reveal-${{ github.run_id }}
+          path: ${{ runner.temp }}/adjudication/candidate-reveal.json
+          retention-days: 90

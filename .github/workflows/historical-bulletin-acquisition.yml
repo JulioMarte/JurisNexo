@@ -1,13 +1,7 @@
 name: Historical bulletin acquisition
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/historical-bulletin-acquisition.yml
-      - backend/src/jurisnexo/ingestion/scanned_page_materialization.py
-      - backend/src/jurisnexo/ingestion/logical_document_view.py
-      - benchmark/ingestion/analyze_scanned_page_layout.py
-      - benchmark/ingestion/materialize_logical_document_view.py
+  # Explicit real-PDF acquisition/render experiment; never implicit PR work.
   workflow_dispatch:
     inputs:
       source_url:

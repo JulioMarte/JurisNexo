@@ -1,13 +1,9 @@
 name: Normalization engine spike
 
 on:
+  # Explicit experiment: installs Docling/LibreOffice/Tika and runs document fidelity work.
+  # Ordinary edits are covered by deterministic repository CI.
   workflow_dispatch:
-  pull_request:
-    branches:
-      - development
-    paths:
-      - "backend/scripts/normalization_engine_spike.py"
-      - ".github/workflows/normalization-engine-spike.yml"
 
 concurrency:
   group: normalization-engine-spike-${{ github.event.pull_request.number || github.ref }}

@@ -1,16 +1,8 @@
 name: SCJ pilot corpus profile
 
 on:
+  # Historical corpus profiler is intentionally manual; seven-PDF profiling is not edit-safe CI.
   workflow_dispatch:
-  push:
-    branches:
-      - benchmark/scj-pilot-profiler
-      - feature/scj-layout-parser
-    paths:
-      - "benchmark/ingestion/**"
-      - "backend/src/jurisnexo/ingestion/**"
-      - "backend/tests/unit/test_scj_*.py"
-      - ".github/workflows/scj-pilot-profile.yml"
 
 permissions:
   contents: read
