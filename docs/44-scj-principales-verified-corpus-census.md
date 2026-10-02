@@ -266,28 +266,55 @@ Each populated stage contains its derived JSON/JSONL evidence plus an immutable 
 
 ## Corpus-wide two-pass Ling recovery lane
 
-Pages already admitted by the completed census are not sent to a paid model again. The recovery lane selects only `misaligned` and `no_native_text` pages from the newest completed durable census generation. Low-information pages remain outside the paid set unless a later explicit policy changes that decision.
+Pages already admitted by the completed census are not sent to a paid model again.
+The recovery lane selects only `misaligned` and `no_native_text` pages from the
+newest completed durable census generation. Low-information pages remain outside
+the paid set unless a later explicit policy changes that decision.
 
-`.github/workflows/scj-principales-ling-literal-ocr.yml` is manual-only. Its inventory phase is free and freezes the exact pending set before inference. The paid phase processes one immutable PDF at a time and uses at most 20 concurrent page workers.
+`.github/workflows/scj-principales-ling-literal-ocr.yml` is manual-only. Before
+any paid inference, it freezes a plan from the durable census and refuses to
+continue if the target is no longer exactly 15,900 pages. The current frozen
+baseline is 15,855 `misaligned` pages plus 45 `no_native_text` pages.
 
-Each selected page receives two visual passes with `inclusionai/ling-3.0-flash-vl`. OpenRouter is pinned to the NovitaAI provider with provider fallback disabled. Pass 1 produces a literal transcription from the rendered page. Pass 2 receives the same page image plus the first-pass transcription and adversarially corrects discrepancies against the image. The image remains authoritative; model output never overwrites the official source artifact.
+The paid phase uses exactly 20 isolated workers. Within every PDF, ownership is
+deterministic: `page_index % 20`. Each selected page receives two visual passes
+with `inclusionai/ling-3.0-flash-vl`. OpenRouter is pinned to NovitaAI with
+provider fallback disabled. Pass 1 produces a literal transcription from the
+rendered page. Pass 2 receives the same page image plus the first-pass
+transcription and adversarially corrects discrepancies against the image. The
+image remains authoritative; model output never overwrites the official source
+artifact.
 
 Evidence is resumable and immutable:
 
 ```text
 benchmarks/scj-principales/ling-literal-ocr/v1/
-  <census-generation-id>/
-    <source-pdf-sha256>/
-      pages/
-        <page-number>/
-          pass-1.json
-          pass-2.json
-    runs/
-      <github-run-id>-<attempt>.json
+  <plan-sha256>/
+    inclusionai__ling-3.0-flash-vl/
+      NovitaAI/
+        pages/
+          <document-id>/
+            <page-index>/
+              pass-1.json
+              pass-2.json
+        runs/
+          github-<run-id>-attempt-<attempt>/
+            summary.json
+        _SUCCESS.json
 ```
 
-Every pass records a source/document/page evidence ID, source and render hashes, requested and returned model, requested and routed provider, token usage, latency, exact OpenRouter-reported request cost, and transcription. Pass 2 also binds and retains the first-pass evidence ID, transcription hash, and draft text it reviewed.
+Every pass records the source PDF SHA-256, rendered PNG SHA-256, page identity,
+requested and returned model, requested and routed provider, OpenRouter
+generation ID, token usage, latency, exact OpenRouter generation cost and the
+transcription. Pass 2 additionally records the first-pass object key and
+transcription SHA-256.
 
-Completed pass-2 objects are skipped on retry. A page with only pass 1 resumes directly at pass 2. This is the paid-run idempotency boundary: retries must not silently pay again for already durable work.
+Completed pass-2 objects are skipped on retry. A page with only pass 1 resumes
+directly at pass 2. This is the paid-run idempotency boundary: retries must not
+silently pay again for already durable work.
 
-The aggregate reports the exact cost returned by OpenRouter generation metadata for both passes, plus the amount newly billed in the current GitHub run. The paid workflow requires the explicit `RUN_15900_PAGES` confirmation and fails closed if the frozen pending-page count is no longer exactly 15,900.
+The aggregate fails closed unless every planned page has both passes from the
+pinned provider. Its final report includes both the amount billed by the current
+GitHub run and the cumulative cost of all persisted calls in the completed
+generation. The workflow requires the explicit `RUN_15900_PAGES` confirmation.
+\n
