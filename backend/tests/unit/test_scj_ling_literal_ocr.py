@@ -8,6 +8,7 @@ import os
 import tarfile
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -262,7 +263,7 @@ def test_plan_uses_frozen_inventory_document_id(
 
 def test_verify_plan_rejects_tampered_page_selection() -> None:
     module = _module()
-    core = {
+    core: dict[str, Any] = {
         "schema_version": 1,
         "model": module.MODEL,
         "provider": module.PROVIDER,
