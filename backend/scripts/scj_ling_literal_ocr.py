@@ -601,9 +601,33 @@ def aggregate(*, plan_path: Path, worker_root: Path, run_id: str, run_attempt: s
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / "summary.json").write_bytes(_canonical(summary))
+    stable_success = {
+        "schema_version": 1,
+        "status": "complete",
+        "plan_sha256": plan_sha,
+        "census_prefix": plan["census_prefix"],
+        "pages_completed": len(observed),
+        "passes_per_page": PASSES,
+        "api_generations": len(observed) * PASSES,
+        "requested_model": MODEL,
+        "requested_provider": PROVIDER,
+        "returned_models": dict(sorted(returned_models.items())),
+        "returned_providers": dict(sorted(returned_providers.items())),
+        "cumulative_generation_cost_usd": round(cumulative_cost, 10),
+        "pass_1_cost_usd": round(pass1_cost, 10),
+        "pass_2_cost_usd": round(pass2_cost, 10),
+    }
+    base = f"{OUTPUT_PREFIX}/{plan_sha}/{_safe_model(MODEL)}/{PROVIDER}"
     _put_immutable(
         store,
-        key=f"{OUTPUT_PREFIX}/{plan_sha}/{_safe_model(MODEL)}/{PROVIDER}/_SUCCESS.json",
+        key=f"{base}/_SUCCESS.json",
+        payload=_canonical(stable_success),
+        content_type="application/json",
+        metadata={"plan-sha256": plan_sha, "model": _safe_model(MODEL), "provider": PROVIDER},
+    )
+    _put_immutable(
+        store,
+        key=f"{base}/runs/github-{run_id}-attempt-{run_attempt}/summary.json",
         payload=_canonical(summary),
         content_type="application/json",
         metadata={"plan-sha256": plan_sha, "model": _safe_model(MODEL), "provider": PROVIDER},
