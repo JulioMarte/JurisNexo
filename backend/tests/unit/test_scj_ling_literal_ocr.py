@@ -92,6 +92,7 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     body = seen["body"]
     assert isinstance(body, dict)
     assert body["model"] == module.MODEL
+    assert body["reasoning"] == {"effort": "none"}
     assert body["provider"] == {
         "only": [module.PROVIDER_ROUTE],
         "order": [module.PROVIDER_ROUTE],
