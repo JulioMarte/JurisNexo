@@ -101,24 +101,22 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
 def test_ling_rejects_provider_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module()
 
-    monkeypatch.setattr(
-        module,
-        "_openrouter_json",
-        lambda **_kwargs: {
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
             "id": "gen-test",
             "model": module.MODEL,
             "choices": [{"message": {"content": "texto"}}],
-        },
-    )
-    monkeypatch.setattr(
-        module,
-        "_generation_metadata",
-        lambda **_kwargs: {
+        }
+
+    def fake_generation(**_kwargs: object) -> dict[str, object]:
+        return {
             "provider_name": "DeepInfra",
             "model": module.MODEL,
             "total_cost": 0.001,
-        },
-    )
+        }
+
+    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+    monkeypatch.setattr(module, "_generation_metadata", fake_generation)
 
     with pytest.raises(RuntimeError, match="provider pin violated"):
         module._call_ling(
