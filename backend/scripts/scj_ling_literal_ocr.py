@@ -65,7 +65,13 @@ def _sha256(data: bytes) -> str:
 
 
 def _canonical(value: object) -> bytes:
-    return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (serialized + "\n").encode("utf-8")
 
 
 def _safe_model(value: str) -> str:
@@ -108,7 +114,14 @@ def _exists(store: Any, key: str) -> bool:
     return True
 
 
-def _put_immutable(store: Any, *, key: str, payload: bytes, content_type: str, metadata: dict[str, str]) -> None:
+def _put_immutable(
+    store: Any,
+    *,
+    key: str,
+    payload: bytes,
+    content_type: str,
+    metadata: dict[str, str],
+) -> None:
     payload_sha = _sha256(payload)
     try:
         response = store.client.head_object(Bucket=store.config.bucket, Key=key)
@@ -129,7 +142,11 @@ def _put_immutable(store: Any, *, key: str, payload: bytes, content_type: str, m
 
 
 def _latest_completed_census(store: Any) -> tuple[str, dict[str, Any]]:
-    successes = [item for item in _list_objects(store, CENSUS_PREFIX) if str(item.get("Key", "")).endswith("/_SUCCESS.json")]
+    successes = [
+        item
+        for item in _list_objects(store, CENSUS_PREFIX)
+        if str(item.get("Key", "")).endswith("/_SUCCESS.json")
+    ]
     if not successes:
         raise RuntimeError("no completed SCJ Principales corpus-verification census found")
     latest = max(successes, key=lambda item: item.get("LastModified") or "")
@@ -139,13 +156,15 @@ def _latest_completed_census(store: Any) -> tuple[str, dict[str, Any]]:
 
 
 def _extract_member(payload: bytes, member_name: str) -> bytes:
-    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as compressed:
-        with tarfile.open(fileobj=compressed, mode="r:") as archive:
-            member = archive.getmember(member_name)
-            stream = archive.extractfile(member)
-            if stream is None:
-                raise RuntimeError(f"archive member has no payload: {member_name}")
-            return stream.read()
+    with (
+        gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as compressed,
+        tarfile.open(fileobj=compressed, mode="r:") as archive,
+    ):
+        member = archive.getmember(member_name)
+        stream = archive.extractfile(member)
+        if stream is None:
+            raise RuntimeError(f"archive member has no payload: {member_name}")
+        return stream.read()
 
 
 def build_plan(*, output: Path) -> dict[str, Any]:
@@ -259,7 +278,14 @@ def _openrouter_headers(api_key: str) -> dict[str, str]:
     }
 
 
-def _openrouter_json(*, method: str, url: str, api_key: str, body: dict[str, Any] | None = None, attempts: int = 5) -> dict[str, Any]:
+def _openrouter_json(
+    *,
+    method: str,
+    url: str,
+    api_key: str,
+    body: dict[str, Any] | None = None,
+    attempts: int = 5,
+) -> dict[str, Any]:
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -406,7 +432,8 @@ def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
     actual_sha = _sha256(payload)
     if actual_sha != document["source_pdf_sha256"]:
         raise RuntimeError(
-            f"source drift for {document['object_key']}: expected {document['source_pdf_sha256']}, got {actual_sha}"
+            f"source drift for {document['object_key']}: "
+            f"expected {document['source_pdf_sha256']}, got {actual_sha}"
         )
     return payload
 
@@ -427,7 +454,11 @@ def run_worker(
         raise RuntimeError("OPENROUTER_API_KEY is required")
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    if plan["model"] != MODEL or plan["provider"] != PROVIDER or int(plan["shard_count"]) != SHARD_COUNT:
+    if (
+        plan["model"] != MODEL
+        or plan["provider"] != PROVIDER
+        or int(plan["shard_count"]) != SHARD_COUNT
+    ):
         raise RuntimeError("plan/provider/model contract drift")
     plan_sha = str(plan["plan_sha256"])
     store = build_s3_object_store()
@@ -566,7 +597,14 @@ def run_worker(
     return summary
 
 
-def aggregate(*, plan_path: Path, worker_root: Path, run_id: str, run_attempt: str, output: Path) -> dict[str, Any]:
+def aggregate(
+    *,
+    plan_path: Path,
+    worker_root: Path,
+    run_id: str,
+    run_attempt: str,
+    output: Path,
+) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan_sha = str(plan["plan_sha256"])
     store = build_s3_object_store()
@@ -606,7 +644,10 @@ def aggregate(*, plan_path: Path, worker_root: Path, run_id: str, run_attempt: s
     for path in sorted(worker_root.rglob("worker-*.json")):
         worker_summaries.append(json.loads(path.read_text(encoding="utf-8")))
     if len(worker_summaries) != SHARD_COUNT:
-        raise RuntimeError(f"expected {SHARD_COUNT} worker summaries, found {len(worker_summaries)}")
+        raise RuntimeError(
+            f"expected {SHARD_COUNT} worker summaries, "
+            f"found {len(worker_summaries)}"
+        )
     billed_this_run = sum(float(item["charged_this_run_usd"]) for item in worker_summaries)
 
     summary = {
