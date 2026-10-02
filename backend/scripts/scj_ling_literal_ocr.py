@@ -148,7 +148,7 @@ def build_plan(*, output: Path) -> dict[str, Any]:
     store = build_s3_object_store()
     census_prefix, success = _latest_completed_census(store)
     inventory = json.loads(_get_bytes(store, f"{census_prefix}/inventory.json"))
-    inventory_by_key = {str(item["object_key"]): item for item in inventory["items"]}
+    inventory_by_key = {str(item["object_key"]): item for item in inventory["documents"]}
 
     pages: list[dict[str, Any]] = []
     documents: list[dict[str, Any]] = []
