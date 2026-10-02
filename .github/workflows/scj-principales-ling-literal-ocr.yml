@@ -1,6 +1,13 @@
 name: SCJ Principales Ling literal OCR
 
 on:
+  pull_request:
+    branches: [development]
+    paths:
+      - ".github/workflows/scj-principales-ling-literal-ocr.yml"
+      - "backend/scripts/scj_ling_literal_ocr.py"
+      - "backend/tests/unit/test_scj_ling_literal_ocr.py"
+      - "docs/44-scj-principales-verified-corpus-census.md"
   workflow_dispatch:
     inputs:
       run_paid:
@@ -52,6 +59,7 @@ jobs:
           pytest -q backend/tests/unit/test_scj_ling_literal_ocr.py
 
   plan:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: contract
     runs-on: ubuntu-24.04
     env:
