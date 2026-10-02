@@ -262,3 +262,32 @@ benchmarks/scj-principales/single-pdf-quality/v1/
 ```
 
 Each populated stage contains its derived JSON/JSONL evidence plus an immutable `_MANIFEST.json` with payload hashes. The official source PDF is not duplicated there; `source_pdf_sha256` and the source corpus locator bind every result back to the immutable source. JEV/DeepSeek stages preserve their model/provider/configuration telemetry inside the published evidence.
+
+
+## Corpus-wide two-pass Ling recovery lane
+
+Pages already admitted by the completed census are not sent to a paid model again. The recovery lane selects only `misaligned` and `no_native_text` pages from the newest completed durable census generation. Low-information pages remain outside the paid set unless a later explicit policy changes that decision.
+
+`.github/workflows/scj-principales-ling-ocr.yml` is manual-only. Its inventory phase is free and freezes the exact pending set before inference. The paid phase processes one immutable PDF at a time and uses at most 20 concurrent page workers.
+
+Each selected page receives two visual passes with `inclusionai/ling-3.0-flash-vl`. OpenRouter is pinned to the `novita` provider with provider fallback disabled. Pass 1 produces a literal transcription from the rendered page. Pass 2 receives the same page image plus the first-pass transcription and adversarially corrects discrepancies against the image. The image remains authoritative; model output never overwrites the official source artifact.
+
+Evidence is resumable and immutable:
+
+```text
+benchmarks/scj-principales/ling-ocr/v1/
+  <census-generation-id>/
+    <source-pdf-sha256>/
+      pages/
+        <page-number>/
+          pass-1.json
+          pass-2.json
+    runs/
+      <github-run-id>-<attempt>.json
+```
+
+Every pass records a source/document/page evidence ID, source and render hashes, requested and returned model, requested and routed provider, token usage, latency, exact OpenRouter-reported request cost, and transcription. Pass 2 also binds and retains the first-pass evidence ID, transcription hash, and draft text it reviewed.
+
+Completed pass-2 objects are skipped on retry. A page with only pass 1 resumes directly at pass 2. This is the paid-run idempotency boundary: retries must not silently pay again for already durable work.
+
+The run summary reports the exact newly incurred inference cost by summing OpenRouter `usage.cost`, plus model, provider, page counts, failures, and whether the run completed. The workflow also exposes `max_new_pages` for canary runs and `max_cost_usd` as a safety stop. Because up to 20 calls can be in flight concurrently, the cost cap is a batch-boundary stop rather than a transactional billing ceiling; use a small canary before authorizing the full corpus.
