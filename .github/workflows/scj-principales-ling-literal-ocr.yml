@@ -3,9 +3,20 @@ name: SCJ Principales Ling literal OCR
 on:
   workflow_dispatch:
     inputs:
-      confirm_paid_run:
-        description: Type RUN_15900_PAGES to authorize the paid corpus OCR
+      run_paid:
+        description: Run Ling inference after freezing the inventory
         required: true
+        default: false
+        type: boolean
+      max_pages_per_worker:
+        description: Canary limit per worker; 0 means the full frozen plan
+        required: true
+        default: "0"
+        type: string
+      confirm_paid_run:
+        description: Type RUN_15900_PAGES when run_paid is true
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -21,7 +32,9 @@ jobs:
     steps:
       - name: Require explicit paid-run confirmation
         run: |
-          test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+          if [ '${{ inputs.run_paid }}' = 'true' ]; then
+            test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+          fi
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
@@ -98,6 +111,7 @@ jobs:
           retention-days: 90
 
   ocr:
+    if: ${{ inputs.run_paid }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -133,6 +147,7 @@ jobs:
             --worker-index '${{ matrix.worker_index }}' \
             --run-id '${{ github.run_id }}' \
             --run-attempt '${{ github.run_attempt }}' \
+            --max-pages '${{ inputs.max_pages_per_worker }}' \
             --output "$RUNNER_TEMP/ling-worker"
       - uses: actions/upload-artifact@v4
         with:
@@ -142,6 +157,7 @@ jobs:
           retention-days: 90
 
   aggregate:
+    if: ${{ inputs.run_paid && inputs.max_pages_per_worker == '0' }}
     needs: [plan, ocr]
     runs-on: ubuntu-24.04
     env:
@@ -183,3 +199,36 @@ jobs:
           name: scj-ling-summary-${{ github.run_id }}
           path: ${{ runner.temp }}/ling-summary/**
           retention-days: 90
+
+  canary-summary:
+    if: ${{ inputs.run_paid && inputs.max_pages_per_worker != '0' }}
+    needs: [plan, ocr]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scj-ling-worker-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-workers
+          merge-multiple: false
+      - name: Publish exact canary cost
+        run: |
+          python - "$RUNNER_TEMP/ling-workers" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          rows = [
+              json.load(open(path, encoding="utf-8"))
+              for path in sorted(root.rglob("worker-*.json"))
+          ]
+          total = sum(float(row["charged_this_run_usd"]) for row in rows)
+          completed = sum(int(row["newly_completed_pages"]) for row in rows)
+          restored = sum(int(row["restored_pages"]) for row in rows)
+          print("## Ling OCR canary")
+          print()
+          print(f"- Worker summaries: **{len(rows)}**")
+          print(f"- Newly completed pages: **{completed}**")
+          print(f"- Restored pages: **{restored}**")
+          print(f"- Exact billed cost this run: **${total:.10f}**")
+          PY
