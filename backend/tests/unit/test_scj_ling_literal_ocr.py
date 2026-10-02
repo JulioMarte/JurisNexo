@@ -92,6 +92,67 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     assert result["tokens_total"] == 125
 
 
+def test_ling_accepts_empty_text_as_valid_literal_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
+            "id": "gen-empty",
+            "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {"cost": 0.0001},
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": ""},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+
+    result = module._call_ling(
+        image_png=b"image",
+        prompt=module.PASS1_PROMPT,
+        api_key="test-key",
+    )
+
+    assert result["transcription"] == ""
+    assert result["generation_id"] == "gen-empty"
+
+
+def test_ling_rejects_http_200_choice_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
+            "id": "gen-error",
+            "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {"cost": 0.0},
+            "choices": [
+                {
+                    "finish_reason": "error",
+                    "error": {"message": "provider failed"},
+                    "message": {"content": ""},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+
+    with pytest.raises(RuntimeError, match="OpenRouter completion failed"):
+        module._call_ling(
+            image_png=b"image",
+            prompt=module.PASS1_PROMPT,
+            api_key="test-key",
+        )
+
+
 def test_ling_rejects_provider_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module()
 
