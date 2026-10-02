@@ -93,12 +93,12 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     assert isinstance(body, dict)
     assert body["model"] == module.MODEL
     assert body["provider"] == {
-        "only": [module.PROVIDER],
-        "order": [module.PROVIDER],
+        "only": [module.PROVIDER_ROUTE],
+        "order": [module.PROVIDER_ROUTE],
         "allow_fallbacks": False,
         "require_parameters": True,
     }
-    assert result["returned_provider"] == "NovitaAI"
+    assert module.PROVIDER_ROUTE == "novita"\n    assert result["returned_provider"] == "NovitaAI"
     assert result["total_cost_usd"] == pytest.approx(0.00123)
 
 
