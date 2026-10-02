@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "model": "inclusionai/ling-3.0-flash-vl",
+  "provider": "NovitaAI",
+  "pages": 15900,
+  "documents": 36,
+  "passes": 2,
+  "workers": 20,
+  "confirm": "RUN_15900_PAGES"
+}
