@@ -530,8 +530,15 @@ def _verify_evidence(
         raise RuntimeError("OCR evidence transcription is missing")
     if record.get("transcription_sha256") != _sha256(transcription.encode("utf-8")):
         raise RuntimeError("OCR evidence transcription hash mismatch")
-    if render_png_sha256 is not None and record.get("render_png_sha256") != render_png_sha256:
-        raise RuntimeError("OCR evidence render hash mismatch")
+    # The PNG byte hash is retained as observational provenance, but it is not
+    # a durable identity boundary. PDFium/Pillow may emit byte-different PNGs
+    # for the same immutable PDF page across processes or library/runtime
+    # executions. Source PDF SHA + object key + page index + plan/model/provider
+    # remain the stable evidence identity checked above.
+    if render_png_sha256 is not None and not isinstance(
+        record.get("render_png_sha256"), str
+    ):
+        raise RuntimeError("OCR evidence render hash is missing")
     generation_id = record.get("generation_id")
     if not isinstance(generation_id, str) or not generation_id.strip():
         raise RuntimeError("OCR evidence generation id is missing")

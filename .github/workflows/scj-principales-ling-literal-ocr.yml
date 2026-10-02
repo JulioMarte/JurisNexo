@@ -64,7 +64,7 @@ jobs:
               "documents": 36,
               "passes": 2,
               "workers": 20,
-              "attempt": 2,
+              "attempt": 3,
               "confirm": "RUN_15900_PAGES",
           }
           if request != expected:
