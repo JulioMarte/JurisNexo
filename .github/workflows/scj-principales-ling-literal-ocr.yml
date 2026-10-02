@@ -16,7 +16,7 @@ on:
         default: false
         type: boolean
       max_pages_per_worker:
-        description: Canary limit per worker; 0 means the full frozen plan
+        description: Canary total-page limit; 0 means the full frozen plan
         required: true
         default: "0"
         type: string
@@ -116,7 +116,7 @@ jobs:
           print(f"- Model: **{plan['model']}**")
           print(f"- Provider: **{plan['provider']}**")
           print(f"- Passes: **{plan['passes']}**")
-          print(f"- Workers: **{plan['shard_count']}**")
+          print(f"- Dynamic workers per PDF: **{plan['worker_count']}**")
           print(f"- Plan SHA-256: {plan['plan_sha256']}")
           PY
       - uses: actions/upload-artifact@v4
@@ -130,11 +130,6 @@ jobs:
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      max-parallel: 20
-      matrix:
-        worker_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -154,19 +149,19 @@ jobs:
       - run: |
           python -m pip install -e ./backend "boto3==1.43.93" \
             "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Run two-pass literal OCR shard
+      - name: Run 20-worker dynamic PDF queue
         run: |
           mkdir -p "$RUNNER_TEMP/ling-worker"
           python backend/scripts/scj_ling_literal_ocr.py worker \
             --plan "$RUNNER_TEMP/ling-plan/plan.json" \
-            --worker-index '${{ matrix.worker_index }}' \
+            --worker-index '0' \
             --run-id '${{ github.run_id }}' \
             --run-attempt '${{ github.run_attempt }}' \
             --max-pages '${{ inputs.max_pages_per_worker }}' \
             --output "$RUNNER_TEMP/ling-worker"
       - uses: actions/upload-artifact@v4
         with:
-          name: scj-ling-worker-${{ matrix.worker_index }}-${{ github.run_id }}
+          name: scj-ling-worker-pool-${{ github.run_id }}
           path: ${{ runner.temp }}/ling-worker/**
           if-no-files-found: error
           retention-days: 90
