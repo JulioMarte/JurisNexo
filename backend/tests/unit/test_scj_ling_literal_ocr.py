@@ -202,20 +202,16 @@ def test_plan_uses_frozen_inventory_document_id(
     archive = _census_archive()
 
     monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
-    monkeypatch.setattr(
-        module,
-        "_latest_completed_census",
-        lambda _store: ("census/generation", {"status": "complete"}),
-    )
-    monkeypatch.setattr(
-        module,
-        "_list_objects",
-        lambda _store, prefix: (
-            [{"Key": "census/generation/documents/example.tar.gz"}]
-            if prefix.endswith("/documents/")
-            else []
-        ),
-    )
+    def fake_latest(_store: object) -> tuple[str, dict[str, object]]:
+        return "census/generation", {"status": "complete"}
+
+    def fake_list(_store: object, prefix: str) -> list[dict[str, object]]:
+        if prefix.endswith("/documents/"):
+            return [{"Key": "census/generation/documents/example.tar.gz"}]
+        return []
+
+    monkeypatch.setattr(module, "_latest_completed_census", fake_latest)
+    monkeypatch.setattr(module, "_list_objects", fake_list)
 
     def fake_get(_store: object, key: str) -> bytes:
         if key.endswith("/inventory.json"):
