@@ -371,3 +371,26 @@ Because a completed plan is fully resumable, re-running the worker against an
 already finished plan restores durable observations (no model spend). Real
 inference happens only for page/pass observations that are not yet durable.
 
+## Current Ling generation status
+
+The corpus-wide two-pass Ling generation is **complete at the runtime/provenance
+level** for the frozen plan
+`63f0ac73fa659a67bca79c20dbf1bde5e18a99f560c0bef6f50de10c51df8cc4`: all 15,900
+pages have both passes, 31,800 model generations, 0 failed pages, and 0 retries,
+at a cumulative generation cost of US$2.6055758134. Semantic fidelity is **not**
+certified; independent visual adjudication of the adversarial-difference and
+anomalous pages is still pending.
+
+The full evidence, per-document coverage, cost, anomalies, and known limitations
+(slow aggregate, rendering-gated concurrency, legacy render pairs) are frozen in
+`docs/benchmarks/2026-10-03-scj-principales-ling-literal-ocr.md`. Read that
+document for the current state instead of reconstructing it from expiring Actions
+artifacts.
+
+The worker exposes a global async in-flight cap (`--max-concurrent-requests`,
+authorized separately from the frozen plan hash), separate Pass 1 / Pass 2
+execution, and a local-corpus mode (`JURISNEXO_LOCAL_CORPUS_ROOT`) for offline
+source reading. These are execution details; they do not change the frozen plan
+identity or the evidence namespace.
+
+
