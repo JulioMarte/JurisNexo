@@ -46,6 +46,7 @@ WORKER_COUNT = 20
 DEFAULT_MAX_CONCURRENT_REQUESTS = 200
 MAX_CONCURRENT_REQUESTS = 200
 S3_IO_WORKERS = 64
+S3_READ_ATTEMPTS = 5
 EXPECTED_DOCUMENTS = 36
 RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
@@ -157,9 +158,19 @@ def _list_objects(store: Any, prefix: str) -> list[dict[str, Any]]:
 
 
 def _get_bytes(store: Any, key: str) -> bytes:
-    response = store.client.get_object(Bucket=store.config.bucket, Key=key)
-    body = response["Body"].read()
-    return body if isinstance(body, bytes) else bytes(body)
+    last: Exception | None = None
+    for attempt in range(1, S3_READ_ATTEMPTS + 1):
+        try:
+            response = store.client.get_object(Bucket=store.config.bucket, Key=key)
+            body = response["Body"].read()
+            return body if isinstance(body, bytes) else bytes(body)
+        except Exception as exc:  # noqa: BLE001 - transient object-store reads retry
+            last = exc
+            if attempt == S3_READ_ATTEMPTS:
+                raise
+            time.sleep(min(2 ** (attempt - 1), 20))
+    assert last is not None
+    raise last
 
 
 def _exists(store: Any, key: str) -> bool:
@@ -705,9 +716,7 @@ def _verify_render_pair(
 
 
 def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
-    response = store.client.get_object(Bucket=store.config.bucket, Key=document["object_key"])
-    body = response["Body"].read()
-    payload = body if isinstance(body, bytes) else bytes(body)
+    payload = _get_bytes(store, document["object_key"])
     actual_sha = _sha256(payload)
     if actual_sha != document["source_pdf_sha256"]:
         raise RuntimeError(

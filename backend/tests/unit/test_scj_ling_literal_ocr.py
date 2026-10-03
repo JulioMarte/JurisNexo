@@ -129,7 +129,67 @@ def test_async_openrouter_keeps_five_attempt_backoff_policy(
     assert observed_delays == [1, 2, 4, 8]
 
 
+def _s3_store_with_client(client: object) -> object:
+    config = type("C", (), {"bucket": "b"})()
+    return type("Store", (), {"client": client, "config": config})()
+
+
+def test_get_bytes_retries_transient_s3_read_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    class FakeBody:
+        def read(self) -> bytes:
+            return b"source-bytes"
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            del Bucket, Key
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError(
+                    "('Connection broken: IncompleteRead(0 bytes read)', "
+                    "IncompleteRead(0 bytes read))"
+                )
+            return {"Body": FakeBody()}
+
+    client = FakeClient()
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+
+    assert module._get_bytes(_s3_store_with_client(client), "object-key") == (
+        b"source-bytes"
+    )
+    assert client.calls == 3
+
+
+def test_get_bytes_fails_closed_after_read_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            del Bucket, Key
+            self.calls += 1
+            raise RuntimeError("Connection broken forever")
+
+    client = FakeClient()
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(RuntimeError, match="Connection broken forever"):
+        module._get_bytes(_s3_store_with_client(client), "object-key")
+    assert client.calls == module.S3_READ_ATTEMPTS
+
+
 def test_dynamic_scheduler_contract_uses_twenty_workers() -> None:
+
     module = _module()
     assert module.WORKER_COUNT == 20
     assert not hasattr(module, "SHARD_COUNT")
