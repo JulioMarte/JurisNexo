@@ -6,6 +6,7 @@
   "documents": 36,
   "passes": 2,
   "workers": 20,
-  "attempt": 5,
+  "max_concurrent_requests": 200,
+  "attempt": 6,
   "confirm": "RUN_15900_PAGES"
 }

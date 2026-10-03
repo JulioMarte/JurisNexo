@@ -276,14 +276,22 @@ any paid inference, it freezes a plan from the durable census and refuses to
 continue if the target is no longer exactly 15,900 pages. The current frozen
 baseline is 15,855 `misaligned` pages plus 45 `no_native_text` pages.
 
-The paid phase uses exactly 20 isolated workers. Within every PDF, ownership is
-deterministic: `page_index % 20`. Each selected page receives two visual passes
-with `inclusionai/ling-3.0-flash-vl`. OpenRouter is pinned to NovitaAI with
-provider fallback disabled. Pass 1 produces a literal transcription from the
-rendered page. Pass 2 receives the same page image plus the first-pass
-transcription and adversarially corrects discrepancies against the image. The
+The frozen plan retains its historical `worker_count = 20` field in its hash so
+existing page observations remain resumable. Execution concurrency is a separate
+runtime setting: the current async worker has a global cap of 200 in-flight
+OpenRouter requests in one GitHub job; it is not 200 requests per plan worker.
+The scheduler processes one source PDF at a time and uses a bounded page window,
+so it does not enqueue the 15,900 rendered pages into memory at once.
+
+The workflow exposes two explicit corpus-wide stages. Pass 1 completes literal
+transcription coverage across the frozen plan before Pass 2 begins. Pass 2 reads
+each durable pass-1 transcription, renders the same immutable source page under
+the pinned render profile, and adversarially checks the candidate against the
+image. OpenRouter is pinned to NovitaAI with provider fallback disabled. The
 image remains authoritative; model output never overwrites the official source
-artifact.
+artifact. Each pass records its own PNG checksum and a decoded-pixel checksum;
+the raw PNG byte checksum is observational because PDFium/Pillow can encode the
+same page pixels differently across processes.
 
 Evidence is resumable and immutable:
 
@@ -309,18 +317,26 @@ generation ID, token usage, latency, and exact OpenRouter `usage.cost` returned
 with that same inference response, plus the transcription. Pass 2 additionally records the first-pass object key and
 transcription SHA-256.
 
-Completed pass-2 objects are skipped on retry. A page with only pass 1 resumes
-directly at pass 2. This is the paid-run idempotency boundary: retries must not
-silently pay again for already durable work.
+Completed pass-1 and pass-2 objects are skipped on retry. Pass 2 cannot start
+unless every selected page has durable pass-1 evidence, and it resumes directly
+for pages whose pass 1 exists but whose pass 2 is missing. This is the paid-run
+idempotency boundary: retries must not silently pay again for already durable
+work. The workflow pins the expected plan SHA on a resume dispatch, and worker
+concurrency changes do not alter that frozen plan identity.
 
 The aggregate fails closed unless every planned page has both passes from the
-pinned provider. Its final report includes both the amount billed by the current
-GitHub run and the cumulative cost of all persisted calls in the completed
-generation. The workflow can run in inventory-only mode with no provider spend. For a paid
-canary, `max_pages_per_worker` limits how many pages each of the 20 workers may
-process while keeping the same frozen plan identity, so those completed pages
-are reused by the later full run. A full run uses `max_pages_per_worker=0`.
-Any paid mode requires the explicit `RUN_15900_PAGES` confirmation.
+pinned provider. It verifies the decoded-pixel hashes when both pass records
+contain them and reports legacy pairs that predate that checksum. Its final
+report includes both the amount billed by the current GitHub run and the
+cumulative cost of all persisted calls in the completed generation. The
+workflow can run in inventory-only mode with no provider spend. For a paid
+canary, `start_page_ordinal` plus `max_pages_per_worker` selects a bounded page
+range without changing the frozen plan SHA; completed page/pass observations
+are reused by later runs. A full run uses start ordinal `0` and
+`max_pages_per_worker=0`. Any paid mode requires the explicit
+`RUN_15900_PAGES` confirmation. The runtime async cap is separately authorized
+and included in each worker summary; it must not be added to the frozen plan
+hash.
 
 The Ling request does not request a reasoning mode because the task is literal
 transcription, not legal interpretation. This avoids making Novita support an

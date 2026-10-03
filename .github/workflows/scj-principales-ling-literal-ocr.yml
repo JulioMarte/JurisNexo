@@ -24,6 +24,22 @@ on:
         required: true
         default: "0"
         type: string
+      start_page_ordinal:
+        description: Start page ordinal for a bounded, resumable canary
+        required: true
+        default: "0"
+        type: string
+      max_concurrent_requests:
+        description: Global maximum number of asynchronous Ling requests in flight
+        required: true
+        default: "200"
+        type: choice
+        options: ["20", "40", "100", "200"]
+      resume_plan_sha256:
+        description: Require the regenerated plan to match an existing durable checkpoint
+        required: false
+        default: ""
+        type: string
       confirm_paid_run:
         description: Type RUN_15900_PAGES when run_paid is true
         required: false
@@ -44,7 +60,41 @@ jobs:
       - uses: actions/checkout@v6
       - name: Require explicit manual paid-run confirmation
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_paid }}
-        run: test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+        env:
+          MAX_CONCURRENT_REQUESTS: ${{ inputs.max_concurrent_requests }}
+        run: |
+          test '${{ inputs.confirm_paid_run }}' = 'RUN_15900_PAGES'
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          request = json.loads(
+              Path(".github/paid-runs/scj-principales-ling-15900.json")
+              .read_text(encoding="utf-8")
+          )
+          expected = {
+              "enabled": True,
+              "model": "inclusionai/ling-3.0-flash-vl",
+              "provider": "NovitaAI",
+              "pages": 15900,
+              "documents": 36,
+              "passes": 2,
+              "workers": 20,
+              "max_concurrent_requests": 200,
+              "attempt": 6,
+              "confirm": "RUN_15900_PAGES",
+          }
+          if request != expected:
+              raise SystemExit(
+                  "Paid-run authorization does not match the approved async contract."
+              )
+          configured = int(os.environ["MAX_CONCURRENT_REQUESTS"])
+          if not 1 <= configured <= request["max_concurrent_requests"]:
+              raise SystemExit(
+                  "Requested concurrency exceeds the paid-run authorization."
+              )
+          PY
       - name: Validate push paid-run authorization
         if: ${{ github.event_name == 'push' }}
         run: |
@@ -64,7 +114,8 @@ jobs:
               "documents": 36,
               "passes": 2,
               "workers": 20,
-              "attempt": 5,
+              "max_concurrent_requests": 200,
+              "attempt": 6,
               "confirm": "RUN_15900_PAGES",
           }
           if request != expected:
@@ -79,7 +130,7 @@ jobs:
       - name: Install contract runtime
         run: |
           python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
-            "pypdfium2==5.13.0" "pillow==12.3.0"
+            "pypdfium2==5.13.0" "pillow==12.3.0" "httpx==0.28.1"
       - name: Validate Ling OCR contract
         run: |
           python -m py_compile backend/scripts/scj_ling_literal_ocr.py
@@ -105,14 +156,17 @@ jobs:
           python-version: "3.13"
       - run: |
           python -m pip install -e ./backend "boto3==1.43.93" \
-            "pypdfium2==5.13.0" "pillow==12.3.0"
+            "pypdfium2==5.13.0" "pillow==12.3.0" "httpx==0.28.1"
       - name: Freeze unresolved-page plan from durable census
+        env:
+          EXPECTED_PLAN_SHA256: ${{ inputs.resume_plan_sha256 }}
         run: |
           mkdir -p "$RUNNER_TEMP/ling-plan"
           python backend/scripts/scj_ling_literal_ocr.py plan \
             --output "$RUNNER_TEMP/ling-plan"
           python - "$RUNNER_TEMP/ling-plan/plan.json" <<'PY'
           import json
+          import os
           import sys
 
           plan = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -139,6 +193,12 @@ jobs:
               raise SystemExit(f"Unexpected pass count: {plan['passes']}")
           if plan["worker_count"] != 20:
               raise SystemExit(f"Unexpected worker count: {plan['worker_count']}")
+          expected_plan_sha = os.environ.get("EXPECTED_PLAN_SHA256", "").strip()
+          if expected_plan_sha and plan["plan_sha256"] != expected_plan_sha:
+              raise SystemExit(
+                  "The newly frozen plan does not match the requested resume plan: "
+                  f"expected {expected_plan_sha}, got {plan['plan_sha256']}"
+              )
           PY
       - name: Publish frozen plan summary
         run: |
@@ -154,7 +214,7 @@ jobs:
           print(f"- Model: **{plan['model']}**")
           print(f"- Provider: **{plan['provider']}**")
           print(f"- Passes: **{plan['passes']}**")
-          print(f"- Dynamic workers per PDF: **{plan['worker_count']}**")
+          print(f"- Plan worker identity: **{plan['worker_count']}** (frozen hash field; runtime async cap is separate)")
           print(f"- Plan SHA-256: {plan['plan_sha256']}")
           PY
       - uses: actions/upload-artifact@v4
@@ -163,7 +223,7 @@ jobs:
           path: ${{ runner.temp }}/ling-plan/plan.json
           retention-days: 90
 
-  ocr:
+  ocr-pass1:
     if: ${{ github.event_name == 'push' || inputs.run_paid }}
     needs: plan
     runs-on: ubuntu-24.04
@@ -175,6 +235,10 @@ jobs:
       JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
       JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
       JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_MAX_POOL_CONNECTIONS: ${{ inputs.max_concurrent_requests || '200' }}
+      MAX_PAGES: ${{ github.event_name == 'push' && '0' || inputs.max_pages_per_worker }}
+      START_ORDINAL: ${{ github.event_name == 'push' && '0' || inputs.start_page_ordinal }}
+      MAX_CONCURRENT_REQUESTS: ${{ github.event_name == 'push' && '200' || inputs.max_concurrent_requests }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -186,10 +250,8 @@ jobs:
           path: ${{ runner.temp }}/ling-plan
       - run: |
           python -m pip install -e ./backend "boto3==1.43.93" \
-            "pypdfium2==5.13.0" "pillow==12.3.0"
-      - name: Run 20-worker dynamic PDF queue
-        env:
-          MAX_PAGES: ${{ github.event_name == 'push' && '0' || inputs.max_pages_per_worker }}
+            "pypdfium2==5.13.0" "pillow==12.3.0" "httpx==0.28.1"
+      - name: Pass 1 — async literal OCR with global request cap
         run: |
           mkdir -p "$RUNNER_TEMP/ling-worker"
           python backend/scripts/scj_ling_literal_ocr.py worker \
@@ -198,17 +260,110 @@ jobs:
             --run-id '${{ github.run_id }}' \
             --run-attempt '${{ github.run_attempt }}' \
             --max-pages "$MAX_PAGES" \
+            --start-ordinal "$START_ORDINAL" \
+            --phase pass1 \
+            --max-concurrent-requests "$MAX_CONCURRENT_REQUESTS" \
             --output "$RUNNER_TEMP/ling-worker"
+      - name: Publish Pass 1 progress
+        run: |
+          python - "$RUNNER_TEMP/ling-worker/worker-00-pass1.json" \
+            >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("## Ling Pass 1 — literal OCR")
+          print()
+          print(f"- Pages selected: **{report['selected_pages']}**")
+          print(f"- Newly completed: **{report['newly_completed_pages']}**")
+          print(f"- Restored: **{report['restored_pages']}**")
+          print(f"- Failed: **{report['failed_pages']}**")
+          print(f"- Global async request cap: **{report['max_concurrent_requests']}**")
+          print(f"- Peak observed in-flight requests: **{report['max_in_flight_requests_observed']}**")
+          print(f"- Successful model generations: **{report['successful_generations']}**")
+          print(f"- Retries: **{report['retry_count']}**")
+          print(f"- Cost this run: **${report['charged_this_run_usd']:.10f}**")
+          PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: scj-ling-worker-pool-${{ github.run_id }}
+          name: scj-ling-worker-pass1-${{ github.run_id }}
           path: ${{ runner.temp }}/ling-worker/**
-          if-no-files-found: error
+          if-no-files-found: warn
+          retention-days: 90
+
+  ocr-pass2:
+    if: ${{ github.event_name == 'push' || inputs.run_paid }}
+    needs: [plan, ocr-pass1]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_MAX_POOL_CONNECTIONS: ${{ inputs.max_concurrent_requests || '200' }}
+      MAX_PAGES: ${{ github.event_name == 'push' && '0' || inputs.max_pages_per_worker }}
+      START_ORDINAL: ${{ github.event_name == 'push' && '0' || inputs.start_page_ordinal }}
+      MAX_CONCURRENT_REQUESTS: ${{ github.event_name == 'push' && '200' || inputs.max_concurrent_requests }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scj-ling-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-plan
+      - run: |
+          python -m pip install -e ./backend "boto3==1.43.93" \
+            "pypdfium2==5.13.0" "pillow==12.3.0" "httpx==0.28.1"
+      - name: Pass 2 — adversarial image verification
+        run: |
+          mkdir -p "$RUNNER_TEMP/ling-worker"
+          python backend/scripts/scj_ling_literal_ocr.py worker \
+            --plan "$RUNNER_TEMP/ling-plan/plan.json" \
+            --worker-index '0' \
+            --run-id '${{ github.run_id }}' \
+            --run-attempt '${{ github.run_attempt }}' \
+            --max-pages "$MAX_PAGES" \
+            --start-ordinal "$START_ORDINAL" \
+            --phase pass2 \
+            --max-concurrent-requests "$MAX_CONCURRENT_REQUESTS" \
+            --output "$RUNNER_TEMP/ling-worker"
+      - name: Publish Pass 2 progress
+        run: |
+          python - "$RUNNER_TEMP/ling-worker/worker-00-pass2.json" \
+            >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("## Ling Pass 2 — adversarial OCR")
+          print()
+          print(f"- Pages selected: **{report['selected_pages']}**")
+          print(f"- Newly completed: **{report['newly_completed_pages']}**")
+          print(f"- Restored: **{report['restored_pages']}**")
+          print(f"- Failed: **{report['failed_pages']}**")
+          print(f"- Global async request cap: **{report['max_concurrent_requests']}**")
+          print(f"- Peak observed in-flight requests: **{report['max_in_flight_requests_observed']}**")
+          print(f"- Successful model generations: **{report['successful_generations']}**")
+          print(f"- Retries: **{report['retry_count']}**")
+          print(f"- Cost this run: **${report['charged_this_run_usd']:.10f}**")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-ling-worker-pass2-${{ github.run_id }}
+          path: ${{ runner.temp }}/ling-worker/**
+          if-no-files-found: warn
           retention-days: 90
 
   aggregate:
     if: ${{ github.event_name == 'push' || (inputs.run_paid && inputs.max_pages_per_worker == '0') }}
-    needs: [plan, ocr]
+    needs: [plan, ocr-pass1, ocr-pass2]
     runs-on: ubuntu-24.04
     env:
       JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
@@ -232,7 +387,7 @@ jobs:
           merge-multiple: false
       - run: |
           python -m pip install -e ./backend "boto3==1.43.93" \
-            "pypdfium2==5.13.0" "pillow==12.3.0"
+            "pypdfium2==5.13.0" "pillow==12.3.0" "httpx==0.28.1"
       - name: Reconcile every page and calculate exact cost
         run: |
           mkdir -p "$RUNNER_TEMP/ling-summary"
@@ -252,7 +407,7 @@ jobs:
 
   canary-summary:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_paid && inputs.max_pages_per_worker != '0' }}
-    needs: [plan, ocr]
+    needs: [plan, ocr-pass1, ocr-pass2]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -260,7 +415,7 @@ jobs:
           pattern: scj-ling-worker-*-${{ github.run_id }}
           path: ${{ runner.temp }}/ling-workers
           merge-multiple: false
-      - name: Publish exact canary cost
+      - name: Publish per-pass canary coverage and cost
         run: |
           python - "$RUNNER_TEMP/ling-workers" >> "$GITHUB_STEP_SUMMARY" <<'PY'
           import json
@@ -272,13 +427,22 @@ jobs:
               json.load(open(path, encoding="utf-8"))
               for path in sorted(root.rglob("worker-*.json"))
           ]
+          by_phase = {row["phase"]: row for row in rows}
+          if set(by_phase) != {"pass1", "pass2"}:
+              raise SystemExit(f"missing pass summaries: {sorted(by_phase)}")
           total = sum(float(row["charged_this_run_usd"]) for row in rows)
-          completed = sum(int(row["newly_completed_pages"]) for row in rows)
-          restored = sum(int(row["restored_pages"]) for row in rows)
           print("## Ling OCR canary")
           print()
-          print(f"- Worker summaries: **{len(rows)}**")
-          print(f"- Newly completed pages: **{completed}**")
-          print(f"- Restored pages: **{restored}**")
+          for phase in ("pass1", "pass2"):
+              row = by_phase[phase]
+              print(f"### {phase}")
+              print(f"- Selected: **{row['selected_pages']}**")
+              print(f"- New: **{row['newly_completed_pages']}**")
+              print(f"- Restored: **{row['restored_pages']}**")
+              print(f"- Failed: **{row['failed_pages']}**")
+              print(f"- Peak in flight: **{row['max_in_flight_requests_observed']} / {row['max_concurrent_requests']}**")
+              print(f"- Successful generations: **{row['successful_generations']}**")
+              print(f"- Retries: **{row['retry_count']}**")
+              print()
           print(f"- Exact billed cost this run: **${total:.10f}**")
           PY
