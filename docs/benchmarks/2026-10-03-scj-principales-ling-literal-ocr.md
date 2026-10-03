@@ -147,12 +147,15 @@ These are observations, not confirmed errors. None is a runtime failure.
 
 ## Running the worker locally
 
-The worker can read source PDFs from a local snapshot instead of downloading them,
-while the census and evidence stay in the durable store. Set
-`JURISNEXO_LOCAL_CORPUS_ROOT` (or pass `--corpus-root`) to a directory holding the
-PDFs by object key. Each local file is SHA-256-verified against the frozen plan and
-the worker fails closed on drift or a missing object. See the "Running the Ling
-worker locally" section of `docs/44-scj-principales-verified-corpus-census.md`.
+The worker reads every object through one object-store boundary. Set
+`JURISNEXO_LOCAL_OBJECT_ROOT` (or pass `--object-root`) to a directory that mirrors
+object-store keys; the same tree holds the shared source PDFs and the census and
+durable evidence, so `plan`, `worker` and `aggregate` run fully offline without S3
+calls. The legacy `JURISNEXO_LOCAL_CORPUS_ROOT` / `--corpus-root` remain accepted
+as aliases. Source PDFs are SHA-256-verified against the frozen plan, evidence
+reads run the same per-page identity checks, and immutable writes are rejected
+when the stored payload hash differs. See the "Running the Ling worker locally"
+section of `docs/44-scj-principales-verified-corpus-census.md`.
 
 Because a completed plan is fully resumable, re-running against a finished plan
 restores durable observations with no model spend; real inference happens only for

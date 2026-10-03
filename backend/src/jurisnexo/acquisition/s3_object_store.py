@@ -3,12 +3,15 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from jurisnexo.acquisition.object_store import StoredObject
 
 _EMPTY_MAPPING: Mapping[str, object] = {}
 
@@ -204,6 +207,59 @@ class S3ObjectStore:
                 return False
             raise
         return True
+
+    def get_bytes(self, key: str) -> bytes:
+        client = cast(Any, self.client)
+        response = client.get_object(Bucket=self.config.bucket, Key=key)
+        body = response["Body"].read()
+        return body if isinstance(body, bytes) else bytes(body)
+
+    def head_metadata(self, key: str) -> dict[str, str] | None:
+        client = cast(Any, self.client)
+        try:
+            response = client.head_object(Bucket=self.config.bucket, Key=key)
+        except Exception as exc:
+            if self.is_not_found(exc):
+                return None
+            raise
+        return {
+            str(name).lower(): str(value)
+            for name, value in dict(response.get("Metadata") or {}).items()
+        }
+
+    def list_objects(self, prefix: str) -> list[StoredObject]:
+        client = cast(Any, self.client)
+        out: list[StoredObject] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "Bucket": self.config.bucket,
+                "Prefix": prefix,
+                "MaxKeys": 1000,
+            }
+            if token:
+                kwargs["ContinuationToken"] = token
+            response = cast(dict[str, Any], client.list_objects_v2(**kwargs))
+            contents = cast(list[dict[str, Any]] | None, response.get("Contents"))
+            for item in contents or []:
+                last_modified = item.get("LastModified")
+                out.append(
+                    StoredObject(
+                        key=str(item.get("Key", "")),
+                        size=int(item.get("Size", 0)),
+                        last_modified=(
+                            last_modified.timestamp()
+                            if isinstance(last_modified, datetime)
+                            else 0.0
+                        ),
+                    )
+                )
+            if not bool(response.get("IsTruncated")):
+                return out
+            next_token = str(response.get("NextContinuationToken") or "")
+            if not next_token:
+                raise RuntimeError("truncated S3 listing omitted continuation token")
+            token = next_token
 
     def put(
         self,
