@@ -27,6 +27,17 @@ def _module() -> ModuleType:
     return module
 
 
+def _no_sleep(_delay: float) -> None:
+    return None
+
+
+def _constant_store_factory(value: object) -> Callable[..., object]:
+    def factory(**_kwargs: object) -> object:
+        return value
+
+    return factory
+
+
 def _patch_openrouter_json(
     monkeypatch: pytest.MonkeyPatch,
     module: ModuleType,
@@ -191,7 +202,7 @@ def test_get_bytes_retries_transient_s3_read_errors(
             return {"Body": FakeBody()}
 
     client = FakeClient()
-    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(module.time, "sleep", _no_sleep)
 
     assert module._get_bytes(_s3_store_with_client(client), "object-key") == (
         b"source-bytes"
@@ -214,7 +225,7 @@ def test_get_bytes_fails_closed_after_read_attempts(
             raise RuntimeError("Connection broken forever")
 
     client = FakeClient()
-    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(module.time, "sleep", _no_sleep)
 
     with pytest.raises(RuntimeError, match="Connection broken forever"):
         module._get_bytes(_s3_store_with_client(client), "object-key")
@@ -540,7 +551,10 @@ def test_async_pass1_checkpoint_resumes_at_pass2_without_repeating_call(
     monkeypatch.setattr(module, "_put_immutable", fake_put)
     monkeypatch.setattr(module, "_run_blocking", fake_run_blocking)
     monkeypatch.setattr(module, "_render_page", fake_render)
-    monkeypatch.setattr(module, "_render_pixel_sha256", lambda _image: pixel_sha)
+    def _pixel_sha(_image: object) -> str:
+        return pixel_sha
+
+    monkeypatch.setattr(module, "_render_pixel_sha256", _pixel_sha)
     monkeypatch.setattr(module, "_render_profile_id", lambda: profile_id)
     monkeypatch.setattr(module, "_call_ling", fake_ling)
 
@@ -970,7 +984,7 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
 
     monkeypatch.setenv("JURISNEXO_S3_BUCKET", "fixture-bucket")
     monkeypatch.setenv("JURISNEXO_S3_REGION", "us-east-1")
-    monkeypatch.setattr(module, "build_s3_object_store", lambda **_kwargs: object())
+    monkeypatch.setattr(module, "build_s3_object_store", _constant_store_factory(object()))
     monkeypatch.setattr(module, "_run_blocking", fake_run_blocking)
     monkeypatch.setattr(module, "_source_pdf", fake_source)
     monkeypatch.setattr(module, "_process_page", fake_process)
@@ -989,7 +1003,12 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         "doc-a",
         "doc-b",
     ]
-    assert sorted(value for kind, value in events if kind == "process") == [
+    process_events = sorted(
+        cast(tuple[str, int], value)
+        for kind, value in events
+        if kind == "process"
+    )
+    assert process_events == [
         ("doc-a", 0),
         ("doc-a", 1),
         ("doc-a", 2),
@@ -1042,7 +1061,7 @@ def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
 
     monkeypatch.setenv("JURISNEXO_S3_BUCKET", "fixture-bucket")
     monkeypatch.setenv("JURISNEXO_S3_REGION", "us-east-1")
-    monkeypatch.setattr(module, "build_s3_object_store", lambda **_kwargs: fake_store())
+    monkeypatch.setattr(module, "build_s3_object_store", _constant_store_factory(fake_store()))
     async def fake_run_blocking(
         _executor: object,
         function: Callable[..., object],
@@ -1148,7 +1167,11 @@ def test_dynamic_scheduler_rejects_accounting_drift(
 
     monkeypatch.setenv("JURISNEXO_S3_BUCKET", "fixture-bucket")
     monkeypatch.setenv("JURISNEXO_S3_REGION", "us-east-1")
-    monkeypatch.setattr(module, "build_s3_object_store", lambda **_kwargs: fake_store_for_drift())
+    monkeypatch.setattr(
+        module,
+        "build_s3_object_store",
+        _constant_store_factory(fake_store_for_drift()),
+    )
     monkeypatch.setattr(module, "_run_blocking", fake_run_blocking_for_drift)
     monkeypatch.setattr(module, "_source_pdf", fake_source_for_drift)
     monkeypatch.setattr(module, "_process_page", fake_process_for_drift)
