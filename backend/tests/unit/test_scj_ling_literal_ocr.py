@@ -140,12 +140,12 @@ def test_async_openrouter_keeps_five_attempt_backoff_policy(
     assert observed_delays == [1, 2, 4, 8]
 
 
-def _s3_store_with_client(client: object) -> object:
-    config = type("C", (), {"bucket": "b"})()
-    return type("Store", (), {"client": client, "config": config})()
+class _FakeReadStore:
+    def __init__(self, get_bytes: Callable[[str], bytes]) -> None:
+        self.get_bytes = get_bytes
 
 
-def test_source_pdf_reads_and_verifies_local_corpus(
+def test_source_pdf_reads_and_verifies_local_object_root(
     tmp_path: Path,
 ) -> None:
     module = _module()
@@ -153,83 +153,146 @@ def test_source_pdf_reads_and_verifies_local_corpus(
     target = tmp_path / "jurisdictions" / "do" / "scj" / "example.pdf"
     target.parent.mkdir(parents=True)
     target.write_bytes(payload)
+    store = module.LocalObjectStore(tmp_path)
     document = {
         "object_key": "jurisdictions/do/scj/example.pdf",
         "source_pdf_sha256": module._sha256(payload),
     }
 
-    assert (
-        module._source_pdf(object(), document, corpus_root=tmp_path) == payload
-    )
+    assert module._source_pdf(store, document) == payload
 
     document["source_pdf_sha256"] = "0" * 64
     with pytest.raises(RuntimeError, match="source drift"):
-        module._source_pdf(object(), document, corpus_root=tmp_path)
+        module._source_pdf(store, document)
 
 
-def test_source_pdf_rejects_missing_local_corpus_object(tmp_path: Path) -> None:
+def test_source_pdf_rejects_missing_local_object(tmp_path: Path) -> None:
     module = _module()
+    store = module.LocalObjectStore(tmp_path)
     document = {
         "object_key": "jurisdictions/do/scj/missing.pdf",
         "source_pdf_sha256": "a" * 64,
     }
 
-    with pytest.raises(RuntimeError, match="local corpus object missing"):
-        module._source_pdf(object(), document, corpus_root=tmp_path)
+    with pytest.raises(module.ObjectNotFoundError):
+        module._source_pdf(store, document)
 
 
-def test_get_bytes_retries_transient_s3_read_errors(
+def test_get_bytes_retries_transient_store_read_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _module()
+    calls = 0
 
-    class FakeBody:
-        def read(self) -> bytes:
-            return b"source-bytes"
+    def get_bytes(_key: str) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError(
+                "('Connection broken: IncompleteRead(0 bytes read)', "
+                "IncompleteRead(0 bytes read))"
+            )
+        return b"source-bytes"
 
-    class FakeClient:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
-            del Bucket, Key
-            self.calls += 1
-            if self.calls < 3:
-                raise RuntimeError(
-                    "('Connection broken: IncompleteRead(0 bytes read)', "
-                    "IncompleteRead(0 bytes read))"
-                )
-            return {"Body": FakeBody()}
-
-    client = FakeClient()
     monkeypatch.setattr(module.time, "sleep", _no_sleep)
 
-    assert module._get_bytes(_s3_store_with_client(client), "object-key") == (
+    assert module._get_bytes(_FakeReadStore(get_bytes), "object-key") == (
         b"source-bytes"
     )
-    assert client.calls == 3
+    assert calls == 3
 
 
 def test_get_bytes_fails_closed_after_read_attempts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _module()
+    calls = 0
 
-    class FakeClient:
-        def __init__(self) -> None:
-            self.calls = 0
+    def get_bytes(_key: str) -> bytes:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("Connection broken forever")
 
-        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
-            del Bucket, Key
-            self.calls += 1
-            raise RuntimeError("Connection broken forever")
-
-    client = FakeClient()
     monkeypatch.setattr(module.time, "sleep", _no_sleep)
 
     with pytest.raises(RuntimeError, match="Connection broken forever"):
-        module._get_bytes(_s3_store_with_client(client), "object-key")
-    assert client.calls == module.S3_READ_ATTEMPTS
+        module._get_bytes(_FakeReadStore(get_bytes), "object-key")
+    assert calls == module.S3_READ_ATTEMPTS
+
+
+def test_build_store_uses_local_object_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    monkeypatch.setenv("JURISNEXO_LOCAL_OBJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("JURISNEXO_LOCAL_CORPUS_ROOT", raising=False)
+
+    store = module._build_store()
+
+    assert isinstance(store, module.LocalObjectStore)
+    assert store.root == tmp_path.resolve()
+
+
+def test_build_store_prefers_object_root_over_legacy_corpus_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    monkeypatch.setenv("JURISNEXO_LOCAL_CORPUS_ROOT", str(legacy))
+    monkeypatch.setenv("JURISNEXO_LOCAL_OBJECT_ROOT", str(primary))
+
+    store = module._build_store()
+
+    assert store.root == primary.resolve()
+
+
+def test_load_json_if_exists_reads_local_object_store(tmp_path: Path) -> None:
+    module = _module()
+    store = module.LocalObjectStore(tmp_path)
+    key = f"{module.OUTPUT_PREFIX}/plan/pages/doc/000000/pass-1.json"
+    target = tmp_path.joinpath(*key.split("/"))
+    target.parent.mkdir(parents=True)
+    target.write_text('{"ok": true}', encoding="utf-8")
+
+    assert module._load_json_if_exists(store, key) == {"ok": True}
+    assert module._load_json_if_exists(store, f"{key}.missing") is None
+
+
+def test_put_immutable_enforces_local_immutability(tmp_path: Path) -> None:
+    module = _module()
+    store = module.LocalObjectStore(tmp_path)
+    key = f"{module.OUTPUT_PREFIX}/plan/_SUCCESS.json"
+    payload = b'{"status": "complete"}'
+
+    module._put_immutable(
+        store,
+        key=key,
+        payload=payload,
+        content_type="application/json",
+        metadata={},
+    )
+    module._put_immutable(
+        store,
+        key=key,
+        payload=payload,
+        content_type="application/json",
+        metadata={},
+    )
+    assert store.get_bytes(key) == payload
+
+    with pytest.raises(RuntimeError, match="immutable OCR evidence differs"):
+        module._put_immutable(
+            store,
+            key=key,
+            payload=b'{"status": "altered"}',
+            content_type="application/json",
+            metadata={},
+        )
 
 
 def test_dynamic_scheduler_contract_uses_twenty_workers() -> None:
@@ -676,9 +739,14 @@ def test_plan_uses_frozen_inventory_document_id(
     def fake_latest(_store: object) -> tuple[str, dict[str, object]]:
         return "census/generation", {"status": "complete"}
 
-    def fake_list(_store: object, prefix: str) -> list[dict[str, object]]:
+    def fake_list(_store: object, prefix: str) -> list[Any]:
         if prefix.endswith("/documents/"):
-            return [{"Key": "census/generation/documents/example.tar.gz"}]
+            return [
+                module.StoredObject(
+                    key="census/generation/documents/example.tar.gz",
+                    size=1,
+                )
+            ]
         return []
 
     monkeypatch.setattr(module, "_latest_completed_census", fake_latest)

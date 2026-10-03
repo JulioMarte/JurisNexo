@@ -347,21 +347,31 @@ paying for a second identical call.
 
 ## Running the Ling worker locally
 
-The worker can read source PDFs from a local snapshot instead of downloading
-them from object storage, while the durable census and the evidence output still
-use the configured S3-compatible store. Point `JURISNEXO_LOCAL_CORPUS_ROOT` at a
-directory that holds the PDFs by object key, using the same layout as the bucket:
+The worker reads every object through one object-store boundary. Set
+`JURISNEXO_LOCAL_OBJECT_ROOT` to a directory that mirrors object-store keys to
+run fully offline; one tree holds both the shared source PDFs and the benchmark
+evidence/census:
 
 ```text
 <root>/jurisdictions/do/scj/principales-sentencias/<prefix>/<sha>.pdf
+<root>/benchmarks/scj-principales/corpus-verification/v1/...
+<root>/benchmarks/scj-principales/ling-literal-ocr/v1/...
 ```
 
-`--corpus-root` overrides the environment variable per invocation. In local
-mode `_source_pdf` reads the file, verifies its SHA-256 against the frozen
-plan's `source_pdf_sha256`, and fails closed on checksum drift or a missing
-object. A local snapshot must match the frozen census exactly; a partial or
-stale snapshot must not be used to claim corpus coverage. Loading the local
-environment (including the read-only S3 credentials) is typically done with:
+When the root is set, `plan`, `worker` and `aggregate` resolve source PDFs, the
+census, durable Pass 1 / Pass 2 evidence and immutable writes against the local
+tree and never contact S3. `--object-root` overrides the environment per
+invocation; the older `JURISNEXO_LOCAL_CORPUS_ROOT` / `--corpus-root` are accepted
+as aliases so an existing snapshot keeps working.
+
+Local integrity is preserved: source PDFs are SHA-256 verified against the frozen
+plan; evidence reads run the same `_verify_evidence` identity checks; and
+immutable writes compare the stored payload SHA-256 (computed from the file
+itself) so a differing write for an existing key is rejected exactly as the S3
+store rejects a metadata mismatch. A local snapshot must match the frozen
+generation; a partial or stale snapshot must not be used to claim corpus
+coverage. Loading the local environment (including the read-only S3 credentials
+used in cloud mode) is typically done with:
 
 ```powershell
 . .\scripts\local-env.ps1 -WithS3
@@ -389,8 +399,9 @@ artifacts.
 
 The worker exposes a global async in-flight cap (`--max-concurrent-requests`,
 authorized separately from the frozen plan hash), separate Pass 1 / Pass 2
-execution, and a local-corpus mode (`JURISNEXO_LOCAL_CORPUS_ROOT`) for offline
-source reading. These are execution details; they do not change the frozen plan
-identity or the evidence namespace.
+execution, and a local object-store mode (`JURISNEXO_LOCAL_OBJECT_ROOT`, with the
+legacy `JURISNEXO_LOCAL_CORPUS_ROOT` as an alias) that serves source PDFs, the
+census and durable evidence from one local tree. These are execution details;
+they do not change the frozen plan identity or the evidence namespace.
 
 

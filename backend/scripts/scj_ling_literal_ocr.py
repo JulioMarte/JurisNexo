@@ -31,6 +31,8 @@ import pypdfium2 as pdfium
 from PIL import Image
 from PIL import __version__ as PILLOW_VERSION
 
+from jurisnexo.acquisition.local_object_store import LocalObjectStore
+from jurisnexo.acquisition.object_store import ObjectNotFoundError, StoredObject
 from jurisnexo.acquisition.s3_object_store import (
     S3RuntimeSettings,
     build_s3_object_store,
@@ -47,6 +49,7 @@ DEFAULT_MAX_CONCURRENT_REQUESTS = 200
 MAX_CONCURRENT_REQUESTS = 200
 S3_IO_WORKERS = 64
 S3_READ_ATTEMPTS = 5
+LOCAL_OBJECT_ROOT_ENV = "JURISNEXO_LOCAL_OBJECT_ROOT"
 LOCAL_CORPUS_ROOT_ENV = "JURISNEXO_LOCAL_CORPUS_ROOT"
 EXPECTED_DOCUMENTS = 36
 RENDER_SCALE = 2.0
@@ -138,33 +141,17 @@ def _is_expected_provider(value: object) -> bool:
     return PROVIDER_ROUTE in str(value or "").casefold()
 
 
-def _list_objects(store: Any, prefix: str) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    token: str | None = None
-    while True:
-        kwargs: dict[str, Any] = {
-            "Bucket": store.config.bucket,
-            "Prefix": prefix,
-            "MaxKeys": 1000,
-        }
-        if token:
-            kwargs["ContinuationToken"] = token
-        response = store.client.list_objects_v2(**kwargs)
-        out.extend(response.get("Contents", []))
-        if not response.get("IsTruncated"):
-            return out
-        token = str(response.get("NextContinuationToken") or "")
-        if not token:
-            raise RuntimeError("truncated S3 listing omitted continuation token")
+def _list_objects(store: Any, prefix: str) -> list[StoredObject]:
+    return store.list_objects(prefix)
 
 
 def _get_bytes(store: Any, key: str) -> bytes:
     last: Exception | None = None
     for attempt in range(1, S3_READ_ATTEMPTS + 1):
         try:
-            response = store.client.get_object(Bucket=store.config.bucket, Key=key)
-            body = response["Body"].read()
-            return body if isinstance(body, bytes) else bytes(body)
+            return store.get_bytes(key)
+        except ObjectNotFoundError:
+            raise
         except Exception as exc:  # noqa: BLE001 - transient object-store reads retry
             last = exc
             if attempt == S3_READ_ATTEMPTS:
@@ -175,13 +162,7 @@ def _get_bytes(store: Any, key: str) -> bytes:
 
 
 def _exists(store: Any, key: str) -> bool:
-    try:
-        store.client.head_object(Bucket=store.config.bucket, Key=key)
-    except Exception as exc:
-        if store.is_not_found(exc):
-            return False
-        raise
-    return True
+    return store.exists(key)
 
 
 def _put_immutable(
@@ -193,16 +174,8 @@ def _put_immutable(
     metadata: dict[str, str],
 ) -> None:
     payload_sha = _sha256(payload)
-    try:
-        response = store.client.head_object(Bucket=store.config.bucket, Key=key)
-    except Exception as exc:
-        if not store.is_not_found(exc):
-            raise
-    else:
-        existing = {
-            str(k).lower(): str(v)
-            for k, v in dict(response.get("Metadata") or {}).items()
-        }
+    existing = store.head_metadata(key)
+    if existing is not None:
         if existing.get("payload-sha256") != payload_sha:
             raise RuntimeError(f"immutable OCR evidence differs at {key}")
         return
@@ -218,12 +191,12 @@ def _latest_completed_census(store: Any) -> tuple[str, dict[str, Any]]:
     successes = [
         item
         for item in _list_objects(store, CENSUS_PREFIX)
-        if str(item.get("Key", "")).endswith("/_SUCCESS.json")
+        if item.key.endswith("/_SUCCESS.json")
     ]
     if not successes:
         raise RuntimeError("no completed SCJ Principales corpus-verification census found")
-    latest = max(successes, key=lambda item: item.get("LastModified") or "")
-    key = str(latest["Key"])
+    latest = max(successes, key=lambda item: item.last_modified)
+    key = latest.key
     payload = json.loads(_get_bytes(store, key))
     return key.rsplit("/", 1)[0], payload
 
@@ -240,8 +213,32 @@ def _extract_member(payload: bytes, member_name: str) -> bytes:
         return stream.read()
 
 
-def build_plan(*, output: Path) -> dict[str, Any]:
-    store = build_s3_object_store()
+def _local_object_root() -> Path | None:
+    for env_name in (LOCAL_OBJECT_ROOT_ENV, LOCAL_CORPUS_ROOT_ENV):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return Path(value)
+    return None
+
+
+def _build_store(object_root: Path | None = None) -> Any:
+    """Return the local object store when configured, else the S3-compatible store.
+
+    ``JURISNEXO_LOCAL_OBJECT_ROOT`` points at a directory mirroring object-store
+    keys; the older ``JURISNEXO_LOCAL_CORPUS_ROOT`` is accepted as an alias so an
+    existing local snapshot keeps working. An explicit ``object_root`` overrides
+    the environment. When neither is set the worker uses the configured
+    S3-compatible durable store.
+    """
+
+    root = object_root or _local_object_root()
+    if root is not None:
+        return LocalObjectStore(root)
+    return build_s3_object_store()
+
+
+def build_plan(*, output: Path, object_root: Path | None = None) -> dict[str, Any]:
+    store = _build_store(object_root)
     census_prefix, success = _latest_completed_census(store)
     inventory = json.loads(_get_bytes(store, f"{census_prefix}/inventory.json"))
     inventory_documents = inventory["documents"]
@@ -256,10 +253,10 @@ def build_plan(*, output: Path) -> dict[str, Any]:
     documents: list[dict[str, Any]] = []
     document_objects = [
         item for item in _list_objects(store, f"{census_prefix}/documents/")
-        if str(item.get("Key", "")).endswith(".tar.gz")
+        if item.key.endswith(".tar.gz")
     ]
-    for obj in sorted(document_objects, key=lambda item: str(item["Key"])):
-        archive = _get_bytes(store, str(obj["Key"]))
+    for obj in sorted(document_objects, key=lambda item: item.key):
+        archive = _get_bytes(store, obj.key)
         document = json.loads(_extract_member(archive, "document.json"))
         object_key = str(document["object_key"])
         frozen = inventory_by_key.get(object_key)
@@ -719,17 +716,9 @@ def _verify_render_pair(
 def _source_pdf(
     store: Any,
     document: dict[str, Any],
-    *,
-    corpus_root: Path | None = None,
 ) -> bytes:
     object_key = str(document["object_key"])
-    if corpus_root is not None:
-        path = corpus_root.joinpath(*object_key.split("/"))
-        if not path.is_file():
-            raise RuntimeError(f"local corpus object missing: {path}")
-        payload = path.read_bytes()
-    else:
-        payload = _get_bytes(store, object_key)
+    payload = _get_bytes(store, object_key)
     actual_sha = _sha256(payload)
     if actual_sha != document["source_pdf_sha256"]:
         raise RuntimeError(
@@ -984,7 +973,7 @@ async def _run_worker_async(
     start_ordinal: int = 0,
     max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
     phase: str = "both",
-    corpus_root: Path | None = None,
+    object_root: Path | None = None,
 ) -> dict[str, Any]:
     if worker_index != 0:
         raise ValueError("dynamic pool coordinator must use worker_index 0")
@@ -997,11 +986,9 @@ async def _run_worker_async(
         raise ValueError("start_ordinal must be zero or positive")
     if phase not in {"both", "pass1", "pass2"}:
         raise ValueError(f"unsupported OCR phase: {phase}")
-    if corpus_root is None:
-        env_root = os.environ.get(LOCAL_CORPUS_ROOT_ENV, "").strip()
-        corpus_root = Path(env_root) if env_root else None
-    if corpus_root is not None and not corpus_root.is_dir():
-        raise RuntimeError(f"local corpus root does not exist: {corpus_root}")
+    resolved_object_root = object_root or _local_object_root()
+    if resolved_object_root is not None and not resolved_object_root.is_dir():
+        raise RuntimeError(f"local object root does not exist: {resolved_object_root}")
     request_gate = AsyncRequestGate(max_concurrent_requests)
 
     plan_bytes = await asyncio.to_thread(plan_path.read_text, encoding="utf-8")
@@ -1014,16 +1001,19 @@ async def _run_worker_async(
     ):
         raise RuntimeError("plan/provider/model/worker contract drift")
 
-    runtime_settings = S3RuntimeSettings()
-    runtime_settings = runtime_settings.model_copy(
-        update={
-            "max_pool_connections": max(
-                runtime_settings.max_pool_connections,
-                min(max_concurrent_requests, S3_IO_WORKERS),
-            )
-        }
-    )
-    store = build_s3_object_store(settings=runtime_settings)
+    if resolved_object_root is not None:
+        store = LocalObjectStore(resolved_object_root)
+    else:
+        runtime_settings = S3RuntimeSettings()
+        runtime_settings = runtime_settings.model_copy(
+            update={
+                "max_pool_connections": max(
+                    runtime_settings.max_pool_connections,
+                    min(max_concurrent_requests, S3_IO_WORKERS),
+                )
+            }
+        )
+        store = build_s3_object_store(settings=runtime_settings)
     documents = {
         str(document["document_id"]): document
         for document in plan["documents"]
@@ -1077,7 +1067,6 @@ async def _run_worker_async(
                     _source_pdf,
                     store,
                     documents[document_id],
-                    corpus_root=corpus_root,
                 )
                 for offset in range(
                     0,
@@ -1178,7 +1167,7 @@ async def _run_worker_async(
         "provider": PROVIDER,
         "passes": PASSES,
         "plan_sha256": plan_sha,
-        "corpus_root": str(corpus_root) if corpus_root is not None else None,
+        "object_root": str(resolved_object_root) if resolved_object_root is not None else None,
     }
     worker_name = "worker-00.json" if phase == "both" else f"worker-00-{phase}.json"
     (output / worker_name).write_bytes(_canonical(summary))
@@ -1200,7 +1189,7 @@ def run_worker(
     start_ordinal: int = 0,
     max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
     phase: str = "both",
-    corpus_root: Path | None = None,
+    object_root: Path | None = None,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_worker_async(
@@ -1213,7 +1202,7 @@ def run_worker(
             start_ordinal=start_ordinal,
             max_concurrent_requests=max_concurrent_requests,
             phase=phase,
-            corpus_root=corpus_root,
+            object_root=object_root,
         )
     )
 
@@ -1224,10 +1213,11 @@ def aggregate(
     run_id: str,
     run_attempt: str,
     output: Path,
+    object_root: Path | None = None,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan_sha = _verify_plan(plan)
-    store = build_s3_object_store()
+    store = _build_store(object_root)
     expected = {(str(page["document_id"]), int(page["page_index"])) for page in plan["pages"]}
     observed: set[tuple[str, int]] = set()
     cumulative_cost = 0.0
@@ -1390,12 +1380,28 @@ def aggregate(
     return summary
 
 
+def _add_object_root_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--object-root",
+        "--corpus-root",
+        dest="object_root",
+        type=Path,
+        default=None,
+        help=(
+            "Directory mirroring object-store keys (source PDFs and durable "
+            "evidence); defaults to the JURISNEXO_LOCAL_OBJECT_ROOT environment "
+            f"variable, or the legacy {LOCAL_CORPUS_ROOT_ENV}, when set"
+        ),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser("plan")
     plan.add_argument("--output", type=Path, required=True)
+    _add_object_root_argument(plan)
 
     worker = sub.add_parser("worker")
     worker.add_argument("--plan", type=Path, required=True)
@@ -1416,15 +1422,7 @@ def main() -> int:
         default=DEFAULT_MAX_CONCURRENT_REQUESTS,
         help="Global in-flight OpenRouter request cap for this worker process",
     )
-    worker.add_argument(
-        "--corpus-root",
-        type=Path,
-        default=None,
-        help=(
-            "Directory holding source PDFs by object key; defaults to the "
-            f"{LOCAL_CORPUS_ROOT_ENV} environment variable when set"
-        ),
-    )
+    _add_object_root_argument(worker)
 
     collect = sub.add_parser("aggregate")
     collect.add_argument("--plan", type=Path, required=True)
@@ -1432,10 +1430,11 @@ def main() -> int:
     collect.add_argument("--run-id", required=True)
     collect.add_argument("--run-attempt", required=True)
     collect.add_argument("--output", type=Path, required=True)
+    _add_object_root_argument(collect)
 
     args = parser.parse_args()
     if args.command == "plan":
-        build_plan(output=args.output)
+        build_plan(output=args.output, object_root=args.object_root)
     elif args.command == "worker":
         summary = run_worker(
             plan_path=args.plan,
@@ -1447,7 +1446,7 @@ def main() -> int:
             start_ordinal=args.start_ordinal,
             max_concurrent_requests=args.max_concurrent_requests,
             phase=args.phase,
-            corpus_root=args.corpus_root,
+            object_root=args.object_root,
         )
         return 1 if int(summary["failed_pages"]) else 0
     else:
@@ -1457,6 +1456,7 @@ def main() -> int:
             run_id=args.run_id,
             run_attempt=args.run_attempt,
             output=args.output,
+            object_root=args.object_root,
         )
     return 0
 
