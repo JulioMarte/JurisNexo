@@ -28,5 +28,14 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 COPY tests ./tests
-RUN uv sync --frozen --all-groups
+# The SCJ Principales OCR benchmark workers under scripts/ import boto3, httpx,
+# pillow and pypdfium2 at module scope, and their unit tests import those
+# workers. These dependencies are benchmark-only and intentionally stay out of
+# the slim uv.lock, matching the runtime stage's explicit boto3 install.
+RUN uv sync --frozen --all-groups \
+    && uv pip install \
+        "boto3==1.43.93" \
+        "httpx==0.28.1" \
+        "pillow==12.3.0" \
+        "pypdfium2==5.13.0"
 CMD ["pytest", "-q"]

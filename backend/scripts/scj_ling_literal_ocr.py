@@ -9,7 +9,9 @@ OpenRouter generation/cost metadata.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
+import functools
 import gzip
 import hashlib
 import io
@@ -18,17 +20,21 @@ import math
 import os
 import tarfile
 import time
-import urllib.error
-import urllib.request
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import httpx
 import pypdfium2 as pdfium
+from PIL import Image
+from PIL import __version__ as PILLOW_VERSION
 
-from jurisnexo.acquisition.s3_object_store import build_s3_object_store
+from jurisnexo.acquisition.s3_object_store import (
+    S3RuntimeSettings,
+    build_s3_object_store,
+)
 
 CENSUS_PREFIX = "benchmarks/scj-principales/corpus-verification/v1/"
 OUTPUT_PREFIX = "benchmarks/scj-principales/ling-literal-ocr/v1"
@@ -37,6 +43,11 @@ PROVIDER = "NovitaAI"
 PROVIDER_ROUTE = "novita"
 PASSES = 2
 WORKER_COUNT = 20
+DEFAULT_MAX_CONCURRENT_REQUESTS = 200
+MAX_CONCURRENT_REQUESTS = 200
+S3_IO_WORKERS = 64
+S3_READ_ATTEMPTS = 5
+LOCAL_CORPUS_ROOT_ENV = "JURISNEXO_LOCAL_CORPUS_ROOT"
 EXPECTED_DOCUMENTS = 36
 RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
@@ -67,6 +78,46 @@ PRIOR OCR:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _render_pixel_sha256(image_png: bytes) -> str:
+    with Image.open(io.BytesIO(image_png)) as image:
+        normalized = image.convert("RGBA")
+        header = f"{normalized.width}x{normalized.height}:RGBA\0".encode()
+        return _sha256(header + normalized.tobytes())
+
+
+def _render_profile_id() -> str:
+    return _sha256(
+        _canonical(
+            {
+                "format": "PNG",
+                "render_scale": RENDER_SCALE,
+                "pdfium_version": str(getattr(pdfium, "__version__", "unknown")),
+                "pillow_version": PILLOW_VERSION,
+            }
+        )
+    )
+
+
+def _render_pixel_sha256(image_png: bytes) -> str:
+    with Image.open(io.BytesIO(image_png)) as image:
+        normalized = image.convert("RGBA")
+        header = f"{normalized.width}x{normalized.height}:RGBA\0".encode()
+        return _sha256(header + normalized.tobytes())
+
+
+def _render_profile_id() -> str:
+    return _sha256(
+        _canonical(
+            {
+                "format": "PNG",
+                "render_scale": RENDER_SCALE,
+                "pdfium_version": str(getattr(pdfium, "__version__", "unknown")),
+                "pillow_version": PILLOW_VERSION,
+            }
+        )
+    )
 
 
 def _canonical(value: object) -> bytes:
@@ -108,9 +159,19 @@ def _list_objects(store: Any, prefix: str) -> list[dict[str, Any]]:
 
 
 def _get_bytes(store: Any, key: str) -> bytes:
-    response = store.client.get_object(Bucket=store.config.bucket, Key=key)
-    body = response["Body"].read()
-    return body if isinstance(body, bytes) else bytes(body)
+    last: Exception | None = None
+    for attempt in range(1, S3_READ_ATTEMPTS + 1):
+        try:
+            response = store.client.get_object(Bucket=store.config.bucket, Key=key)
+            body = response["Body"].read()
+            return body if isinstance(body, bytes) else bytes(body)
+        except Exception as exc:  # noqa: BLE001 - transient object-store reads retry
+            last = exc
+            if attempt == S3_READ_ATTEMPTS:
+                raise
+            time.sleep(min(2 ** (attempt - 1), 20))
+    assert last is not None
+    raise last
 
 
 def _exists(store: Any, key: str) -> bool:
@@ -313,36 +374,77 @@ def _openrouter_headers(api_key: str) -> dict[str, str]:
     }
 
 
-def _openrouter_json(
+class AsyncRequestGate:
+    """One global cap on in-flight OpenRouter calls for this worker process."""
+
+    def __init__(self, limit: int) -> None:
+        if not 1 <= limit <= MAX_CONCURRENT_REQUESTS:
+            raise ValueError(
+                "max_concurrent_requests must be between 1 and "
+                f"{MAX_CONCURRENT_REQUESTS}"
+            )
+        self._semaphore = asyncio.Semaphore(limit)
+        self.limit = limit
+        self.in_flight = 0
+        self.peak_in_flight = 0
+
+    async def post(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+    ) -> httpx.Response:
+        async with self._semaphore:
+            self.in_flight += 1
+            self.peak_in_flight = max(self.peak_in_flight, self.in_flight)
+            try:
+                return await client.post(url, headers=headers, json=body)
+            finally:
+                self.in_flight -= 1
+
+
+async def _openrouter_json(
     *,
-    method: str,
-    url: str,
+    client: httpx.AsyncClient,
+    request_gate: AsyncRequestGate,
     api_key: str,
-    body: dict[str, Any] | None = None,
+    body: dict[str, Any],
     attempts: int = 5,
-) -> dict[str, Any]:
-    data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+) -> tuple[dict[str, Any], int]:
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
-        request = urllib.request.Request(
-            url,
-            data=data,
-            method=method,
-            headers=_openrouter_headers(api_key),
-        )
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as exc:
+            response = await request_gate.post(
+                client,
+                url=OPENROUTER_CHAT_URL,
+                headers=_openrouter_headers(api_key),
+                body=body,
+            )
+            if response.status_code < 400:
+                return response.json(), attempt
+
+            exc = httpx.HTTPStatusError(
+                f"OpenRouter HTTP {response.status_code}",
+                request=response.request,
+                response=response,
+            )
             last = exc
-            if exc.code not in {408, 409, 429, 500, 502, 503, 504} or attempt == attempts:
-                detail = exc.read().decode("utf-8", errors="replace")[:2000]
-                raise RuntimeError(f"OpenRouter HTTP {exc.code}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
+            if (
+                response.status_code
+                not in {408, 409, 429, 500, 502, 503, 504}
+                or attempt == attempts
+            ):
+                detail = response.text[:2000]
+                raise RuntimeError(
+                    f"OpenRouter HTTP {response.status_code}: {detail}"
+                ) from exc
+        except httpx.TransportError as exc:
             last = exc
             if attempt == attempts:
                 raise RuntimeError(f"OpenRouter request failed: {exc}") from exc
-        time.sleep(min(2 ** (attempt - 1), 20))
+        await asyncio.sleep(min(2 ** (attempt - 1), 20))
     assert last is not None
     raise last
 
@@ -373,10 +475,28 @@ def _content_text(response: dict[str, Any]) -> str:
     if isinstance(content, list):
         parts = [str(item.get("text") or "") for item in content if isinstance(item, dict)]
         return "".join(parts).strip()
+    if (
+        content is None
+        and choice.get("finish_reason") == "stop"
+        and isinstance(message, dict)
+        and not message.get("tool_calls")
+        and not message.get("refusal")
+    ):
+        # Some OpenAI-compatible providers encode a successful empty answer as
+        # null rather than an empty string. For literal OCR, that represents a
+        # valid page with no visible text.
+        return ""
     raise RuntimeError("OpenRouter response has no textual completion")
 
 
-def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]:
+async def _call_ling(
+    *,
+    client: httpx.AsyncClient,
+    request_gate: AsyncRequestGate,
+    image_png: bytes,
+    prompt: str,
+    api_key: str,
+) -> dict[str, Any]:
     image_url = "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")
     body = {
         "model": MODEL,
@@ -391,6 +511,7 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         ],
         "temperature": 0,
         "max_tokens": 16384,
+        "reasoning": {"effort": "none"},
         "usage": {"include": True},
         "provider": {
             "only": [PROVIDER_ROUTE],
@@ -400,9 +521,9 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         },
     }
     started = time.monotonic()
-    response = _openrouter_json(
-        method="POST",
-        url=OPENROUTER_CHAT_URL,
+    response, attempts = await _openrouter_json(
+        client=client,
+        request_gate=request_gate,
         api_key=api_key,
         body=body,
     )
@@ -453,6 +574,7 @@ def _call_ling(*, image_png: bytes, prompt: str, api_key: str) -> dict[str, Any]
         "requested_reasoning_effort": "none",
         "returned_provider": returned_provider,
         "latency_seconds_client": round(elapsed, 6),
+        "retry_count": attempts - 1,
         "total_cost_usd": float(raw_cost),
         "tokens_prompt": int(prompt_tokens) if isinstance(prompt_tokens, int) else 0,
         "tokens_completion": (
@@ -548,10 +670,14 @@ def _verify_evidence(
     # for the same immutable PDF page across processes or library/runtime
     # executions. Source PDF SHA + object key + page index + plan/model/provider
     # remain the stable evidence identity checked above.
-    if render_png_sha256 is not None and not isinstance(
-        record.get("render_png_sha256"), str
-    ):
+    stored_render_sha = record.get("render_png_sha256")
+    if not isinstance(stored_render_sha, str) or len(stored_render_sha) != 64:
         raise RuntimeError("OCR evidence render hash is missing")
+    pixel_sha = record.get("render_pixel_sha256")
+    if pixel_sha is not None and (
+        not isinstance(pixel_sha, str) or len(pixel_sha) != 64
+    ):
+        raise RuntimeError("OCR evidence render-pixel hash is invalid")
     generation_id = record.get("generation_id")
     if not isinstance(generation_id, str) or not generation_id.strip():
         raise RuntimeError("OCR evidence generation id is missing")
@@ -570,20 +696,64 @@ def _verify_evidence(
             raise RuntimeError("OCR pass-2 prior transcription hash mismatch")
 
 
-def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
-    response = store.client.get_object(Bucket=store.config.bucket, Key=document["object_key"])
-    body = response["Body"].read()
-    payload = body if isinstance(body, bytes) else bytes(body)
+def _verify_render_pair(
+    first: dict[str, Any],
+    second: dict[str, Any],
+) -> str:
+    first_pixel_sha = first.get("render_pixel_sha256")
+    second_pixel_sha = second.get("render_pixel_sha256")
+    first_profile = first.get("render_profile_id")
+    second_profile = second.get("render_profile_id")
+    if first_pixel_sha is None or second_pixel_sha is None:
+        # Older immutable pass records predate decoded-pixel identity. Their
+        # source PDF/page identity and individual PNG checksums remain intact,
+        # but equality of the exact raster cannot be proved retroactively.
+        return "legacy-unverified"
+    if first_profile != second_profile:
+        raise RuntimeError("OCR pass render profile mismatch")
+    if first_pixel_sha != second_pixel_sha:
+        raise RuntimeError("OCR pass rendered pixels mismatch")
+    return "pixel-verified"
+
+
+def _source_pdf(
+    store: Any,
+    document: dict[str, Any],
+    *,
+    corpus_root: Path | None = None,
+) -> bytes:
+    object_key = str(document["object_key"])
+    if corpus_root is not None:
+        path = corpus_root.joinpath(*object_key.split("/"))
+        if not path.is_file():
+            raise RuntimeError(f"local corpus object missing: {path}")
+        payload = path.read_bytes()
+    else:
+        payload = _get_bytes(store, object_key)
     actual_sha = _sha256(payload)
     if actual_sha != document["source_pdf_sha256"]:
         raise RuntimeError(
-            f"source drift for {document['object_key']}: "
+            f"source drift for {object_key}: "
             f"expected {document['source_pdf_sha256']}, got {actual_sha}"
         )
     return payload
 
 
-def _process_page(
+async def _run_blocking(
+    executor: ThreadPoolExecutor,
+    function: Any,
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        executor,
+        functools.partial(function, *args, **kwargs),
+    )
+
+
+async def _process_page(
     *,
     store: Any,
     plan_sha: str,
@@ -592,25 +762,53 @@ def _process_page(
     api_key: str,
     run_id: str,
     run_attempt: str,
+    client: httpx.AsyncClient,
+    request_gate: AsyncRequestGate,
+    io_executor: ThreadPoolExecutor,
+    render_executor: ThreadPoolExecutor,
+    phase: str = "both",
 ) -> dict[str, Any]:
+    if phase not in {"both", "pass1", "pass2"}:
+        raise ValueError(f"unsupported OCR phase: {phase}")
     document_id = str(page["document_id"])
     page_index = int(page["page_index"])
     key1 = _page_key(plan_sha, document_id, page_index, 1)
     key2 = _page_key(plan_sha, document_id, page_index, 2)
-    image = _render_page(pdf_bytes, page_index)
-    image_sha = _sha256(image)
-
-    first = _load_json_if_exists(store, key1)
+    first, second = await asyncio.gather(
+        _run_blocking(io_executor, _load_json_if_exists, store, key1),
+        _run_blocking(io_executor, _load_json_if_exists, store, key2),
+    )
     if first is not None:
         _verify_evidence(
             first,
             plan_sha=plan_sha,
             page=page,
             pass_number=1,
-            render_png_sha256=image_sha,
         )
 
-    second = _load_json_if_exists(store, key2)
+    if phase == "pass2" and first is None and second is None:
+        raise RuntimeError(f"pass 2 cannot run without durable pass 1: {key1}")
+
+    if phase == "pass1" and first is not None:
+        if second is not None:
+            _verify_evidence(
+                second,
+                plan_sha=plan_sha,
+                page=page,
+                pass_number=2,
+                prior_key=key1,
+                prior_sha256=str(first["transcription_sha256"]),
+            )
+            _verify_render_pair(first, second)
+        return {
+            "restored": 1,
+            "completed": 0,
+            "charged": 0.0,
+            "api_generations": 0,
+            "retry_count": 0,
+            "api_latency_seconds": 0.0,
+        }
+
     if second is not None:
         if first is None:
             raise RuntimeError(f"pass 2 exists without pass 1: {key2}")
@@ -619,15 +817,49 @@ def _process_page(
             plan_sha=plan_sha,
             page=page,
             pass_number=2,
-            render_png_sha256=image_sha,
             prior_key=key1,
             prior_sha256=str(first["transcription_sha256"]),
         )
-        return {"restored": 1, "completed": 0, "charged": 0.0}
+        _verify_render_pair(first, second)
+        return {
+            "restored": 1,
+            "completed": 0,
+            "charged": 0.0,
+            "api_generations": 0,
+            "retry_count": 0,
+            "api_latency_seconds": 0.0,
+        }
 
+    image = await _run_blocking(
+        render_executor,
+        _render_page,
+        pdf_bytes,
+        page_index,
+    )
+    image_sha = _sha256(image)
+    image_pixel_sha = _render_pixel_sha256(image)
+    render_profile_id = _render_profile_id()
+    if first is not None:
+        first_pixel_sha = first.get("render_pixel_sha256")
+        if (
+            isinstance(first_pixel_sha, str)
+            and first_pixel_sha != image_pixel_sha
+        ):
+            raise RuntimeError("resumed pass-1 rendered pixels differ")
+        first_profile_id = first.get("render_profile_id")
+        if (
+            isinstance(first_profile_id, str)
+            and first_profile_id != render_profile_id
+        ):
+            raise RuntimeError("resumed pass-1 render profile differs")
     charged = 0.0
+    api_generations = 0
+    retry_count = 0
+    api_latency_seconds = 0.0
     if first is None:
-        observation1 = _call_ling(
+        observation1 = await _call_ling(
+            client=client,
+            request_gate=request_gate,
             image_png=image,
             prompt=PASS1_PROMPT,
             api_key=api_key,
@@ -642,6 +874,8 @@ def _process_page(
             "page_index": page_index,
             "source_classification": page["classification"],
             "render_png_sha256": image_sha,
+            "render_pixel_sha256": image_pixel_sha,
+            "render_profile_id": render_profile_id,
             "native_text_sha256": page.get("native_text_sha256"),
             "tesseract_text_sha256": page.get("tesseract_text_sha256"),
             "github_run_id": run_id,
@@ -651,7 +885,9 @@ def _process_page(
                 observation1["transcription"].encode("utf-8")
             ),
         }
-        _put_immutable(
+        await _run_blocking(
+            io_executor,
+            _put_immutable,
             store,
             key=key1,
             payload=_canonical(first),
@@ -666,8 +902,23 @@ def _process_page(
             },
         )
         charged += float(first["total_cost_usd"])
+        api_generations += 1
+        retry_count += int(observation1.get("retry_count", 0))
+        api_latency_seconds += float(observation1["latency_seconds_client"])
 
-    observation2 = _call_ling(
+    if phase == "pass1":
+        return {
+            "restored": 0,
+            "completed": 1,
+            "charged": charged,
+            "api_generations": api_generations,
+            "retry_count": retry_count,
+            "api_latency_seconds": api_latency_seconds,
+        }
+
+    observation2 = await _call_ling(
+        client=client,
+        request_gate=request_gate,
         image_png=image,
         prompt=PASS2_PROMPT.format(prior=str(first["transcription"])),
         api_key=api_key,
@@ -682,6 +933,8 @@ def _process_page(
         "page_index": page_index,
         "source_classification": page["classification"],
         "render_png_sha256": image_sha,
+        "render_pixel_sha256": image_pixel_sha,
+        "render_profile_id": render_profile_id,
         "prior_pass_key": key1,
         "prior_transcription_sha256": first["transcription_sha256"],
         "github_run_id": run_id,
@@ -691,7 +944,9 @@ def _process_page(
             observation2["transcription"].encode("utf-8")
         ),
     }
-    _put_immutable(
+    await _run_blocking(
+        io_executor,
+        _put_immutable,
         store,
         key=key2,
         payload=_canonical(second),
@@ -705,11 +960,233 @@ def _process_page(
             "pass": "2",
         },
     )
+    api_generations += 1
+    retry_count += int(observation2.get("retry_count", 0))
+    api_latency_seconds += float(observation2["latency_seconds_client"])
     return {
         "restored": 0,
         "completed": 1,
         "charged": charged + float(second["total_cost_usd"]),
+        "api_generations": api_generations,
+        "retry_count": retry_count,
+        "api_latency_seconds": api_latency_seconds,
     }
+
+
+async def _run_worker_async(
+    *,
+    plan_path: Path,
+    worker_index: int,
+    run_id: str,
+    run_attempt: str,
+    output: Path,
+    max_pages: int = 0,
+    start_ordinal: int = 0,
+    max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+    phase: str = "both",
+    corpus_root: Path | None = None,
+) -> dict[str, Any]:
+    if worker_index != 0:
+        raise ValueError("dynamic pool coordinator must use worker_index 0")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is required")
+    if max_pages < 0:
+        raise ValueError("max_pages must be zero or positive")
+    if start_ordinal < 0:
+        raise ValueError("start_ordinal must be zero or positive")
+    if phase not in {"both", "pass1", "pass2"}:
+        raise ValueError(f"unsupported OCR phase: {phase}")
+    if corpus_root is None:
+        env_root = os.environ.get(LOCAL_CORPUS_ROOT_ENV, "").strip()
+        corpus_root = Path(env_root) if env_root else None
+    if corpus_root is not None and not corpus_root.is_dir():
+        raise RuntimeError(f"local corpus root does not exist: {corpus_root}")
+    request_gate = AsyncRequestGate(max_concurrent_requests)
+
+    plan_bytes = await asyncio.to_thread(plan_path.read_text, encoding="utf-8")
+    plan = json.loads(plan_bytes)
+    plan_sha = _verify_plan(plan)
+    if (
+        plan["model"] != MODEL
+        or plan["provider"] != PROVIDER
+        or int(plan["worker_count"]) != WORKER_COUNT
+    ):
+        raise RuntimeError("plan/provider/model/worker contract drift")
+
+    runtime_settings = S3RuntimeSettings()
+    runtime_settings = runtime_settings.model_copy(
+        update={
+            "max_pool_connections": max(
+                runtime_settings.max_pool_connections,
+                min(max_concurrent_requests, S3_IO_WORKERS),
+            )
+        }
+    )
+    store = build_s3_object_store(settings=runtime_settings)
+    documents = {
+        str(document["document_id"]): document
+        for document in plan["documents"]
+    }
+    end_ordinal = (
+        len(plan["pages"])
+        if max_pages == 0
+        else start_ordinal + max_pages
+    )
+    selected_pages = plan["pages"][start_ordinal:end_ordinal]
+    if not selected_pages:
+        raise RuntimeError("selected OCR page range contains no pages")
+    pages_by_document: dict[str, list[dict[str, Any]]] = {}
+    for page in selected_pages:
+        pages_by_document.setdefault(str(page["document_id"]), []).append(page)
+
+    charged = 0.0
+    restored = 0
+    completed = 0
+    assigned = 0
+    documents_processed = 0
+    successful_generations = 0
+    retry_count = 0
+    api_latency_seconds = 0.0
+    failures: list[dict[str, Any]] = []
+    await asyncio.to_thread(output.mkdir, parents=True, exist_ok=True)
+
+    s3_io_workers = min(max_concurrent_requests, S3_IO_WORKERS)
+    with (
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdfium") as render_executor,
+        ThreadPoolExecutor(max_workers=s3_io_workers, thread_name_prefix="ling-s3") as io_executor,
+    ):
+        limits = httpx.Limits(
+            max_connections=max_concurrent_requests,
+            max_keepalive_connections=max_concurrent_requests,
+        )
+        async with httpx.AsyncClient(
+            limits=limits,
+            timeout=httpx.Timeout(180.0),
+            follow_redirects=True,
+        ) as client:
+            stop_after_batch = False
+            for document in plan["documents"]:
+                document_id = str(document["document_id"])
+                document_pages = list(pages_by_document.get(document_id, []))
+                if not document_pages:
+                    continue
+
+                pdf_bytes = await _run_blocking(
+                    io_executor,
+                    _source_pdf,
+                    store,
+                    documents[document_id],
+                    corpus_root=corpus_root,
+                )
+                for offset in range(
+                    0,
+                    len(document_pages),
+                    max_concurrent_requests,
+                ):
+                    batch = document_pages[
+                        offset : offset + max_concurrent_requests
+                    ]
+                    tasks = [
+                        asyncio.create_task(
+                            _process_page(
+                                store=store,
+                                plan_sha=plan_sha,
+                                page=page,
+                                pdf_bytes=pdf_bytes,
+                                api_key=api_key,
+                                run_id=run_id,
+                                run_attempt=run_attempt,
+                                client=client,
+                                request_gate=request_gate,
+                                io_executor=io_executor,
+                                render_executor=render_executor,
+                                phase=phase,
+                            )
+                        )
+                        for page in batch
+                    ]
+                    assigned += len(tasks)
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for page, result in zip(batch, results, strict=True):
+                        if isinstance(result, asyncio.CancelledError):
+                            raise result
+                        if isinstance(result, Exception):
+                            failures.append(
+                                {
+                                    "document_id": str(page["document_id"]),
+                                    "page_index": int(page["page_index"]),
+                                    "error_type": type(result).__name__,
+                                    "error": str(result)[:1000],
+                                }
+                            )
+                            continue
+                        charged += float(result["charged"])
+                        restored += int(result["restored"])
+                        completed += int(result["completed"])
+                        successful_generations += int(result["api_generations"])
+                        retry_count += int(result["retry_count"])
+                        api_latency_seconds += float(result["api_latency_seconds"])
+
+                    print(
+                        json.dumps(
+                            {
+                                "document_id": document_id,
+                                "phase": phase,
+                                "completed": completed,
+                                "restored": restored,
+                                "failed": len(failures),
+                                "successful_generations": successful_generations,
+                                "retry_count": retry_count,
+                                "max_in_flight_requests": request_gate.peak_in_flight,
+                                "charged_this_run_usd": round(charged, 8),
+                            },
+                            sort_keys=True,
+                        ),
+                        flush=True,
+                    )
+                    if failures:
+                        stop_after_batch = True
+                        break
+                documents_processed += 1
+                if stop_after_batch:
+                    break
+
+    if assigned != completed + restored + len(failures):
+        raise RuntimeError("async scheduler accounting mismatch")
+
+    summary = {
+        "schema_version": 3,
+        "scheduler": "async-bounded-per-pdf-page-pool",
+        "phase": phase,
+        "worker_index": 0,
+        "worker_count": WORKER_COUNT,
+        "max_concurrent_requests": max_concurrent_requests,
+        "max_in_flight_requests_observed": request_gate.peak_in_flight,
+        "documents_processed": documents_processed,
+        "assigned_pages": assigned,
+        "selected_pages": len(selected_pages),
+        "unstarted_pages": len(selected_pages) - assigned,
+        "newly_completed_pages": completed,
+        "restored_pages": restored,
+        "failed_pages": len(failures),
+        "successful_generations": successful_generations,
+        "retry_count": retry_count,
+        "api_latency_seconds": round(api_latency_seconds, 6),
+        "charged_this_run_usd": round(charged, 10),
+        "model": MODEL,
+        "provider": PROVIDER,
+        "passes": PASSES,
+        "plan_sha256": plan_sha,
+        "corpus_root": str(corpus_root) if corpus_root is not None else None,
+    }
+    worker_name = "worker-00.json" if phase == "both" else f"worker-00-{phase}.json"
+    (output / worker_name).write_bytes(_canonical(summary))
+    (output / f"failed-pages-{phase}.jsonl").write_text(
+        "".join(_canonical(item).decode("utf-8") for item in failures),
+        encoding="utf-8",
+    )
+    return summary
 
 
 def run_worker(
@@ -720,117 +1197,25 @@ def run_worker(
     run_attempt: str,
     output: Path,
     max_pages: int = 0,
+    start_ordinal: int = 0,
+    max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+    phase: str = "both",
+    corpus_root: Path | None = None,
 ) -> dict[str, Any]:
-    if worker_index != 0:
-        raise ValueError("dynamic pool coordinator must use worker_index 0")
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is required")
-    if max_pages < 0:
-        raise ValueError("max_pages must be zero or positive")
-
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan_sha = _verify_plan(plan)
-    if (
-        plan["model"] != MODEL
-        or plan["provider"] != PROVIDER
-        or int(plan["worker_count"]) != WORKER_COUNT
-    ):
-        raise RuntimeError("plan/provider/model/worker contract drift")
-
-    store = build_s3_object_store()
-    documents = {
-        str(document["document_id"]): document
-        for document in plan["documents"]
-    }
-    pages_by_document: dict[str, list[dict[str, Any]]] = {}
-    for page in plan["pages"]:
-        pages_by_document.setdefault(str(page["document_id"]), []).append(page)
-
-    remaining = max_pages
-    charged = 0.0
-    restored = 0
-    completed = 0
-    assigned = 0
-    documents_processed = 0
-    output.mkdir(parents=True, exist_ok=True)
-
-    with ThreadPoolExecutor(
-        max_workers=WORKER_COUNT,
-        thread_name_prefix="ling",
-    ) as pool:
-        for document in plan["documents"]:
-            document_id = str(document["document_id"])
-            document_pages = list(pages_by_document.get(document_id, []))
-            if max_pages:
-                if remaining <= 0:
-                    break
-                document_pages = document_pages[:remaining]
-                remaining -= len(document_pages)
-            if not document_pages:
-                continue
-
-            pdf_bytes = _source_pdf(store, documents[document_id])
-            # Bound the scheduler blast radius to at most WORKER_COUNT queued
-            # pages. A single page failure can therefore leave at most 20
-            # in-flight model calls instead of thousands of already-submitted
-            # futures continuing after the first exception is observed.
-            for offset in range(0, len(document_pages), WORKER_COUNT):
-                batch = document_pages[offset : offset + WORKER_COUNT]
-                futures = [
-                    pool.submit(
-                        _process_page,
-                        store=store,
-                        plan_sha=plan_sha,
-                        page=page,
-                        pdf_bytes=pdf_bytes,
-                        api_key=api_key,
-                        run_id=run_id,
-                        run_attempt=run_attempt,
-                    )
-                    for page in batch
-                ]
-                assigned += len(futures)
-
-                for future in as_completed(futures):
-                    result = future.result()
-                    charged += float(result["charged"])
-                    restored += int(result["restored"])
-                    completed += int(result["completed"])
-                    print(
-                        json.dumps(
-                            {
-                                "document_id": document_id,
-                                "completed": completed,
-                                "restored": restored,
-                                "charged_this_run_usd": round(charged, 8),
-                            },
-                            sort_keys=True,
-                        ),
-                        flush=True,
-                    )
-            documents_processed += 1
-
-    if assigned != completed + restored:
-        raise RuntimeError("dynamic scheduler accounting mismatch")
-
-    summary = {
-        "schema_version": 2,
-        "scheduler": "pdf-serial-dynamic-page-pool",
-        "worker_index": 0,
-        "worker_count": WORKER_COUNT,
-        "documents_processed": documents_processed,
-        "assigned_pages": assigned,
-        "newly_completed_pages": completed,
-        "restored_pages": restored,
-        "charged_this_run_usd": round(charged, 10),
-        "model": MODEL,
-        "provider": PROVIDER,
-        "passes": PASSES,
-        "plan_sha256": plan_sha,
-    }
-    (output / "worker-00.json").write_bytes(_canonical(summary))
-    return summary
+    return asyncio.run(
+        _run_worker_async(
+            plan_path=plan_path,
+            worker_index=worker_index,
+            run_id=run_id,
+            run_attempt=run_attempt,
+            output=output,
+            max_pages=max_pages,
+            start_ordinal=start_ordinal,
+            max_concurrent_requests=max_concurrent_requests,
+            phase=phase,
+            corpus_root=corpus_root,
+        )
+    )
 
 def aggregate(
     *,
@@ -850,6 +1235,8 @@ def aggregate(
     pass2_cost = 0.0
     returned_models: Counter[str] = Counter()
     returned_providers: Counter[str] = Counter()
+    render_pair_pixel_verified = 0
+    legacy_render_pair_unverified = 0
 
     pages_by_identity = {
         (str(page["document_id"]), int(page["page_index"])): page
@@ -875,8 +1262,11 @@ def aggregate(
             prior_key=key1,
             prior_sha256=str(first["transcription_sha256"]),
         )
-        if second.get("render_png_sha256") != first.get("render_png_sha256"):
-            raise RuntimeError(f"OCR pass render mismatch: {key2}")
+        render_pair_status = _verify_render_pair(first, second)
+        if render_pair_status == "pixel-verified":
+            render_pair_pixel_verified += 1
+        else:
+            legacy_render_pair_unverified += 1
         for pass_number, record in ((1, first), (2, second)):
             cost = float(record["total_cost_usd"])
             cumulative_cost += cost
@@ -894,11 +1284,14 @@ def aggregate(
     worker_summaries = []
     for path in sorted(worker_root.rglob("worker-*.json")):
         worker_summaries.append(json.loads(path.read_text(encoding="utf-8")))
-    if len(worker_summaries) != 1:
+    phases = {str(item.get("phase") or "") for item in worker_summaries}
+    if len(worker_summaries) != 2 or phases != {"pass1", "pass2"}:
         raise RuntimeError(
-            "expected one dynamic-pool summary, "
-            f"found {len(worker_summaries)}"
+            "expected one worker summary for each Ling phase; "
+            f"found phases={sorted(phases)}"
         )
+    request_concurrency: int | None = None
+    peak_in_flight = 0
     for item in worker_summaries:
         if (
             item.get("plan_sha256") != plan_sha
@@ -906,8 +1299,23 @@ def aggregate(
             or item.get("provider") != PROVIDER
             or int(item.get("passes", 0)) != PASSES
             or int(item.get("worker_count", 0)) != WORKER_COUNT
+            or int(item.get("assigned_pages", 0)) != len(expected)
+            or int(item.get("failed_pages", 0)) != 0
+            or int(item.get("newly_completed_pages", 0))
+            + int(item.get("restored_pages", 0))
+            != len(expected)
         ):
             raise RuntimeError("worker summary contract drift")
+        item_concurrency = int(item.get("max_concurrent_requests", 0))
+        if not 1 <= item_concurrency <= MAX_CONCURRENT_REQUESTS:
+            raise RuntimeError("worker request concurrency is invalid")
+        if request_concurrency is not None and item_concurrency != request_concurrency:
+            raise RuntimeError("worker phases used different request concurrency")
+        request_concurrency = item_concurrency
+        peak_in_flight = max(
+            peak_in_flight,
+            int(item.get("max_in_flight_requests_observed", 0)),
+        )
         raw_charged = item.get("charged_this_run_usd")
         if (
             isinstance(raw_charged, bool)
@@ -926,6 +1334,10 @@ def aggregate(
         "pages_completed": len(observed),
         "passes_per_page": PASSES,
         "api_generations": len(observed) * PASSES,
+        "render_pair_pixel_verified": render_pair_pixel_verified,
+        "legacy_render_pair_unverified": legacy_render_pair_unverified,
+        "max_concurrent_requests": request_concurrency,
+        "max_in_flight_requests_observed": peak_in_flight,
         "requested_model": MODEL,
         "requested_provider": PROVIDER,
         "returned_models": dict(sorted(returned_models.items())),
@@ -949,6 +1361,8 @@ def aggregate(
         "pages_completed": len(observed),
         "passes_per_page": PASSES,
         "api_generations": len(observed) * PASSES,
+        "render_pair_pixel_verified": render_pair_pixel_verified,
+        "legacy_render_pair_unverified": legacy_render_pair_unverified,
         "requested_model": MODEL,
         "requested_provider": PROVIDER,
         "returned_models": dict(sorted(returned_models.items())),
@@ -990,6 +1404,27 @@ def main() -> int:
     worker.add_argument("--run-attempt", required=True)
     worker.add_argument("--output", type=Path, required=True)
     worker.add_argument("--max-pages", type=int, default=0)
+    worker.add_argument("--start-ordinal", type=int, default=0)
+    worker.add_argument(
+        "--phase",
+        choices=("both", "pass1", "pass2"),
+        default="both",
+    )
+    worker.add_argument(
+        "--max-concurrent-requests",
+        type=int,
+        default=DEFAULT_MAX_CONCURRENT_REQUESTS,
+        help="Global in-flight OpenRouter request cap for this worker process",
+    )
+    worker.add_argument(
+        "--corpus-root",
+        type=Path,
+        default=None,
+        help=(
+            "Directory holding source PDFs by object key; defaults to the "
+            f"{LOCAL_CORPUS_ROOT_ENV} environment variable when set"
+        ),
+    )
 
     collect = sub.add_parser("aggregate")
     collect.add_argument("--plan", type=Path, required=True)
@@ -1002,14 +1437,19 @@ def main() -> int:
     if args.command == "plan":
         build_plan(output=args.output)
     elif args.command == "worker":
-        run_worker(
+        summary = run_worker(
             plan_path=args.plan,
             worker_index=args.worker_index,
             run_id=args.run_id,
             run_attempt=args.run_attempt,
             output=args.output,
             max_pages=args.max_pages,
+            start_ordinal=args.start_ordinal,
+            max_concurrent_requests=args.max_concurrent_requests,
+            phase=args.phase,
+            corpus_root=args.corpus_root,
         )
+        return 1 if int(summary["failed_pages"]) else 0
     else:
         aggregate(
             plan_path=args.plan,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
 import importlib.util
 import io
@@ -26,7 +27,213 @@ def _module() -> ModuleType:
     return module
 
 
+def _no_sleep(_delay: float) -> None:
+    return None
+
+
+def _constant_store_factory(value: object) -> Callable[..., object]:
+    def factory(**_kwargs: object) -> object:
+        return value
+
+    return factory
+
+
+def _patch_openrouter_json(
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    fake_request: Callable[..., dict[str, object]],
+) -> None:
+    async def async_fake_request(**kwargs: object) -> tuple[dict[str, object], int]:
+        return fake_request(**kwargs), 1
+
+    monkeypatch.setattr(module, "_openrouter_json", async_fake_request)
+
+
+def _call_ling(module: ModuleType, **kwargs: object) -> dict[str, Any]:
+    return asyncio.run(
+        module._call_ling(
+            client=cast(Any, object()),
+            request_gate=module.AsyncRequestGate(1),
+            **kwargs,
+        )
+    )
+
+
+def test_async_request_gate_caps_global_in_flight_calls() -> None:
+    module = _module()
+    gate = module.AsyncRequestGate(7)
+    active = 0
+    peak = 0
+
+    class FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            headers: dict[str, str],
+            json: dict[str, object],
+        ) -> Any:
+            nonlocal active, peak
+            del headers, json
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.005)
+            active -= 1
+            return module.httpx.Response(200, json={"ok": True})
+
+    async def run_calls() -> None:
+        client = FakeClient()
+        await asyncio.gather(
+            *(
+                gate.post(
+                    client,
+                    url="https://example.invalid",
+                    headers={},
+                    body={},
+                )
+                for _ in range(31)
+            )
+        )
+
+    asyncio.run(run_calls())
+
+    assert peak == 7
+    assert gate.peak_in_flight == 7
+    assert gate.in_flight == 0
+
+
+def test_async_openrouter_keeps_five_attempt_backoff_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    status_codes = [429, 502, 503, 504, 200]
+    observed_delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        observed_delays.append(delay)
+
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
+
+    async def handler(request: Any) -> Any:
+        status_code = status_codes.pop(0)
+        return module.httpx.Response(
+            status_code,
+            json={"ok": status_code == 200},
+            request=request,
+        )
+
+    async def run_request() -> tuple[dict[str, Any], int]:
+        async with module.httpx.AsyncClient(
+            transport=module.httpx.MockTransport(handler),
+        ) as client:
+            return await module._openrouter_json(
+                client=client,
+                request_gate=module.AsyncRequestGate(2),
+                api_key="test-key",
+                body={"model": module.MODEL},
+            )
+
+    response, attempts = asyncio.run(run_request())
+
+    assert response == {"ok": True}
+    assert attempts == 5
+    assert observed_delays == [1, 2, 4, 8]
+
+
+def _s3_store_with_client(client: object) -> object:
+    config = type("C", (), {"bucket": "b"})()
+    return type("Store", (), {"client": client, "config": config})()
+
+
+def test_source_pdf_reads_and_verifies_local_corpus(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    payload = b"%PDF-1.7 local fixture"
+    target = tmp_path / "jurisdictions" / "do" / "scj" / "example.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+    document = {
+        "object_key": "jurisdictions/do/scj/example.pdf",
+        "source_pdf_sha256": module._sha256(payload),
+    }
+
+    assert (
+        module._source_pdf(object(), document, corpus_root=tmp_path) == payload
+    )
+
+    document["source_pdf_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="source drift"):
+        module._source_pdf(object(), document, corpus_root=tmp_path)
+
+
+def test_source_pdf_rejects_missing_local_corpus_object(tmp_path: Path) -> None:
+    module = _module()
+    document = {
+        "object_key": "jurisdictions/do/scj/missing.pdf",
+        "source_pdf_sha256": "a" * 64,
+    }
+
+    with pytest.raises(RuntimeError, match="local corpus object missing"):
+        module._source_pdf(object(), document, corpus_root=tmp_path)
+
+
+def test_get_bytes_retries_transient_s3_read_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    class FakeBody:
+        def read(self) -> bytes:
+            return b"source-bytes"
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            del Bucket, Key
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError(
+                    "('Connection broken: IncompleteRead(0 bytes read)', "
+                    "IncompleteRead(0 bytes read))"
+                )
+            return {"Body": FakeBody()}
+
+    client = FakeClient()
+    monkeypatch.setattr(module.time, "sleep", _no_sleep)
+
+    assert module._get_bytes(_s3_store_with_client(client), "object-key") == (
+        b"source-bytes"
+    )
+    assert client.calls == 3
+
+
+def test_get_bytes_fails_closed_after_read_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            del Bucket, Key
+            self.calls += 1
+            raise RuntimeError("Connection broken forever")
+
+    client = FakeClient()
+    monkeypatch.setattr(module.time, "sleep", _no_sleep)
+
+    with pytest.raises(RuntimeError, match="Connection broken forever"):
+        module._get_bytes(_s3_store_with_client(client), "object-key")
+    assert client.calls == module.S3_READ_ATTEMPTS
+
+
 def test_dynamic_scheduler_contract_uses_twenty_workers() -> None:
+
     module = _module()
     assert module.WORKER_COUNT == 20
     assert not hasattr(module, "SHARD_COUNT")
@@ -61,9 +268,10 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
             "choices": [{"message": {"content": "texto literal"}}],
         }
 
-    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+    _patch_openrouter_json(monkeypatch, module, fake_request)
 
-    result = module._call_ling(
+    result = _call_ling(
+        module,
         image_png=b"not-a-real-png-needed-for-request-contract",
         prompt=module.PASS1_PROMPT,
         api_key="test-key",
@@ -72,7 +280,7 @@ def test_ling_request_is_hard_pinned_to_novita(monkeypatch: pytest.MonkeyPatch) 
     body = seen["body"]
     assert isinstance(body, dict)
     assert body["model"] == module.MODEL
-    assert "reasoning" not in body
+    assert body["reasoning"] == {"effort": "none"}
     assert body["usage"] == {"include": True}
     assert body["provider"] == {
         "only": [module.PROVIDER_ROUTE],
@@ -111,9 +319,10 @@ def test_ling_accepts_empty_text_as_valid_literal_ocr(
             ],
         }
 
-    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+    _patch_openrouter_json(monkeypatch, module, fake_request)
 
-    result = module._call_ling(
+    result = _call_ling(
+        module,
         image_png=b"image",
         prompt=module.PASS1_PROMPT,
         api_key="test-key",
@@ -121,6 +330,67 @@ def test_ling_accepts_empty_text_as_valid_literal_ocr(
 
     assert result["transcription"] == ""
     assert result["generation_id"] == "gen-empty"
+
+
+def test_ling_accepts_null_stop_as_valid_empty_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
+            "id": "gen-null-empty",
+            "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {"cost": 0.0001},
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": None},
+                }
+            ],
+        }
+
+    _patch_openrouter_json(monkeypatch, module, fake_request)
+
+    result = _call_ling(
+        module,
+        image_png=b"image",
+        prompt=module.PASS1_PROMPT,
+        api_key="test-key",
+    )
+
+    assert result["transcription"] == ""
+
+
+def test_ling_rejects_null_completion_without_success_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+
+    def fake_request(**_kwargs: object) -> dict[str, object]:
+        return {
+            "id": "gen-null-invalid",
+            "model": module.MODEL,
+            "provider": "NovitaAI",
+            "usage": {"cost": 0.0001},
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"content": None},
+                }
+            ],
+        }
+
+    _patch_openrouter_json(monkeypatch, module, fake_request)
+
+    with pytest.raises(RuntimeError, match="no textual completion"):
+        _call_ling(
+            module,
+            image_png=b"image",
+            prompt=module.PASS1_PROMPT,
+            api_key="test-key",
+        )
 
 
 def test_ling_rejects_http_200_choice_error(
@@ -143,10 +413,11 @@ def test_ling_rejects_http_200_choice_error(
             ],
         }
 
-    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+    _patch_openrouter_json(monkeypatch, module, fake_request)
 
     with pytest.raises(RuntimeError, match="OpenRouter completion failed"):
-        module._call_ling(
+        _call_ling(
+            module,
             image_png=b"image",
             prompt=module.PASS1_PROMPT,
             api_key="test-key",
@@ -165,10 +436,11 @@ def test_ling_rejects_provider_drift(monkeypatch: pytest.MonkeyPatch) -> None:
             "choices": [{"message": {"content": "texto"}}],
         }
 
-    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+    _patch_openrouter_json(monkeypatch, module, fake_request)
 
     with pytest.raises(RuntimeError, match="provider pin violated"):
-        module._call_ling(
+        _call_ling(
+            module,
             image_png=b"image",
             prompt=module.PASS1_PROMPT,
             api_key="test-key",
@@ -187,10 +459,11 @@ def test_ling_refuses_unmetered_success(monkeypatch: pytest.MonkeyPatch) -> None
             "choices": [{"message": {"content": "texto"}}],
         }
 
-    monkeypatch.setattr(module, "_openrouter_json", fake_request)
+    _patch_openrouter_json(monkeypatch, module, fake_request)
 
     with pytest.raises(RuntimeError, match="usage.cost"):
-        module._call_ling(
+        _call_ling(
+            module,
             image_png=b"image",
             prompt=module.PASS1_PROMPT,
             api_key="test-key",
@@ -205,6 +478,125 @@ def test_provider_identity_accepts_only_novita_names() -> None:
     assert module._is_expected_provider("novita")
     assert not module._is_expected_provider("DeepInfra")
     assert not module._is_expected_provider("")
+
+
+def test_async_pass1_checkpoint_resumes_at_pass2_without_repeating_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    plan_sha = "b" * 64
+    page = {
+        "document_id": "doc",
+        "object_key": "source.pdf",
+        "source_pdf_sha256": "a" * 64,
+        "page_index": 7,
+        "classification": "misaligned",
+    }
+    saved: dict[str, dict[str, Any]] = {}
+    calls: list[str] = []
+    writes: list[str] = []
+    image_png = b"fixture-rendered-page"
+    pixel_sha = "c" * 64
+    profile_id = "pypdfium-test-profile"
+
+    def fake_load(_store: object, key: str) -> dict[str, Any] | None:
+        return saved.get(key)
+
+    def fake_put(
+        _store: object,
+        *,
+        key: str,
+        payload: bytes,
+        **_kwargs: object,
+    ) -> None:
+        saved[key] = json.loads(payload)
+        writes.append(key)
+
+    async def fake_run_blocking(
+        _executor: object,
+        function: Callable[..., object],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        return function(*args, **kwargs)
+
+    def fake_render(_pdf_bytes: bytes, _page_index: int) -> bytes:
+        return image_png
+
+    async def fake_ling(**kwargs: object) -> dict[str, object]:
+        prompt = str(kwargs["prompt"])
+        calls.append(prompt)
+        pass_number = len(calls)
+        transcription = "literal pass one" if pass_number == 1 else "verified pass two"
+        return {
+            "transcription": transcription,
+            "generation_id": f"generation-{pass_number}",
+            "requested_model": module.MODEL,
+            "returned_model": module.MODEL,
+            "requested_provider": module.PROVIDER,
+            "requested_provider_route": module.PROVIDER_ROUTE,
+            "requested_reasoning_effort": "none",
+            "returned_provider": "NovitaAI",
+            "latency_seconds_client": 0.01,
+            "retry_count": 0,
+            "total_cost_usd": 0.001,
+            "tokens_prompt": 10,
+            "tokens_completion": 5,
+            "tokens_total": 15,
+            "reasoning_tokens": 0,
+        }
+
+    monkeypatch.setattr(module, "_load_json_if_exists", fake_load)
+    monkeypatch.setattr(module, "_put_immutable", fake_put)
+    monkeypatch.setattr(module, "_run_blocking", fake_run_blocking)
+    monkeypatch.setattr(module, "_render_page", fake_render)
+    def _pixel_sha(_image: object) -> str:
+        return pixel_sha
+
+    monkeypatch.setattr(module, "_render_pixel_sha256", _pixel_sha)
+    monkeypatch.setattr(module, "_render_profile_id", lambda: profile_id)
+    monkeypatch.setattr(module, "_call_ling", fake_ling)
+
+    def process(phase: str) -> dict[str, Any]:
+        return asyncio.run(
+            module._process_page(
+                store=object(),
+                plan_sha=plan_sha,
+                page=page,
+                pdf_bytes=b"pdf",
+                api_key="test-key",
+                run_id="run",
+                run_attempt="1",
+                client=object(),
+                request_gate=module.AsyncRequestGate(2),
+                io_executor=object(),
+                render_executor=object(),
+                phase=phase,
+            )
+        )
+
+    pass1 = process("pass1")
+    assert pass1["completed"] == 1
+    assert list(saved) == [module._page_key(plan_sha, "doc", 7, 1)]
+
+    pass2 = process("pass2")
+    assert pass2["completed"] == 1
+    assert pass2["api_generations"] == 1
+    assert writes == [
+        module._page_key(plan_sha, "doc", 7, 1),
+        module._page_key(plan_sha, "doc", 7, 2),
+    ]
+    assert len(calls) == 2
+    assert calls[0] == module.PASS1_PROMPT
+    assert "literal pass one" in calls[1]
+    assert saved[module._page_key(plan_sha, "doc", 7, 2)][
+        "prior_transcription_sha256"
+    ] == saved[module._page_key(plan_sha, "doc", 7, 1)]["transcription_sha256"]
+
+    restored = process("pass2")
+    assert restored["restored"] == 1
+    assert len(calls) == 2
 
 
 def test_output_key_separates_passes_and_model_provider() -> None:
@@ -555,48 +947,15 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
 
     events: list[tuple[str, object]] = []
 
-    class FakeFuture:
-        def __init__(self, result: dict[str, object]) -> None:
-            self._result = result
-
-        def result(self) -> dict[str, object]:
-            return self._result
-
-    class FakePool:
-        def __init__(self, *, max_workers: int, thread_name_prefix: str) -> None:
-            events.append(("pool", (max_workers, thread_name_prefix)))
-
-        def __enter__(self) -> FakePool:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def submit(
-            self,
-            function: Callable[..., dict[str, object]],
-            **kwargs: object,
-        ) -> FakeFuture:
-            page_value = kwargs["page"]
-            assert isinstance(page_value, dict)
-            page = cast(dict[str, object], page_value)
-            page_index = page["page_index"]
-            assert isinstance(page_index, int)
-            events.append(
-                ("submit", (str(page["document_id"]), page_index))
-            )
-            result = function(**kwargs)
-            return FakeFuture(result)
-
-    def fake_as_completed(futures: list[FakeFuture]) -> list[FakeFuture]:
-        events.append(("barrier", len(futures)))
-        return futures
-
-    def fake_source(_store: object, document: dict[str, object]) -> bytes:
+    def fake_source(
+        _store: object,
+        document: dict[str, object],
+        **_kwargs: object,
+    ) -> bytes:
         events.append(("source", str(document["document_id"])))
         return str(document["document_id"]).encode()
 
-    def fake_process(**kwargs: object) -> dict[str, object]:
+    async def fake_process(**kwargs: object) -> dict[str, object]:
         page_value = kwargs["page"]
         assert isinstance(page_value, dict)
         page = cast(dict[str, object], page_value)
@@ -605,11 +964,28 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         events.append(
             ("process", (str(page["document_id"]), page_index))
         )
-        return {"restored": 0, "completed": 1, "charged": 0.01}
+        return {
+            "restored": 0,
+            "completed": 1,
+            "charged": 0.01,
+            "api_generations": 2,
+            "retry_count": 0,
+            "api_latency_seconds": 0.2,
+        }
 
-    monkeypatch.setattr(module, "build_s3_object_store", lambda: object())
-    monkeypatch.setattr(module, "ThreadPoolExecutor", FakePool)
-    monkeypatch.setattr(module, "as_completed", fake_as_completed)
+    async def fake_run_blocking(
+        _executor: object,
+        function: Callable[..., object],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        return function(*args, **kwargs)
+
+    monkeypatch.setenv("JURISNEXO_S3_BUCKET", "fixture-bucket")
+    monkeypatch.setenv("JURISNEXO_S3_REGION", "us-east-1")
+    monkeypatch.setattr(module, "build_s3_object_store", _constant_store_factory(object()))
+    monkeypatch.setattr(module, "_run_blocking", fake_run_blocking)
     monkeypatch.setattr(module, "_source_pdf", fake_source)
     monkeypatch.setattr(module, "_process_page", fake_process)
 
@@ -620,15 +996,19 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
         run_attempt="1",
         output=tmp_path / "worker",
         max_pages=4,
+        max_concurrent_requests=3,
     )
 
-    assert events[0] == ("pool", (20, "ling"))
     assert [value for kind, value in events if kind == "source"] == [
         "doc-a",
         "doc-b",
     ]
-    assert [value for kind, value in events if kind == "barrier"] == [3, 1]
-    assert [value for kind, value in events if kind == "submit"] == [
+    process_events = sorted(
+        cast(tuple[str, int], value)
+        for kind, value in events
+        if kind == "process"
+    )
+    assert process_events == [
         ("doc-a", 0),
         ("doc-a", 1),
         ("doc-a", 2),
@@ -638,6 +1018,8 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
     assert summary["newly_completed_pages"] == 4
     assert summary["documents_processed"] == 2
     assert summary["charged_this_run_usd"] == pytest.approx(0.04)
+    assert summary["max_concurrent_requests"] == 3
+    assert summary["successful_generations"] == 8
 
 
 def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
@@ -670,47 +1052,53 @@ def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
     plan_path.write_bytes(module._canonical(plan))
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
-    batch_sizes: list[int] = []
-
-    class FakeFuture:
-        def result(self) -> dict[str, object]:
-            return {"restored": 0, "completed": 1, "charged": 0.0}
-
-    class FakePool:
-        def __init__(self, *, max_workers: int, thread_name_prefix: str) -> None:
-            assert max_workers == 20
-            assert thread_name_prefix == "ling"
-
-        def __enter__(self) -> FakePool:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def submit(
-            self,
-            _function: Callable[..., dict[str, object]],
-            **_kwargs: object,
-        ) -> FakeFuture:
-            return FakeFuture()
-
-    def fake_as_completed(futures: list[FakeFuture]) -> list[FakeFuture]:
-        batch_sizes.append(len(futures))
-        return futures
+    active_tasks = 0
+    peak_tasks = 0
+    active_lock = asyncio.Lock()
 
     def fake_store() -> object:
         return object()
 
-    monkeypatch.setattr(module, "build_s3_object_store", fake_store)
-    monkeypatch.setattr(module, "ThreadPoolExecutor", FakePool)
-    monkeypatch.setattr(module, "as_completed", fake_as_completed)
+    monkeypatch.setenv("JURISNEXO_S3_BUCKET", "fixture-bucket")
+    monkeypatch.setenv("JURISNEXO_S3_REGION", "us-east-1")
+    monkeypatch.setattr(module, "build_s3_object_store", _constant_store_factory(fake_store()))
+    async def fake_run_blocking(
+        _executor: object,
+        function: Callable[..., object],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_run_blocking", fake_run_blocking)
     def fake_source(
         _store: object,
         _document: dict[str, object],
+        **_kwargs: object,
     ) -> bytes:
         return b"pdf"
 
     monkeypatch.setattr(module, "_source_pdf", fake_source)
+
+    async def fake_process(**_kwargs: object) -> dict[str, object]:
+        nonlocal active_tasks, peak_tasks
+        async with active_lock:
+            active_tasks += 1
+            peak_tasks = max(peak_tasks, active_tasks)
+        await asyncio.sleep(0.005)
+        async with active_lock:
+            active_tasks -= 1
+        return {
+            "restored": 0,
+            "completed": 1,
+            "charged": 0.0,
+            "api_generations": 2,
+            "retry_count": 0,
+            "api_latency_seconds": 0.0,
+        }
+
+    monkeypatch.setattr(module, "_process_page", fake_process)
 
     summary = module.run_worker(
         plan_path=plan_path,
@@ -718,11 +1106,13 @@ def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
         run_id="123",
         run_attempt="2",
         output=tmp_path / "worker",
+        max_concurrent_requests=7,
     )
 
-    assert batch_sizes == [20, 5]
+    assert peak_tasks == 7
     assert summary["assigned_pages"] == 25
     assert summary["newly_completed_pages"] == 25
+    assert summary["max_concurrent_requests"] == 7
 
 
 def test_dynamic_scheduler_rejects_accounting_drift(
@@ -752,13 +1142,37 @@ def test_dynamic_scheduler_rejects_accounting_drift(
     def fake_source_for_drift(
         _store: object,
         _document: dict[str, object],
+        **_kwargs: object,
     ) -> bytes:
         return b"pdf"
 
-    def fake_process_for_drift(**_kwargs: object) -> dict[str, object]:
-        return {"restored": 0, "completed": 0, "charged": 0.0}
+    async def fake_process_for_drift(**_kwargs: object) -> dict[str, object]:
+        return {
+            "restored": 0,
+            "completed": 0,
+            "charged": 0.0,
+            "api_generations": 0,
+            "retry_count": 0,
+            "api_latency_seconds": 0.0,
+        }
 
-    monkeypatch.setattr(module, "build_s3_object_store", fake_store_for_drift)
+    async def fake_run_blocking_for_drift(
+        _executor: object,
+        function: Callable[..., object],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        return function(*args, **kwargs)
+
+    monkeypatch.setenv("JURISNEXO_S3_BUCKET", "fixture-bucket")
+    monkeypatch.setenv("JURISNEXO_S3_REGION", "us-east-1")
+    monkeypatch.setattr(
+        module,
+        "build_s3_object_store",
+        _constant_store_factory(fake_store_for_drift()),
+    )
+    monkeypatch.setattr(module, "_run_blocking", fake_run_blocking_for_drift)
     monkeypatch.setattr(module, "_source_pdf", fake_source_for_drift)
     monkeypatch.setattr(module, "_process_page", fake_process_for_drift)
 
