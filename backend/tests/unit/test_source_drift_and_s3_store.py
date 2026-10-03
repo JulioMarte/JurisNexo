@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 
 import pytest
@@ -28,14 +29,46 @@ def _empty_s3_objects() -> dict[tuple[str, str], bytes]:
     return {}
 
 
+def _empty_s3_metadata() -> dict[tuple[str, str], dict[str, str]]:
+    return {}
+
+
 @dataclass(slots=True)
 class FakeS3Client:
     objects: dict[tuple[str, str], bytes] = field(default_factory=_empty_s3_objects)
+    metadata: dict[tuple[str, str], dict[str, str]] = field(
+        default_factory=_empty_s3_metadata
+    )
 
     def head_object(self, *, Bucket: str, Key: str) -> object:
         if (Bucket, Key) not in self.objects:
             raise MissingObjectError(Key)
-        return {"ContentLength": len(self.objects[(Bucket, Key)])}
+        return {
+            "ContentLength": len(self.objects[(Bucket, Key)]),
+            "Metadata": dict(self.metadata.get((Bucket, Key), {})),
+        }
+
+    def get_object(self, *, Bucket: str, Key: str) -> object:
+        if (Bucket, Key) not in self.objects:
+            raise MissingObjectError(Key)
+        payload = self.objects[(Bucket, Key)]
+
+        class _Body:
+            def read(self) -> bytes:
+                return payload
+
+        return {"Body": _Body()}
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str, MaxKeys: int) -> object:
+        del MaxKeys
+        return {
+            "Contents": [
+                {"Key": key, "Size": len(payload), "LastModified": None}
+                for (bucket, key), payload in self.objects.items()
+                if bucket == Bucket and key.startswith(Prefix)
+            ],
+            "IsTruncated": False,
+        }
 
     def put_object(
         self,
@@ -49,6 +82,7 @@ class FakeS3Client:
         assert ContentType == "application/pdf"
         assert Metadata["sha256"]
         self.objects[(Bucket, Key)] = Body
+        self.metadata[(Bucket, Key)] = dict(Metadata)
         return {"ETag": "fixture"}
 
 
@@ -77,6 +111,51 @@ def test_generic_s3_store_is_provider_neutral() -> None:
         metadata={"sha256": "a" * 64},
     )
     assert store.exists(key) is True
+
+
+def test_s3_store_reads_bytes_and_head_metadata() -> None:
+    client = FakeS3Client()
+    store = _store(client)
+    key = "official/constitutional_court/aa/document.pdf"
+    digest = hashlib.sha256(b"%PDF fixture").hexdigest()
+    store.put(
+        key=key,
+        content=b"%PDF fixture",
+        content_type="application/pdf",
+        metadata={"sha256": "a" * 64, "payload-sha256": digest},
+    )
+
+    assert store.get_bytes(key) == b"%PDF fixture"
+    assert store.head_metadata(key) == {
+        "sha256": "a" * 64,
+        "payload-sha256": digest,
+    }
+    assert store.head_metadata("official/missing.pdf") is None
+
+
+def test_s3_store_lists_objects_under_prefix() -> None:
+    client = FakeS3Client()
+    store = _store(client)
+    store.put(
+        key="benchmarks/a/x.json",
+        content=b"x",
+        content_type="application/pdf",
+        metadata={"sha256": "a" * 64},
+    )
+    store.put(
+        key="benchmarks/b/y.json",
+        content=b"yy",
+        content_type="application/pdf",
+        metadata={"sha256": "b" * 64},
+    )
+
+    listed = store.list_objects("benchmarks/")
+
+    assert [(item.key, item.size) for item in listed] == [
+        ("benchmarks/a/x.json", 1),
+        ("benchmarks/b/y.json", 2),
+    ]
+    assert store.list_objects("no/such/prefix/") == []
 
 
 def test_s3_config_requires_https_endpoint() -> None:

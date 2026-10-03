@@ -263,6 +263,38 @@ def test_load_json_if_exists_reads_local_object_store(tmp_path: Path) -> None:
     assert module._load_json_if_exists(store, f"{key}.missing") is None
 
 
+def test_put_immutable_enforces_local_immutability(tmp_path: Path) -> None:
+    module = _module()
+    store = module.LocalObjectStore(tmp_path)
+    key = f"{module.OUTPUT_PREFIX}/plan/_SUCCESS.json"
+    payload = b'{"status": "complete"}'
+
+    module._put_immutable(
+        store,
+        key=key,
+        payload=payload,
+        content_type="application/json",
+        metadata={},
+    )
+    module._put_immutable(
+        store,
+        key=key,
+        payload=payload,
+        content_type="application/json",
+        metadata={},
+    )
+    assert store.get_bytes(key) == payload
+
+    with pytest.raises(RuntimeError, match="immutable OCR evidence differs"):
+        module._put_immutable(
+            store,
+            key=key,
+            payload=b'{"status": "altered"}',
+            content_type="application/json",
+            metadata={},
+        )
+
+
 def test_dynamic_scheduler_contract_uses_twenty_workers() -> None:
 
     module = _module()

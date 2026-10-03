@@ -221,23 +221,24 @@ def _local_object_root() -> Path | None:
     return None
 
 
-def _build_store() -> Any:
+def _build_store(object_root: Path | None = None) -> Any:
     """Return the local object store when configured, else the S3-compatible store.
 
     ``JURISNEXO_LOCAL_OBJECT_ROOT`` points at a directory mirroring object-store
     keys; the older ``JURISNEXO_LOCAL_CORPUS_ROOT`` is accepted as an alias so an
-    existing local snapshot keeps working. When neither is set the worker uses
-    the configured S3-compatible durable store.
+    existing local snapshot keeps working. An explicit ``object_root`` overrides
+    the environment. When neither is set the worker uses the configured
+    S3-compatible durable store.
     """
 
-    root = _local_object_root()
+    root = object_root or _local_object_root()
     if root is not None:
         return LocalObjectStore(root)
     return build_s3_object_store()
 
 
-def build_plan(*, output: Path) -> dict[str, Any]:
-    store = _build_store()
+def build_plan(*, output: Path, object_root: Path | None = None) -> dict[str, Any]:
+    store = _build_store(object_root)
     census_prefix, success = _latest_completed_census(store)
     inventory = json.loads(_get_bytes(store, f"{census_prefix}/inventory.json"))
     inventory_documents = inventory["documents"]
@@ -1212,10 +1213,11 @@ def aggregate(
     run_id: str,
     run_attempt: str,
     output: Path,
+    object_root: Path | None = None,
 ) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan_sha = _verify_plan(plan)
-    store = _build_store()
+    store = _build_store(object_root)
     expected = {(str(page["document_id"]), int(page["page_index"])) for page in plan["pages"]}
     observed: set[tuple[str, int]] = set()
     cumulative_cost = 0.0
@@ -1378,12 +1380,28 @@ def aggregate(
     return summary
 
 
+def _add_object_root_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--object-root",
+        "--corpus-root",
+        dest="object_root",
+        type=Path,
+        default=None,
+        help=(
+            "Directory mirroring object-store keys (source PDFs and durable "
+            "evidence); defaults to the JURISNEXO_LOCAL_OBJECT_ROOT environment "
+            f"variable, or the legacy {LOCAL_CORPUS_ROOT_ENV}, when set"
+        ),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser("plan")
     plan.add_argument("--output", type=Path, required=True)
+    _add_object_root_argument(plan)
 
     worker = sub.add_parser("worker")
     worker.add_argument("--plan", type=Path, required=True)
@@ -1404,18 +1422,7 @@ def main() -> int:
         default=DEFAULT_MAX_CONCURRENT_REQUESTS,
         help="Global in-flight OpenRouter request cap for this worker process",
     )
-    worker.add_argument(
-        "--object-root",
-        "--corpus-root",
-        dest="object_root",
-        type=Path,
-        default=None,
-        help=(
-            "Directory mirroring object-store keys (source PDFs and durable "
-            "evidence); defaults to the JURISNEXO_LOCAL_OBJECT_ROOT environment "
-            f"variable, or the legacy {LOCAL_CORPUS_ROOT_ENV}, when set"
-        ),
-    )
+    _add_object_root_argument(worker)
 
     collect = sub.add_parser("aggregate")
     collect.add_argument("--plan", type=Path, required=True)
@@ -1423,10 +1430,11 @@ def main() -> int:
     collect.add_argument("--run-id", required=True)
     collect.add_argument("--run-attempt", required=True)
     collect.add_argument("--output", type=Path, required=True)
+    _add_object_root_argument(collect)
 
     args = parser.parse_args()
     if args.command == "plan":
-        build_plan(output=args.output)
+        build_plan(output=args.output, object_root=args.object_root)
     elif args.command == "worker":
         summary = run_worker(
             plan_path=args.plan,
@@ -1448,6 +1456,7 @@ def main() -> int:
             run_id=args.run_id,
             run_attempt=args.run_attempt,
             output=args.output,
+            object_root=args.object_root,
         )
     return 0
 
