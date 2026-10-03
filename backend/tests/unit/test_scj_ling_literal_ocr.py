@@ -134,6 +134,39 @@ def _s3_store_with_client(client: object) -> object:
     return type("Store", (), {"client": client, "config": config})()
 
 
+def test_source_pdf_reads_and_verifies_local_corpus(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    payload = b"%PDF-1.7 local fixture"
+    target = tmp_path / "jurisdictions" / "do" / "scj" / "example.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+    document = {
+        "object_key": "jurisdictions/do/scj/example.pdf",
+        "source_pdf_sha256": module._sha256(payload),
+    }
+
+    assert (
+        module._source_pdf(object(), document, corpus_root=tmp_path) == payload
+    )
+
+    document["source_pdf_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="source drift"):
+        module._source_pdf(object(), document, corpus_root=tmp_path)
+
+
+def test_source_pdf_rejects_missing_local_corpus_object(tmp_path: Path) -> None:
+    module = _module()
+    document = {
+        "object_key": "jurisdictions/do/scj/missing.pdf",
+        "source_pdf_sha256": "a" * 64,
+    }
+
+    with pytest.raises(RuntimeError, match="local corpus object missing"):
+        module._source_pdf(object(), document, corpus_root=tmp_path)
+
+
 def test_get_bytes_retries_transient_s3_read_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -900,7 +933,11 @@ def test_dynamic_scheduler_enforces_global_canary_and_pdf_barrier(
 
     events: list[tuple[str, object]] = []
 
-    def fake_source(_store: object, document: dict[str, object]) -> bytes:
+    def fake_source(
+        _store: object,
+        document: dict[str, object],
+        **_kwargs: object,
+    ) -> bytes:
         events.append(("source", str(document["document_id"])))
         return str(document["document_id"]).encode()
 
@@ -1019,6 +1056,7 @@ def test_dynamic_scheduler_bounds_each_pdf_batch_to_worker_count(
     def fake_source(
         _store: object,
         _document: dict[str, object],
+        **_kwargs: object,
     ) -> bytes:
         return b"pdf"
 
@@ -1085,6 +1123,7 @@ def test_dynamic_scheduler_rejects_accounting_drift(
     def fake_source_for_drift(
         _store: object,
         _document: dict[str, object],
+        **_kwargs: object,
     ) -> bytes:
         return b"pdf"
 

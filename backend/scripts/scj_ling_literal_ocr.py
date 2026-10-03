@@ -47,6 +47,7 @@ DEFAULT_MAX_CONCURRENT_REQUESTS = 200
 MAX_CONCURRENT_REQUESTS = 200
 S3_IO_WORKERS = 64
 S3_READ_ATTEMPTS = 5
+LOCAL_CORPUS_ROOT_ENV = "JURISNEXO_LOCAL_CORPUS_ROOT"
 EXPECTED_DOCUMENTS = 36
 RENDER_SCALE = 2.0
 TARGET_CLASSIFICATIONS = frozenset({"misaligned", "no_native_text"})
@@ -715,12 +716,24 @@ def _verify_render_pair(
     return "pixel-verified"
 
 
-def _source_pdf(store: Any, document: dict[str, Any]) -> bytes:
-    payload = _get_bytes(store, document["object_key"])
+def _source_pdf(
+    store: Any,
+    document: dict[str, Any],
+    *,
+    corpus_root: Path | None = None,
+) -> bytes:
+    object_key = str(document["object_key"])
+    if corpus_root is not None:
+        path = corpus_root.joinpath(*object_key.split("/"))
+        if not path.is_file():
+            raise RuntimeError(f"local corpus object missing: {path}")
+        payload = path.read_bytes()
+    else:
+        payload = _get_bytes(store, object_key)
     actual_sha = _sha256(payload)
     if actual_sha != document["source_pdf_sha256"]:
         raise RuntimeError(
-            f"source drift for {document['object_key']}: "
+            f"source drift for {object_key}: "
             f"expected {document['source_pdf_sha256']}, got {actual_sha}"
         )
     return payload
@@ -971,6 +984,7 @@ async def _run_worker_async(
     start_ordinal: int = 0,
     max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
     phase: str = "both",
+    corpus_root: Path | None = None,
 ) -> dict[str, Any]:
     if worker_index != 0:
         raise ValueError("dynamic pool coordinator must use worker_index 0")
@@ -983,6 +997,11 @@ async def _run_worker_async(
         raise ValueError("start_ordinal must be zero or positive")
     if phase not in {"both", "pass1", "pass2"}:
         raise ValueError(f"unsupported OCR phase: {phase}")
+    if corpus_root is None:
+        env_root = os.environ.get(LOCAL_CORPUS_ROOT_ENV, "").strip()
+        corpus_root = Path(env_root) if env_root else None
+    if corpus_root is not None and not corpus_root.is_dir():
+        raise RuntimeError(f"local corpus root does not exist: {corpus_root}")
     request_gate = AsyncRequestGate(max_concurrent_requests)
 
     plan_bytes = await asyncio.to_thread(plan_path.read_text, encoding="utf-8")
@@ -1058,6 +1077,7 @@ async def _run_worker_async(
                     _source_pdf,
                     store,
                     documents[document_id],
+                    corpus_root=corpus_root,
                 )
                 for offset in range(
                     0,
@@ -1158,6 +1178,7 @@ async def _run_worker_async(
         "provider": PROVIDER,
         "passes": PASSES,
         "plan_sha256": plan_sha,
+        "corpus_root": str(corpus_root) if corpus_root is not None else None,
     }
     worker_name = "worker-00.json" if phase == "both" else f"worker-00-{phase}.json"
     (output / worker_name).write_bytes(_canonical(summary))
@@ -1179,6 +1200,7 @@ def run_worker(
     start_ordinal: int = 0,
     max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
     phase: str = "both",
+    corpus_root: Path | None = None,
 ) -> dict[str, Any]:
     return asyncio.run(
         _run_worker_async(
@@ -1191,6 +1213,7 @@ def run_worker(
             start_ordinal=start_ordinal,
             max_concurrent_requests=max_concurrent_requests,
             phase=phase,
+            corpus_root=corpus_root,
         )
     )
 
@@ -1393,6 +1416,15 @@ def main() -> int:
         default=DEFAULT_MAX_CONCURRENT_REQUESTS,
         help="Global in-flight OpenRouter request cap for this worker process",
     )
+    worker.add_argument(
+        "--corpus-root",
+        type=Path,
+        default=None,
+        help=(
+            "Directory holding source PDFs by object key; defaults to the "
+            f"{LOCAL_CORPUS_ROOT_ENV} environment variable when set"
+        ),
+    )
 
     collect = sub.add_parser("aggregate")
     collect.add_argument("--plan", type=Path, required=True)
@@ -1415,6 +1447,7 @@ def main() -> int:
             start_ordinal=args.start_ordinal,
             max_concurrent_requests=args.max_concurrent_requests,
             phase=args.phase,
+            corpus_root=args.corpus_root,
         )
         return 1 if int(summary["failed_pages"]) else 0
     else:

@@ -344,3 +344,30 @@ unnecessary parameter and keeps the output contract focused on visible text.
 Identical OpenRouter retries also enable the 24-hour response cache so an
 ambiguous transport retry can reuse the same inference instead of deliberately
 paying for a second identical call.
+
+## Running the Ling worker locally
+
+The worker can read source PDFs from a local snapshot instead of downloading
+them from object storage, while the durable census and the evidence output still
+use the configured S3-compatible store. Point `JURISNEXO_LOCAL_CORPUS_ROOT` at a
+directory that holds the PDFs by object key, using the same layout as the bucket:
+
+```text
+<root>/jurisdictions/do/scj/principales-sentencias/<prefix>/<sha>.pdf
+```
+
+`--corpus-root` overrides the environment variable per invocation. In local
+mode `_source_pdf` reads the file, verifies its SHA-256 against the frozen
+plan's `source_pdf_sha256`, and fails closed on checksum drift or a missing
+object. A local snapshot must match the frozen census exactly; a partial or
+stale snapshot must not be used to claim corpus coverage. Loading the local
+environment (including the read-only S3 credentials) is typically done with:
+
+```powershell
+. .\scripts\local-env.ps1 -WithS3
+```
+
+Because a completed plan is fully resumable, re-running the worker against an
+already finished plan restores durable observations (no model spend). Real
+inference happens only for page/pass observations that are not yet durable.
+
