@@ -397,6 +397,13 @@ The full evidence, per-document coverage, cost, anomalies, and known limitations
 document for the current state instead of reconstructing it from expiring Actions
 artifacts.
 
+A deterministic, model-free analysis of the same generation (Pass 1 / Pass 2
+divergence taxonomy, output-quality anomalies, render/provenance coverage, cost,
+and the legal-critical span disagreements that form the priority review set) is
+frozen in `docs/benchmarks/2026-10-03-scj-principales-ling-evidence-analysis.md`,
+produced by `backend/scripts/analyze_scj_ling_literal_ocr.py`. It is routing
+evidence, not a semantic-correctness claim.
+
 The worker exposes a global async in-flight cap (`--max-concurrent-requests`,
 authorized separately from the frozen plan hash), separate Pass 1 / Pass 2
 execution, and a local object-store mode (`JURISNEXO_LOCAL_OBJECT_ROOT`, with the
