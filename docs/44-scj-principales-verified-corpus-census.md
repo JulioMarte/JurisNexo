@@ -10,6 +10,10 @@ The census is evidence about fidelity between a PDF's native text layer and an i
 
 The current completed census evaluated the 36 PDFs in the frozen SCJ Principales inventory. The successful run processed 29,811 pages and produced 13,732 admitted pages under the frozen alignment policy. No PDF satisfied the deliberately strict `verified_complete` criterion; useful evidence therefore lives primarily at page and contiguous-run level.
 
+## Base OCR engine for the new normalization lane (provisional)
+
+The frozen census generation above uses Tesseract and remains historical evidence; it is not recomputed or reinterpreted here. For the new SCJ normalization lane, a 500-page hard-page comparison (2026-10-01, run `36890735401`) found Tesseract to be the outlier and the PP-OCR family (PaddleOCR / RapidOCR) to agree internally far more than either agrees with Tesseract. **RapidOCR** is adopted **provisionally** as the base OCR engine for the new lane (same PP-OCR family, ~1/7 the latency of PaddleOCR), pending independent Stage B adjudication. See `docs/benchmarks/2026-10-01-scj-hard-rescue-ocr-engine-comparison.md`.
+
 ## Why this dataset exists
 
 The corpus contains heterogeneous PDFs. Some have native text that closely represents what is visibly rendered; others have badly degraded or misleading text layers. Using `pdftotext` indiscriminately would therefore create unmeasured reference error.
