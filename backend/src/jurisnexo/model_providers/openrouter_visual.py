@@ -70,7 +70,9 @@ class OpenRouterVisualModelProvider:
                 raise ValueError("max_output_tokens must be positive when provided")
             payload["max_tokens"] = max_output_tokens
         self._apply_structured_output(payload=payload, json_schema=json_schema)
-        if self.reasoning_effort != "none":
+        if self.reasoning_effort == "none":
+            payload["reasoning"] = {"enabled": False}
+        else:
             payload["reasoning"] = {"effort": self.reasoning_effort, "exclude": True}
         request = Request(
             url=f"{self.base_url.rstrip('/')}/chat/completions",
