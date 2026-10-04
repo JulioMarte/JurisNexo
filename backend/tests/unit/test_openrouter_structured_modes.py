@@ -350,6 +350,7 @@ def test_visual_provider_can_omit_output_token_limit(
     payload = captured["payload"]
     assert isinstance(payload, dict)
     assert "max_tokens" not in payload
+    assert payload["reasoning"] == {"enabled": False}
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 5
     assert result.usage.thinking_tokens == 2
