@@ -1,0 +1,186 @@
+name: SCJ decisions page inventory
+
+# Counts pages of every SCJ decision document in the object store. Storage
+# inventory only: no paid LLM, no source mutation. Trigger by workflow_dispatch
+# or by labeling a pull request whose head contains this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: Object-store prefix to inventory
+        required: false
+        default: jurisdictions/do/scj/decisions/
+      shards:
+        description: Number of disjoint shards (1-256)
+        required: false
+        default: "20"
+      max_parallel:
+        description: Maximum concurrent shard jobs
+        required: false
+        default: "20"
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scj-decisions-page-inventory
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'scj-decisions-page-inventory'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -e ./backend pytest==9.1.1 ruff==0.16.7 \
+            "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
+      - run: |
+          python -m py_compile backend/scripts/scj_decisions_page_inventory.py
+          ruff check \
+            backend/scripts/scj_decisions_page_inventory.py \
+            backend/tests/unit/test_scj_decisions_page_inventory.py
+          pytest -q backend/tests/unit/test_scj_decisions_page_inventory.py
+
+  plan:
+    needs: contract
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      expected_total: ${{ steps.plan.outputs.expected_total }}
+      expected_pdf: ${{ steps.plan.outputs.expected_pdf }}
+      expected_non_pdf: ${{ steps.plan.outputs.expected_non_pdf }}
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      PAGE_PREFIX: ${{ github.event.inputs.prefix || 'jurisdictions/do/scj/decisions/' }}
+      PAGE_SHARDS: ${{ github.event.inputs.shards || '20' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0"
+      - id: plan
+        run: |
+          mkdir -p "$RUNNER_TEMP/inventory"
+          python backend/scripts/scj_decisions_page_inventory.py plan \
+            --prefix "$PAGE_PREFIX" --shards "$PAGE_SHARDS" \
+            --output "$RUNNER_TEMP/inventory/plan.json" \
+            > "$RUNNER_TEMP/inventory/matrix.json"
+          echo "matrix=$(cat "$RUNNER_TEMP/inventory/matrix.json")" >> "$GITHUB_OUTPUT"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          plan = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "inventory", "plan.json")))
+          print(f"expected_total={plan['expected_total']}")
+          print(f"expected_pdf={plan['expected_pdf']}")
+          print(f"expected_non_pdf={plan['expected_non_pdf']}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scj-decisions-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/inventory/plan.json
+          retention-days: 90
+
+  count:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(github.event.inputs.max_parallel || '20') }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      PAGE_PREFIX: ${{ github.event.inputs.prefix || 'jurisdictions/do/scj/decisions/' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0"
+      - name: Count pages for this shard
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard"
+          python backend/scripts/scj_decisions_page_inventory.py count \
+            --prefix "$PAGE_PREFIX" \
+            --hex-prefixes "${{ matrix.hex_prefixes }}" \
+            --expected-total "${{ matrix.expected_total }}" \
+            --expected-pdf "${{ matrix.expected_pdf }}" \
+            --expected-non-pdf "${{ matrix.expected_non_pdf }}" \
+            --output "$RUNNER_TEMP/shard/shard-${{ matrix.shard }}.jsonl"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-decisions-shard-${{ matrix.shard }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/shard/shard-${{ matrix.shard }}.jsonl
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    needs: [plan, count]
+    runs-on: ubuntu-24.04
+    env:
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scj-decisions-shard-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/shards
+          merge-multiple: false
+      - name: Aggregate shards (fail closed)
+        run: |
+          python backend/scripts/scj_decisions_page_inventory.py aggregate \
+            --input-root "$RUNNER_TEMP/shards" \
+            --expected-total "${{ needs.plan.outputs.expected_total }}" \
+            --expected-pdf "${{ needs.plan.outputs.expected_pdf }}" \
+            --expected-non-pdf "${{ needs.plan.outputs.expected_non_pdf }}" \
+            --output "$RUNNER_TEMP/aggregate" \
+            --publish-prefix "derived/scj/decisions-page-inventory/github-${{ github.run_id }}-attempt-${{ github.run_attempt }}"
+      - name: Publish step summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"]) / "aggregate" / "summary.json"
+          if not path.exists():
+              raise SystemExit(0)
+          s = json.loads(path.read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("# SCJ decisions page inventory\n\n")
+              out.write(f"- objects: {s['object_count']}\n")
+              out.write(f"- PDFs: {s['pdf_count']} (failed: {s['pdf_failed_count']})\n")
+              out.write(f"- non-PDF: {s['non_pdf_count']} {s['non_pdf_by_format']}\n")
+              out.write(f"- total pages: {s['total_pages']}\n")
+              out.write(f"- pages min/median/p95/max: {s['pages_min']}/{s['pages_median']}/{s['pages_p95']}/{s['pages_max']}\n")
+              out.write(f"- total bytes: {s['total_bytes']}\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scj-decisions-page-inventory-summary-${{ github.run_id }}
+          path: ${{ runner.temp }}/aggregate/**
+          if-no-files-found: warn
+          retention-days: 90
