@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import resource
 import subprocess
 import sys
 import time
@@ -39,6 +38,14 @@ class Prediction:
 
 def _join_lines(lines: list[str]) -> str:
     return "\n".join(line.strip() for line in lines if line and line.strip()).strip()
+
+
+def _peak_rss_kib() -> int | None:
+    try:
+        import resource
+    except ImportError:
+        return None
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 
 def _extract_strings(value: Any) -> list[str]:
@@ -422,7 +429,7 @@ def run(
         "failed_pages": failures,
         "wall_seconds": elapsed_seconds,
         "mean_wall_seconds_per_page": elapsed_seconds / len(predictions),
-        "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        "peak_rss_kib": _peak_rss_kib(),
         "python": sys.version,
     }
     (output_dir / "runtime-summary.json").write_text(
