@@ -415,7 +415,7 @@ async def run(args: argparse.Namespace) -> int:
         f"- Resolutions: {', '.join(map(str, args.resolutions))} px long side\n"
         f"- Async concurrency: {args.concurrency}\n"
         f"- Total input tokens: {report['total_input_tokens']:,}\n"
-        f"- Total cost: \${report['total_cost_usd']:.6f}\n"
+        f"- Total cost: ${report['total_cost_usd']:.6f}\n"
         f"- Choice stable across all resolutions: {report['stable_case_rate']:.1%}\n\n"
         "This is mechanical/resolution evidence, not semantic accuracy evidence.\n"
     )
