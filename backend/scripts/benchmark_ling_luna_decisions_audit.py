@@ -8,6 +8,7 @@ import json
 import re
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -324,6 +325,73 @@ def _call(
     return body, elapsed_ms
 
 
+def _call_with_heartbeat(
+    *,
+    api_key: str,
+    base_url: str,
+    image: bytes,
+    ocr: str,
+    index: int,
+    total: int,
+    cohort: str,
+    document_id: str,
+    page_index: int,
+) -> tuple[dict[str, Any], int]:
+    started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="luna-audit") as executor:
+        future = executor.submit(
+            _call,
+            api_key=api_key,
+            base_url=base_url,
+            image=image,
+            ocr=ocr,
+        )
+        while True:
+            try:
+                return future.result(timeout=15)
+            except FutureTimeoutError:
+                elapsed = int(time.perf_counter() - started)
+                print(
+                    json.dumps(
+                        {
+                            "status": "waiting_for_luna",
+                            "progress": f"{index}/{total}",
+                            "cohort": cohort,
+                            "page": f"{document_id}/{page_index}",
+                            "elapsed_seconds": elapsed,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+
+
+def _write_checkpoint(output: Path, results: list[Result], total: int) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "records.partial.jsonl").write_text(
+        "".join(
+            json.dumps(asdict(result), ensure_ascii=False, sort_keys=True) + "\n"
+            for result in results
+        ),
+        encoding="utf-8",
+    )
+    (output / "progress.json").write_text(
+        json.dumps(
+            {
+                "completed": len(results),
+                "total": total,
+                "percent": round((len(results) / total) * 100, 2) if total else 0.0,
+                "last_sample_id": results[-1].sample_id if results else None,
+                "updated_unix": time.time(),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _metric(values: list[float]) -> dict[str, float | None]:
     return {
         "mean": statistics.fmean(values) if values else None,
@@ -341,10 +409,26 @@ def run(output: Path) -> int:
 
     pages, resolved_plan_sha = _load_pages(store)
     selected = _select(pages)
+    total = len(selected)
+    output.mkdir(parents=True, exist_ok=True)
     pdf_cache: dict[str, bytes] = {}
     results: list[Result] = []
 
+    print(json.dumps({"status": "benchmark_started", "total_pages": total}, sort_keys=True), flush=True)
+
     for index, (cohort, page) in enumerate(selected, start=1):
+        print(
+            json.dumps(
+                {
+                    "status": "page_started",
+                    "progress": f"{index}/{total}",
+                    "cohort": cohort,
+                    "page": f"{page.document_id}/{page.page_index}",
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         pdf_bytes = pdf_cache.get(page.object_key)
         if pdf_bytes is None:
             pdf_bytes = store.get_bytes(page.object_key)
@@ -355,11 +439,16 @@ def run(output: Path) -> int:
         image = _render(pdf_bytes, page.page_index)
         first = str(page.first.get("transcription") or "")
         second = str(page.second.get("transcription") or "")
-        body, latency_ms = _call(
+        body, latency_ms = _call_with_heartbeat(
             api_key=settings.api_key.get_secret_value(),
             base_url=settings.decisions_base_url,
             image=image,
             ocr=first,
+            index=index,
+            total=total,
+            cohort=cohort,
+            document_id=page.document_id,
+            page_index=page.page_index,
         )
         answers = body["answers"]
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
@@ -396,10 +485,14 @@ def run(output: Path) -> int:
             provider=str(body.get("provider") or ""),
         )
         results.append(result)
+        _write_checkpoint(output, results, total)
         print(
             json.dumps(
                 {
+                    "status": "page_completed",
                     "done": index,
+                    "total": total,
+                    "percent": round(index / total * 100, 2),
                     "cohort": cohort,
                     "page": f"{page.document_id}/{page.page_index}",
                     "repair_p": result.requires_repair_probability,
@@ -472,7 +565,6 @@ def run(output: Path) -> int:
         },
         "records": [asdict(result) for result in results],
     }
-    output.mkdir(parents=True, exist_ok=True)
     (output / "report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\\n",
         encoding="utf-8",
