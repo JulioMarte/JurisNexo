@@ -661,7 +661,7 @@ def run(output: Path) -> int:
         f"{metrics['repair_probability_difficult']['mean']:.4f}\\n"
         f"- Mean repair probability, control: "
         f"{metrics['repair_probability_control']['mean']:.4f}\\n"
-        f"- Cost: \${metrics['total_cost_usd']:.8f}\\n"
+        f"- Cost: ${metrics['total_cost_usd']:.8f}\\n"
         f"- Mean latency: {metrics['mean_latency_ms']:.1f} ms/page\\n\\n"
         "Important: the difficult cohort is a routing signal, not independent "
         "semantic gold.\\n"
