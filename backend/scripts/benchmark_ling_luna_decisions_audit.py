@@ -8,7 +8,7 @@ import json
 import re
 import statistics
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -105,9 +105,33 @@ def _discover_prefix(store: Any) -> tuple[str, str]:
 
 
 def _load_pages(store: Any) -> tuple[list[Page], str]:
+    print(json.dumps({"status": "s3_discovery_started", "prefix": PREFIX + "/"}), flush=True)
     prefix, plan_sha = _discover_prefix(store)
-    grouped: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
+    print(
+        json.dumps(
+            {"status": "s3_evidence_prefix_resolved", "prefix": prefix, "plan_sha256": plan_sha},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+    grouped_keys: dict[tuple[str, int], dict[int, str]] = {}
+    listed = 0
+    matched = 0
     for obj in store.list_objects(prefix):
+        listed += 1
+        if listed == 1 or listed % 1000 == 0:
+            print(
+                json.dumps(
+                    {
+                        "status": "s3_inventory_progress",
+                        "objects_listed": listed,
+                        "pass_objects_matched": matched,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
         if not obj.key.endswith(".json"):
             continue
         rel = obj.key[len(prefix):]
@@ -117,25 +141,68 @@ def _load_pages(store: Any) -> tuple[list[Page], str]:
         match = PASS_RE.match(parts[2])
         if match is None:
             continue
-        grouped.setdefault((parts[0], int(parts[1])), {})[int(match.group(1))] = json.loads(
-            store.get_bytes(obj.key)
-        )
+        matched += 1
+        grouped_keys.setdefault((parts[0], int(parts[1])), {})[int(match.group(1))] = obj.key
+
+    paired = {
+        identity: passes
+        for identity, passes in grouped_keys.items()
+        if 1 in passes and 2 in passes
+    }
+    evidence_keys = [key for passes in paired.values() for key in (passes[1], passes[2])]
+    print(
+        json.dumps(
+            {
+                "status": "s3_inventory_complete",
+                "objects_listed": listed,
+                "pass_objects_matched": matched,
+                "paired_pages": len(paired),
+                "json_objects_to_fetch": len(evidence_keys),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+    payloads: dict[str, dict[str, Any]] = {}
+    fetch_workers = 16
+    with ThreadPoolExecutor(max_workers=fetch_workers, thread_name_prefix="ling-evidence") as executor:
+        futures = {executor.submit(store.get_bytes, key): key for key in evidence_keys}
+        completed = 0
+        for future in as_completed(futures):
+            key = futures[future]
+            payloads[key] = json.loads(future.result())
+            completed += 1
+            if completed == 1 or completed % 250 == 0 or completed == len(evidence_keys):
+                print(
+                    json.dumps(
+                        {
+                            "status": "s3_fetch_progress",
+                            "completed": completed,
+                            "total": len(evidence_keys),
+                            "percent": round(completed / len(evidence_keys) * 100, 2) if evidence_keys else 100.0,
+                            "workers": fetch_workers,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
 
     pages: list[Page] = []
-    for (document_id, page_index), passes in sorted(grouped.items()):
-        if 1 not in passes or 2 not in passes:
-            continue
-        first, second = passes[1], passes[2]
+    skipped_identity = 0
+    for (document_id, page_index), passes in sorted(paired.items()):
+        first = payloads[passes[1]]
+        second = payloads[passes[2]]
         object_key = str(first.get("object_key") or "")
         source_sha = str(first.get("source_pdf_sha256") or "")
         transcription = str(first.get("transcription") or "")
         if not object_key or len(source_sha) != 64:
+            skipped_identity += 1
             continue
         if first.get("plan_sha256") != plan_sha or second.get("plan_sha256") != plan_sha:
+            skipped_identity += 1
             continue
-        if str(first.get("transcription_sha256") or "") != _sha256(
-            transcription.encode("utf-8")
-        ):
+        if str(first.get("transcription_sha256") or "") != _sha256(transcription.encode("utf-8")):
             raise RuntimeError(f"corrupt pass-1 evidence for {document_id}/{page_index}")
         pages.append(
             Page(
@@ -147,6 +214,14 @@ def _load_pages(store: Any) -> tuple[list[Page], str]:
                 second=second,
             )
         )
+
+    print(
+        json.dumps(
+            {"status": "s3_evidence_loaded", "usable_pages": len(pages), "skipped_identity": skipped_identity},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     return pages, plan_sha
 
 
