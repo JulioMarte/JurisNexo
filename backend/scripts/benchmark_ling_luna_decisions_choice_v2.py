@@ -119,30 +119,63 @@ def _build_cases(pages: list[Page], limit: int) -> list[Case]:
     return cases
 
 
-def _render(pdf_bytes: bytes, page_index: int, max_long_side: int) -> bytes:
+def _encode_jpeg(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=88, optimize=True)
+    return buffer.getvalue()
+
+
+def _render_ladder(
+    pdf_bytes: bytes,
+    page_index: int,
+    resolutions: tuple[int, ...],
+) -> dict[int, bytes]:
+    """Render once with PDFium, then derive lower resolutions with Pillow.
+
+    PDFium rendering stays synchronous on one thread. Network inference remains async.
+    """
+    maximum = max(resolutions)
     document = pdfium.PdfDocument(pdf_bytes)
     try:
+        page_count = len(document)
+        if not 0 <= page_index < page_count:
+            raise RuntimeError(
+                f"page index {page_index} outside PDF bounds 0..{page_count - 1}"
+            )
         page = document[page_index]
         try:
             width, height = page.get_size()
-            bitmap = page.render(scale=max_long_side / max(width, height))
+            bitmap = page.render(scale=maximum / max(width, height))
             try:
-                image = bitmap.to_pil().convert("RGB")
-                if max(image.size) > max_long_side:
-                    ratio = max_long_side / max(image.size)
-                    image = image.resize(
-                        (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
-                        Image.Resampling.LANCZOS,
-                    )
-                buffer = io.BytesIO()
-                image.save(buffer, format="JPEG", quality=88, optimize=True)
-                return buffer.getvalue()
+                source = bitmap.to_pil().convert("RGB")
             finally:
                 bitmap.close()
         finally:
             page.close()
     finally:
         document.close()
+
+    images: dict[int, bytes] = {}
+    try:
+        for resolution in sorted(set(resolutions), reverse=True):
+            if max(source.size) == resolution:
+                rendered = source.copy()
+            else:
+                ratio = resolution / max(source.size)
+                rendered = source.resize(
+                    (
+                        max(1, round(source.width * ratio)),
+                        max(1, round(source.height * ratio)),
+                    ),
+                    Image.Resampling.LANCZOS,
+                )
+            try:
+                images[resolution] = _encode_jpeg(rendered)
+            finally:
+                rendered.close()
+    finally:
+        source.close()
+    return images
 
 
 def _choice_payload(image: bytes, case: Case) -> dict[str, Any]:
@@ -274,35 +307,68 @@ async def _run_async(
     completed = _load_completed(records_path)
     write_lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(concurrency)
-    pdf_cache: dict[str, bytes] = {}
-    pdf_locks: dict[str, asyncio.Lock] = {}
     total = len(cases) * len(resolutions)
     finished = len(completed)
 
-    async def pdf_for(case: Case) -> bytes:
-        if case.object_key in pdf_cache:
-            return pdf_cache[case.object_key]
-        pdf_lock = pdf_locks.setdefault(case.object_key, asyncio.Lock())
-        async with pdf_lock:
-            if case.object_key not in pdf_cache:
-                pdf_bytes = await asyncio.to_thread(store.get_bytes, case.object_key)
-                if _sha256(pdf_bytes) != case.source_pdf_sha256:
-                    raise RuntimeError(f"source PDF drift: {case.object_key}")
-                pdf_cache[case.object_key] = pdf_bytes
-            return pdf_cache[case.object_key]
+    # Prepare all requested visual states before launching network concurrency.
+    # This intentionally keeps PDFium single-threaded; each page is rendered only
+    # once at the highest requested resolution and lower sizes are Pillow resizes.
+    prepared: dict[tuple[str, int], bytes] = {}
+    pdf_cache: dict[str, bytes] = {}
+    for case_index, case in enumerate(cases, start=1):
+        needed = [
+            resolution
+            for resolution in resolutions
+            if f"{case.case_id}-px{resolution}" not in completed
+        ]
+        if not needed:
+            continue
+        pdf_bytes = pdf_cache.get(case.object_key)
+        if pdf_bytes is None:
+            pdf_bytes = await asyncio.to_thread(store.get_bytes, case.object_key)
+            if _sha256(pdf_bytes) != case.source_pdf_sha256:
+                raise RuntimeError(f"source PDF drift: {case.object_key}")
+            pdf_cache[case.object_key] = pdf_bytes
+        print(json.dumps({
+            "status": "render_started",
+            "case": f"{case_index}/{len(cases)}",
+            "case_id": case.case_id,
+            "resolutions": needed,
+        }, sort_keys=True), flush=True)
+        try:
+            ladder = _render_ladder(pdf_bytes, case.page_index, tuple(needed))
+        except Exception as exc:
+            failure = {
+                "status": "render_failed",
+                "case_id": case.case_id,
+                "document_id": case.document_id,
+                "page_index": case.page_index,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+            (output / "render-failures.jsonl").open("a", encoding="utf-8").write(
+                json.dumps(failure, ensure_ascii=False, sort_keys=True) + "\n"
+            )
+            raise
+        for resolution, image in ladder.items():
+            prepared[(case.case_id, resolution)] = image
+        print(json.dumps({
+            "status": "render_completed",
+            "case_id": case.case_id,
+            "prepared": sorted(ladder),
+        }, sort_keys=True), flush=True)
 
     async def one(case: Case, resolution: int) -> None:
         nonlocal finished
         observation_id = f"{case.case_id}-px{resolution}"
         if observation_id in completed:
             return
+        image = prepared[(case.case_id, resolution)]
         async with semaphore:
             print(json.dumps({
                 "status": "request_started", "observation_id": observation_id,
                 "resolution": resolution, "concurrency": concurrency,
             }, sort_keys=True), flush=True)
-            pdf_bytes = await pdf_for(case)
-            image = await asyncio.to_thread(_render, pdf_bytes, case.page_index, resolution)
             body, latency_ms, attempts = await _post_with_retry(
                 url=f"{base_url.rstrip('/')}/decisions", api_key=api_key,
                 payload=_choice_payload(image, case),
