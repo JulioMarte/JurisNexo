@@ -73,13 +73,38 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _prefix() -> str:
-    safe_model = LING_MODEL.replace("/", "__")
-    return f"{PREFIX}/{PLAN_SHA}/{safe_model}/{LING_PROVIDER}/pages/"
+def _discover_prefix(store: Any) -> tuple[str, str]:
+    successes = [
+        obj
+        for obj in store.list_objects(PREFIX + "/")
+        if obj.key.endswith("/_SUCCESS.json")
+    ]
+    candidates: list[tuple[float, str, str]] = []
+    for obj in successes:
+        try:
+            payload = json.loads(store.get_bytes(obj.key))
+        except Exception:
+            continue
+        if str(payload.get("requested_model") or "") != LING_MODEL:
+            continue
+        if str(payload.get("requested_provider") or "") != LING_PROVIDER:
+            continue
+        plan_sha = str(payload.get("plan_sha256") or "")
+        if len(plan_sha) != 64:
+            continue
+        candidates.append((obj.last_modified, obj.key.rsplit("/", 1)[0], plan_sha))
+    if not candidates:
+        observed = [obj.key for obj in successes[:20]]
+        raise RuntimeError(
+            "no completed Ling OCR success marker found in configured object store; "
+            f"observed_success_markers={observed}"
+        )
+    _, base, plan_sha = max(candidates, key=lambda item: item[0])
+    return base + "/pages/", plan_sha
 
 
-def _load_pages(store: Any) -> list[Page]:
-    prefix = _prefix()
+def _load_pages(store: Any) -> tuple[list[Page], str]:
+    prefix, plan_sha = _discover_prefix(store)
     grouped: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
     for obj in store.list_objects(prefix):
         if not obj.key.endswith(".json"):
@@ -105,7 +130,7 @@ def _load_pages(store: Any) -> list[Page]:
         transcription = str(first.get("transcription") or "")
         if not object_key or len(source_sha) != 64:
             continue
-        if first.get("plan_sha256") != PLAN_SHA or second.get("plan_sha256") != PLAN_SHA:
+        if first.get("plan_sha256") != plan_sha or second.get("plan_sha256") != plan_sha:
             continue
         if str(first.get("transcription_sha256") or "") != _sha256(
             transcription.encode("utf-8")
@@ -121,7 +146,7 @@ def _load_pages(store: Any) -> list[Page]:
                 second=second,
             )
         )
-    return pages
+    return pages, plan_sha
 
 
 def _difficulty(page: Page) -> tuple[int, int, float, int, int]:
@@ -314,7 +339,8 @@ def run(output: Path) -> int:
     if settings.api_key is None:
         raise RuntimeError("OPENROUTER_API_KEY is required")
 
-    selected = _select(_load_pages(store))
+    pages, resolved_plan_sha = _load_pages(store)
+    selected = _select(pages)
     pdf_cache: dict[str, bytes] = {}
     results: list[Result] = []
 
@@ -432,7 +458,7 @@ def run(output: Path) -> int:
         "sample_size": len(results),
         "cohorts": {"difficult": len(difficult), "control": len(controls)},
         "model": DECISION_MODEL,
-        "ling_plan_sha256": PLAN_SHA,
+        "ling_plan_sha256": resolved_plan_sha,
         "threshold": threshold,
         "metrics": metrics,
         "interpretation": {
