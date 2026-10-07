@@ -1,18 +1,13 @@
 name: Ling OCR Luna Decisions audit 100
 
 on:
-  pull_request:
-    branches: [development]
-    paths:
-      - "backend/scripts/benchmark_ling_luna_decisions_audit.py"
-      - ".github/workflows/ling-luna-decisions-audit-100.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ling-luna-decisions-audit-100-\${{ github.event.pull_request.number || github.ref }}
+  group: ling-luna-decisions-audit-100-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,13 +15,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}
-      JURISNEXO_S3_BUCKET: \${{ secrets.JURISNEXO_S3_BUCKET }}
-      JURISNEXO_S3_ENDPOINT_URL: \${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
-      JURISNEXO_S3_REGION: \${{ secrets.JURISNEXO_S3_REGION }}
-      JURISNEXO_S3_ACCESS_KEY_ID: \${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
-      JURISNEXO_S3_SECRET_ACCESS_KEY: \${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
-      JURISNEXO_S3_FORCE_PATH_STYLE: \${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JURISNEXO_S3_BUCKET: ${{ secrets.JURISNEXO_S3_BUCKET }}
+      JURISNEXO_S3_ENDPOINT_URL: ${{ secrets.JURISNEXO_S3_ENDPOINT_URL }}
+      JURISNEXO_S3_REGION: ${{ secrets.JURISNEXO_S3_REGION }}
+      JURISNEXO_S3_ACCESS_KEY_ID: ${{ secrets.JURISNEXO_S3_ACCESS_KEY_ID }}
+      JURISNEXO_S3_SECRET_ACCESS_KEY: ${{ secrets.JURISNEXO_S3_SECRET_ACCESS_KEY }}
+      JURISNEXO_S3_FORCE_PATH_STYLE: ${{ vars.JURISNEXO_S3_FORCE_PATH_STYLE || 'true' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -50,7 +45,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ling-luna-decisions-audit-100-\${{ github.run_id }}-\${{ github.run_attempt }}
-          path: \${{ runner.temp }}/audit/**
+          name: ling-luna-decisions-audit-100-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/audit/**
           if-no-files-found: warn
           retention-days: 30
