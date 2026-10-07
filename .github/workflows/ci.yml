@@ -179,7 +179,7 @@ jobs:
 
 
   ling-luna-live-benchmark:
-    name: Ling Luna OCR audit 100
+    name: Luna OCR choice v2 smoke
     if: github.event_name == 'pull_request' && github.head_ref == 'benchmark/ling-luna-ocr-audit-100'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -201,9 +201,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ./backend "boto3==1.43.93" "pypdfium2==5.13.0" "pillow==12.3.0"
       - name: Compile benchmark
-        run: python -m py_compile backend/scripts/benchmark_ling_luna_decisions_audit.py
-      - name: Run 100-page live audit
-        run: python backend/scripts/benchmark_ling_luna_decisions_audit.py --output "$RUNNER_TEMP/audit"
+        run: |
+          python -m py_compile backend/scripts/benchmark_ling_luna_decisions_audit.py
+          python -m py_compile backend/scripts/benchmark_ling_luna_decisions_choice_v2.py
+      - name: Run choice/resolution v2 smoke
+        run: |
+          python backend/scripts/benchmark_ling_luna_decisions_choice_v2.py \
+            --output "$RUNNER_TEMP/audit" \
+            --cases 12 \
+            --resolutions 1600,2200,3000 \
+            --concurrency 8
       - name: Publish summary
         if: always()
         run: |
@@ -213,7 +220,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ling-luna-decisions-audit-100-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ling-luna-decisions-choice-v2-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/audit/**
           if-no-files-found: warn
           retention-days: 30
